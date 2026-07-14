@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from scanassistant.journal.journal import Journal
-from scanassistant.project.errors import InvalidCampaignError
+from scanassistant.project.errors import InvalidCampaignError, MissingInventoryError
 from scanassistant.project.inventory import Inventory, import_csv, load_inventory
 from scanassistant.project.layout import CampaignPaths, create_campaign_tree
 from scanassistant.project.state import ProjectState, load_state, save_state
@@ -315,6 +315,8 @@ def open_campaign(root: Path) -> OpenedCampaign:
     paths = CampaignPaths(Path(root))
     campaign = load_campaign(paths.campaign_json)
     state = load_state(paths.state_json)
+    if not paths.inventory_csv.exists():
+        raise MissingInventoryError(has_backup=paths.inventory_csv_bak.exists())
     inventory = load_inventory(paths.inventory_csv, campaign.naming.csv_column)
     inventory.cursor = state.csv_cursor
     return OpenedCampaign(campaign=campaign, state=state, inventory=inventory, paths=paths)

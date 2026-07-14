@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.widgets.csv_table import CsvTableWidget
 from scanassistant.gui.widgets.log_table import LogTableWidget
 from scanassistant.i18n import t
@@ -114,7 +115,9 @@ class ProjectScreen(QWidget):
         try:
             save_campaign(self.campaign, self.paths.campaign_json)
         except InvalidCampaignError as exc:
-            QMessageBox.warning(self, t("project.invalid_setting_title"), str(exc))
+            QMessageBox.warning(
+                self, t("project.invalid_setting_title"), format_business_error(exc)
+            )
             return
         self.journal.log(
             "PROJECT", "setting_changed", details={"key": key, "before": before, "after": after}

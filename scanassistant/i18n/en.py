@@ -122,16 +122,12 @@ STRINGS: dict[str, str] = {
     "capture.conflict_use_next_free": "Use next free name",
     "capture.conflict_option2": "2 — Replace existing",
     "capture.conflict_option3": "3 — Rename existing file",
-    "capture.status_warning": "Warning {code}",
-    "capture.status_critical": "Critical: {code}",
     "capture.status_export_done": "Exports complete ({name})",
     "capture.status_rotation": "Rotation: {rotation_deg}°",
     "capture.status_reopened": "Reopened {name} for correction",
     "capture.status_reopen_busy": "Finalize or reject the current image before reopening another",
     "capture.status_unknown_name": "Unknown or already-used name: {name}",
     "capture.status_image_errored": "{name} flagged as error ({code}) — see Statistics to retry.",
-    "capture.warning_banner": "Warning {code} — click for details.",
-    "capture.critical_banner": "Critical: {code} — processing suspended.",
     "capture.resume_processing": "Resume processing",
     "capture.recovery_report_title": "Recovery after interruption",
     "capture.go_to_name_placeholder": "Go to name… (Enter to jump, Escape to cancel)",
@@ -164,6 +160,10 @@ STRINGS: dict[str, str] = {
     "wizard.step1.operator": "Operator",
     "wizard.step1.institution": "Institution",
     "wizard.step1.negative_format": "Negative format (documentary label)",
+    "wizard.step1.clone_button": "Clone settings from an existing campaign…",
+    "wizard.step1.clone_browse_title": "Select an existing campaign folder",
+    "wizard.step1.clone_failed_title": "Could not clone settings",
+    "wizard.step1.clone_applied": "Settings cloned from {name}.",
     "wizard.step2.title": "Folders",
     "wizard.step2.subtitle": "Where the campaign is stored, and where the camera drops files.",
     "wizard.step2.location": "Campaign location",
@@ -259,4 +259,32 @@ STRINGS: dict[str, str] = {
     "project.log_filter_all_types": "All types",
     "project.log_filter_all_levels": "All levels",
     "project.open_logs_folder": "Open LOGS folder",
+    # --- Error catalog (09_ERREURS_ET_ROBUSTESSE.md §3, normative wording) ---
+    "error.E-01_warning": "Low disk space: {free_gb:.1f} GB free.",
+    "error.E-01_critical": (
+        "Insufficient disk space ({free_gb:.1f} GB). "
+        "Processing suspended — free up space, then resume."
+    ),
+    "error.E-02": "The campaign folder is unreachable. Check the storage, then resume.",
+    "error.E-03": (
+        "File {path} never stabilized (interrupted copy?). It will be retried on its next change."
+    ),
+    "error.E-04": "Integrity check failed for {name}. Copy restarted.",
+    "error.E-07": "The watched folder is unreachable. Capture suspended.",
+    "error.E-08": (
+        "Could not remove {name} from the watched folder. "
+        "It was marked as processed and will be skipped."
+    ),
+    "error.E-10": "Invalid campaign file: {field} — {detail}.",
+    "error.E-11": "The CSV cannot be imported: {count} problem(s).",
+    "error.E-12": "No name left in the inventory. Add rows to the CSV or finish the campaign.",
+    "error.E-13": "The inventory was modified by another program.",
+    "error.E-14": "This campaign is already open (host {host}, PID {pid}).",
+    "error.E-15": "The processing queue is growing ({queue_size} pending).",
+    "error.E-16": "The inventory file (inventory.csv) is missing from this campaign folder.",
+    "error.E-16_backup_hint": (
+        " A backup exists (inventory.csv.bak), but it reflects an earlier state, "
+        "before any progress was recorded — check it before restoring it."
+    ),
+    "error.generic": "Internal error — see LOGS/debug.log.",
 }

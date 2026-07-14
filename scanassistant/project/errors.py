@@ -47,3 +47,17 @@ class ProjectAlreadyOpenError(ScanAssistantError):
 
     def __init__(self, host: str, pid: int) -> None:
         super().__init__({"host": host, "pid": pid})
+
+
+class MissingInventoryError(ScanAssistantError):
+    """E-16: `inventory.csv` is missing when opening an existing campaign.
+
+    Not in the original catalog (09 §3, which stops at E-15): that table
+    only covers failures during an active campaign, never a file missing
+    at open time — DECISIONS.md I-96.
+    """
+
+    code = "E-16"
+
+    def __init__(self, *, has_backup: bool) -> None:
+        super().__init__({"has_backup": has_backup})

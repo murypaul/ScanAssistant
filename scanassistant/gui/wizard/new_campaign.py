@@ -12,8 +12,10 @@ closing the window.
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -34,11 +36,18 @@ from PySide6.QtWidgets import (
     QWizardPage,
 )
 
+from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.widgets.csv_table import CsvTableWidget
 from scanassistant.i18n import t
-from scanassistant.project.campaign import Campaign, CreatedCampaign, create_campaign
-from scanassistant.project.errors import InvalidCampaignError, InvalidCsvError
+from scanassistant.project.campaign import (
+    Campaign,
+    CreatedCampaign,
+    create_campaign,
+    load_campaign,
+)
+from scanassistant.project.errors import InvalidCampaignError, InvalidCsvError, ScanAssistantError
 from scanassistant.project.inventory import ImportedInventory, import_csv
+from scanassistant.project.layout import CampaignPaths
 
 
 def _set_role(widget: QWidget, role: str) -> None:
@@ -50,6 +59,8 @@ def _set_role(widget: QWidget, role: str) -> None:
 
 class IdentityPage(QWizardPage):
     """Step 1: identity."""
+
+    template_loaded = Signal(object)  # Campaign
 
     def __init__(self) -> None:
         super().__init__()
@@ -64,14 +75,42 @@ class IdentityPage(QWizardPage):
         self.operator_edit = QLineEdit()
         self.institution_edit = QLineEdit()
 
+        # Clones every setting *except* identity (name/description must stay
+        # unique per campaign) and folders/CSV (instance-specific): framing,
+        # exports, metadata, naming column, equipment, capture options.
+        clone_button = QPushButton(t("wizard.step1.clone_button"))
+        clone_button.clicked.connect(self._clone_from_existing)
+        self.clone_label = QLabel()
+        self.clone_label.setProperty("role", "secondary")
+        self.clone_label.setWordWrap(True)
+
         form = QFormLayout(self)
         form.addRow(t("wizard.step1.name"), self.name_edit)
         form.addRow(t("wizard.step1.description"), self.description_edit)
         form.addRow(t("wizard.step1.operator"), self.operator_edit)
         form.addRow(t("wizard.step1.institution"), self.institution_edit)
+        form.addRow("", clone_button)
+        form.addRow("", self.clone_label)
 
     def isComplete(self) -> bool:
         return bool(self.name_edit.text().strip())
+
+    def _clone_from_existing(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, t("wizard.step1.clone_browse_title"))
+        if not path:
+            return
+        try:
+            template = load_campaign(CampaignPaths(Path(path)).campaign_json)
+        except (ScanAssistantError, OSError) as exc:
+            message = (
+                format_business_error(exc) if isinstance(exc, ScanAssistantError) else str(exc)
+            )
+            QMessageBox.warning(self, t("wizard.step1.clone_failed_title"), message)
+            return
+        self.operator_edit.setText(template.operator)
+        self.institution_edit.setText(template.institution)
+        self.clone_label.setText(t("wizard.step1.clone_applied", name=template.name))
+        self.template_loaded.emit(template)
 
 
 class FoldersPage(QWizardPage):
@@ -259,6 +298,9 @@ class CsvPage(QWizardPage):
     def has_header(self) -> bool:
         return self.has_header_check.isChecked()
 
+    def apply_template(self, template: Campaign) -> None:
+        self.name_column_edit.setText(template.naming.csv_column)
+
 
 class FramingPage(QWizardPage):
     """Step 4: capture and framing."""
@@ -306,6 +348,19 @@ class FramingPage(QWizardPage):
         fixed = self.size_mode_combo.currentData() == "fixed"
         self.width_spin.setEnabled(fixed)
         self.height_spin.setEnabled(fixed)
+
+    def apply_template(self, template: Campaign) -> None:
+        framing = template.framing
+        self.enabled_check.setChecked(framing.enabled)
+        self.orientation_combo.setCurrentIndex(
+            self.orientation_combo.findData(framing.default_orientation)
+        )
+        self.size_mode_combo.setCurrentIndex(self.size_mode_combo.findData(framing.size_mode))
+        width, height = framing.final_dimensions_px
+        self.width_spin.setValue(width)
+        self.height_spin.setValue(height)
+        self.margin_spin.setValue(framing.margin_pct)
+        self._update_dimensions_enabled()
 
 
 class ExportsPage(QWizardPage):
@@ -385,6 +440,27 @@ class ExportsPage(QWizardPage):
         layout.addWidget(jpeg_master_group)
         layout.addWidget(jpeg_positive_group)
 
+    def apply_template(self, template: Campaign) -> None:
+        exports = template.exports
+        self.tiff_enabled.setChecked(exports.tiff.enabled)
+        self.tiff_bits.setCurrentText(str(exports.tiff.bits))
+        self.tiff_compression.setCurrentIndex(
+            self.tiff_compression.findData(exports.tiff.compression)
+        )
+        self.tiff_colorspace.setCurrentIndex(self.tiff_colorspace.findData(exports.tiff.colorspace))
+
+        self.jpeg_master_enabled.setChecked(exports.jpeg_master.enabled)
+        self.jpeg_master_quality.setValue(exports.jpeg_master.quality)
+        self.jpeg_master_long_edge.setValue(exports.jpeg_master.long_edge_px)
+
+        self.jpeg_positive_enabled.setChecked(exports.jpeg_positive.enabled)
+        self.jpeg_positive_quality.setValue(exports.jpeg_positive.quality)
+        self.jpeg_positive_long_edge.setValue(exports.jpeg_positive.long_edge_px)
+        self.jpeg_positive_mode.setCurrentIndex(
+            self.jpeg_positive_mode.findData(exports.jpeg_positive.mode)
+        )
+        self.jpeg_positive_flip.setChecked(exports.jpeg_positive.horizontal_flip)
+
 
 class MetadataPage(QWizardPage):
     """Step 6: IPTC metadata."""
@@ -411,6 +487,14 @@ class MetadataPage(QWizardPage):
     @property
     def keywords(self) -> list[str]:
         return [k.strip() for k in self.keywords_edit.text().split(",") if k.strip()]
+
+    def apply_template(self, template: Campaign) -> None:
+        iptc = template.iptc
+        self.creator_edit.setText(iptc.creator)
+        self.institution_edit.setText(iptc.institution)
+        self.copyright_edit.setText(iptc.copyright)
+        self.collection_edit.setText(iptc.collection)
+        self.keywords_edit.setText(", ".join(iptc.keywords))
 
 
 class SummaryPage(QWizardPage):
@@ -464,6 +548,20 @@ class NewCampaignWizard(QWizard):
         self.addPage(SummaryPage(self))
 
         self.result_campaign: CreatedCampaign | None = None
+        self._template: Campaign | None = None
+        self.identity_page.template_loaded.connect(self._apply_template)
+
+    def _apply_template(self, template: Campaign) -> None:
+        """ "Clone settings from…" (step 1): pre-fills every other page.
+
+        Identity (name/description) and folders/CSV stay untouched — those
+        are specific to this new campaign, never cloned.
+        """
+        self._template = template
+        self.csv_page.apply_template(template)
+        self.framing_page.apply_template(template)
+        self.exports_page.apply_template(template)
+        self.metadata_page.apply_template(template)
 
     def create_campaign_now(self) -> bool:
         campaign = self._build_campaign()
@@ -475,7 +573,9 @@ class NewCampaignWizard(QWizard):
                 has_header=self.csv_page.has_header,
             )
         except (InvalidCampaignError, InvalidCsvError) as exc:
-            QMessageBox.critical(self, t("wizard.creation_failed_title"), str(exc))
+            QMessageBox.critical(
+                self, t("wizard.creation_failed_title"), format_business_error(exc)
+            )
             return False
         except OSError as exc:
             QMessageBox.critical(self, t("wizard.creation_failed_title"), str(exc))
@@ -483,7 +583,16 @@ class NewCampaignWizard(QWizard):
         return True
 
     def _build_campaign(self) -> Campaign:
-        campaign = Campaign(name=self.identity_page.name_edit.text().strip())
+        # Starting from a deep copy of the cloned template (rather than
+        # `Campaign()` defaults) also carries over fields the wizard has no
+        # page for (equipment, capture options, media type…) — every field
+        # a wizard page *does* cover is still overwritten below from its
+        # widget, whether or not that widget was pre-filled from the
+        # template, so what's on screen always wins.
+        campaign = (
+            copy.deepcopy(self._template) if self._template is not None else Campaign(name="")
+        )
+        campaign.name = self.identity_page.name_edit.text().strip()
         campaign.description = self.identity_page.description_edit.toPlainText().strip()
         campaign.operator = self.identity_page.operator_edit.text().strip()
         campaign.institution = self.identity_page.institution_edit.text().strip()

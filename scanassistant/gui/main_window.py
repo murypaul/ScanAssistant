@@ -32,6 +32,7 @@ from scanassistant.config import save_config
 from scanassistant.core.export_runner import MasterExportRunner
 from scanassistant.core.fs import RealFileSystem
 from scanassistant.core.session import CaptureSession
+from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.screens.capture import CaptureScreen
 from scanassistant.gui.screens.home import HomeScreen
 from scanassistant.gui.screens.project import ProjectScreen
@@ -350,13 +351,16 @@ class MainWindow(QMainWindow):
     def _open_project(self, root: Path) -> None:
         try:
             opened = open_campaign(root)
-        except (ScanAssistantError, OSError) as exc:
+        except ScanAssistantError as exc:
+            QMessageBox.critical(self, t("home.open_failed_title"), format_business_error(exc))
+            return
+        except OSError as exc:
             QMessageBox.critical(self, t("home.open_failed_title"), str(exc))
             return
         try:
             lock = acquire_lock(opened.paths.lock_file)
         except ScanAssistantError as exc:
-            QMessageBox.critical(self, t("home.open_failed_title"), str(exc))
+            QMessageBox.critical(self, t("home.open_failed_title"), format_business_error(exc))
             return
 
         self._release_lock()
@@ -491,7 +495,9 @@ class MainWindow(QMainWindow):
         try:
             save_campaign(session.campaign, session.paths.campaign_json)
         except InvalidCampaignError as exc:
-            QMessageBox.warning(self, t("project.invalid_setting_title"), str(exc))
+            QMessageBox.warning(
+                self, t("project.invalid_setting_title"), format_business_error(exc)
+            )
             return
         session.journal.log(
             "PROJECT", "setting_changed", details={"key": key, "before": before, "after": after}
