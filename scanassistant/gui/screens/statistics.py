@@ -27,6 +27,7 @@ from scanassistant.core.completeness import (
 )
 from scanassistant.core.recovery import read_journal_entries
 from scanassistant.core.session import CaptureSession
+from scanassistant.gui.widgets.pin_checkbox import make_pin_checkbox
 from scanassistant.i18n import t
 from scanassistant.project.inventory import STATUS_COLUMN
 
@@ -84,6 +85,7 @@ class StatisticsScreen(QWidget):
         self.status_label.setWordWrap(True)
 
         layout = QVBoxLayout(self)
+        layout.addWidget(make_pin_checkbox(self))
         layout.addLayout(counters_row)
         layout.addLayout(actions_row)
         layout.addWidget(self.gaps_table, 1)

@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QStackedWidget,
     QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
 
 from scanassistant import __version__
@@ -36,14 +38,17 @@ from scanassistant.gui.screens.project import ProjectScreen
 from scanassistant.gui.screens.statistics import StatisticsScreen
 from scanassistant.gui.theme import apply_theme
 from scanassistant.gui.widgets.export_queue_panel import ExportQueuePanel
+from scanassistant.gui.widgets.history_panel import HistoryPanel
+from scanassistant.gui.widgets.pin_checkbox import make_pin_checkbox
+from scanassistant.gui.widgets.positive_settings_panel import PositiveSettingsPanel
 from scanassistant.gui.wizard.new_campaign import NewCampaignWizard
 from scanassistant.i18n import t
 from scanassistant.imaging.raw import RawpyDecoder
 from scanassistant.journal.journal import Journal
 from scanassistant.metadata.writer import ExifToolMetadataWriter
 from scanassistant.metadata.writer import is_available as is_exiftool_available
-from scanassistant.project.campaign import Campaign, open_campaign
-from scanassistant.project.errors import ScanAssistantError
+from scanassistant.project.campaign import Campaign, open_campaign, save_campaign
+from scanassistant.project.errors import InvalidCampaignError, ScanAssistantError
 from scanassistant.project.inventory import Inventory
 from scanassistant.project.lock import ProjectLock, acquire_lock
 from scanassistant.watcher.monitor import FolderMonitor
@@ -59,7 +64,7 @@ F1       This help
 
 Capture mode (from M4):
 Enter    Finalize the current image        R   Reject the current image
-V        Toggle orientation                 G   Go to name
+V        Rotate 90°                          G   Go to name
 Left/Right  Previous/next name              C   Recompute frame
 M        Edit frame                         P   Positive preview
 T        Master preview                     Space   Pause / Resume
@@ -74,6 +79,7 @@ class MainWindow(QMainWindow):
         self._lock: ProjectLock | None = None
         self._lock_was_stale = False
         self._journal: Journal | None = None
+        self._shortcuts_window: QWidget | None = None
 
         self.setWindowTitle(t("home.title"))
         self.setMinimumSize(1280, 720)
@@ -90,6 +96,7 @@ class MainWindow(QMainWindow):
         self.capture_screen = CaptureScreen()
         self.capture_screen.stopped.connect(self._on_capture_stopped)
         self.capture_screen.queue_changed.connect(self._refresh_export_queue_panel)
+        self.capture_screen.queue_changed.connect(self._refresh_history_panel)
 
         self.statistics_screen = StatisticsScreen()
 
@@ -105,6 +112,22 @@ class MainWindow(QMainWindow):
         self.export_queue_dock.setWidget(self.export_queue_panel)
         self.export_queue_dock.setVisible(False)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.export_queue_dock)
+
+        self.history_panel = HistoryPanel()
+        self.history_panel.image_activated.connect(self._on_history_image_activated)
+        self.history_dock = QDockWidget(t("history.title"), self)
+        self.history_dock.setObjectName("historyDock")
+        self.history_dock.setWidget(self.history_panel)
+        self.history_dock.setVisible(False)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.history_dock)
+
+        self.positive_settings_panel = PositiveSettingsPanel()
+        self.positive_settings_panel.setting_changed.connect(self._on_positive_setting_changed)
+        self.positive_settings_dock = QDockWidget(t("positive_settings.title"), self)
+        self.positive_settings_dock.setObjectName("positiveSettingsDock")
+        self.positive_settings_dock.setWidget(self.positive_settings_panel)
+        self.positive_settings_dock.setVisible(False)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.positive_settings_dock)
 
         self._build_menus()
         self._show_home()
@@ -195,8 +218,8 @@ class MainWindow(QMainWindow):
         self.action_edit_frame = self._add_action(
             self.processing_menu, t("menu.processing_edit_frame"), None, None
         )
-        self.action_toggle_orientation = self._add_action(
-            self.processing_menu, t("menu.processing_toggle_orientation"), None, None
+        self.action_rotate_image = self._add_action(
+            self.processing_menu, t("menu.processing_rotate"), None, None
         )
         self.action_positive_preview = self._add_action(
             self.processing_menu, t("menu.processing_positive_preview"), None, None
@@ -210,7 +233,7 @@ class MainWindow(QMainWindow):
         for action in (
             self.action_recompute_frame,
             self.action_edit_frame,
-            self.action_toggle_orientation,
+            self.action_rotate_image,
             self.action_positive_preview,
             self.action_master_preview,
             self.action_regenerate,
@@ -253,6 +276,23 @@ class MainWindow(QMainWindow):
         )
         self.action_export_queue.setCheckable(True)
         self.export_queue_dock.visibilityChanged.connect(self.action_export_queue.setChecked)
+
+        self.action_history = self._add_action(
+            self.view_menu, t("menu.view_history"), None, self._toggle_history_panel
+        )
+        self.action_history.setCheckable(True)
+        self.history_dock.visibilityChanged.connect(self.action_history.setChecked)
+
+        self.action_positive_settings = self._add_action(
+            self.view_menu,
+            t("menu.view_positive_settings"),
+            None,
+            self._toggle_positive_settings_panel,
+        )
+        self.action_positive_settings.setCheckable(True)
+        self.positive_settings_dock.visibilityChanged.connect(
+            self.action_positive_settings.setChecked
+        )
 
         self.help_menu = menu_bar.addMenu(t("menu.help"))
         self._add_action(self.help_menu, t("menu.help_shortcuts"), "F1", self._show_shortcuts)
@@ -423,6 +463,40 @@ class MainWindow(QMainWindow):
         tasks = session.export_queue.pending_tasks() if session is not None else []
         self.export_queue_panel.refresh(tasks)
 
+    # --- "Session history" panel ------------------------------------------------
+
+    def _toggle_history_panel(self) -> None:
+        self.history_dock.setVisible(not self.history_dock.isVisible())
+        self._refresh_history_panel()
+
+    def _refresh_history_panel(self) -> None:
+        session = self.capture_screen.session
+        if session is None:
+            self.history_panel.clear_history()
+            return
+        self.history_panel.refresh(session.session_history(), session.paths)
+
+    def _on_history_image_activated(self, name: str) -> None:
+        self.capture_screen.reopen_image_for_correction(name)
+
+    # --- "Positive settings" panel ----------------------------------------------
+
+    def _toggle_positive_settings_panel(self) -> None:
+        self.positive_settings_dock.setVisible(not self.positive_settings_dock.isVisible())
+
+    def _on_positive_setting_changed(self, key: str, before: object, after: object) -> None:
+        session = self.capture_screen.session
+        if session is None:
+            return
+        try:
+            save_campaign(session.campaign, session.paths.campaign_json)
+        except InvalidCampaignError as exc:
+            QMessageBox.warning(self, t("project.invalid_setting_title"), str(exc))
+            return
+        session.journal.log(
+            "PROJECT", "setting_changed", details={"key": key, "before": before, "after": after}
+        )
+
     # --- metadata ----------------------------------------------------------
 
     def _on_check_exiftool(self) -> None:
@@ -469,7 +543,7 @@ class MainWindow(QMainWindow):
     _PROCESSING_ACTION_SLOTS = (
         "action_recompute_frame",
         "action_edit_frame",
-        "action_toggle_orientation",
+        "action_rotate_image",
         "action_positive_preview",
         "action_master_preview",
     )
@@ -506,6 +580,7 @@ class MainWindow(QMainWindow):
         )
         self._lock_was_stale = False  # consumed: no double recovery
         self._wire_capture_actions()
+        self.positive_settings_panel.load(campaign.exports.jpeg_positive)
         self._show_capture()
 
     def _check_capture_entry_conditions(
@@ -555,7 +630,7 @@ class MainWindow(QMainWindow):
             (
                 self.capture_screen.recompute_frame,
                 self.capture_screen.enter_edit_mode,
-                self.capture_screen.toggle_orientation_action,
+                self.capture_screen.rotate_image_action,
                 self.capture_screen.toggle_positive_preview,
                 self.capture_screen.toggle_master_preview,
             ),
@@ -587,7 +662,7 @@ class MainWindow(QMainWindow):
             (
                 self.capture_screen.recompute_frame,
                 self.capture_screen.enter_edit_mode,
-                self.capture_screen.toggle_orientation_action,
+                self.capture_screen.rotate_image_action,
                 self.capture_screen.toggle_positive_preview,
                 self.capture_screen.toggle_master_preview,
             ),
@@ -600,6 +675,8 @@ class MainWindow(QMainWindow):
 
     def _on_capture_stopped(self) -> None:
         self._unwire_capture_actions()
+        self._refresh_history_panel()
+        self.positive_settings_panel.clear_panel()
         self.project_screen.refresh()
         self._show_project()
 
@@ -631,13 +708,23 @@ class MainWindow(QMainWindow):
     # --- help ----------------------------------------------------------------
 
     def _show_shortcuts(self) -> None:
-        text_edit = QTextEdit(self)
-        text_edit.setReadOnly(True)
-        text_edit.setPlainText(_SHORTCUTS_TEXT)
-        text_edit.setWindowTitle(t("menu.help_shortcuts"))
-        text_edit.resize(520, 360)
-        text_edit.show()
-        self._shortcuts_window = text_edit  # keep a reference so the GC doesn't collect it
+        # No parent: a `QWidget(self)` would be embedded as a *child* of the
+        # main window (no title bar, not closable/movable) rather than
+        # becoming its own top-level window — same fix as `StatisticsScreen`.
+        if self._shortcuts_window is None:
+            window = QWidget()
+            window.setWindowTitle(t("menu.help_shortcuts"))
+            window.resize(520, 360)
+            text_edit = QTextEdit(window)
+            text_edit.setReadOnly(True)
+            text_edit.setPlainText(_SHORTCUTS_TEXT)
+            layout = QVBoxLayout(window)
+            layout.addWidget(make_pin_checkbox(window))
+            layout.addWidget(text_edit)
+            self._shortcuts_window = window
+        self._shortcuts_window.show()
+        self._shortcuts_window.raise_()
+        self._shortcuts_window.activateWindow()
 
     def _show_about(self) -> None:
         QMessageBox.about(self, t("menu.help_about"), t("app.version_line", version=__version__))

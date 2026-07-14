@@ -142,7 +142,7 @@ def _finalize_in_review_image(session: CaptureSession) -> str | None:
         raw_path=raw_path,
         extension=current.extension,
         source_file=current.source_file,
-        orientation=current.orientation,
+        rotation_deg=current.rotation_deg,
         x=current.framing.x,
         y=current.framing.y,
         width=current.framing.width,

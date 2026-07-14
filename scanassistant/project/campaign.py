@@ -90,7 +90,7 @@ class ManualPositiveSettings:
 class JpegPositiveExportConfig:
     enabled: bool = True
     quality: int = 90
-    long_edge_px: int = 3000
+    long_edge_px: int = 0  # 0 = full size
     mode: str = "auto"  # simple | auto | manual
     horizontal_flip: bool = True
     manual_settings: ManualPositiveSettings = field(default_factory=ManualPositiveSettings)
@@ -262,14 +262,20 @@ class CreatedCampaign:
     paths: CampaignPaths
 
 
-def create_campaign(root: Path, campaign: Campaign, csv_source: Path) -> CreatedCampaign:
+def create_campaign(
+    root: Path, campaign: Campaign, csv_source: Path, *, has_header: bool = True
+) -> CreatedCampaign:
     """Creates a complete campaign on disk.
 
     The source CSV is fully validated (in memory, `import_csv`) before
     anything is created on disk: a rejected CSV (E-11) leaves no trace.
+
+    `has_header`: only relevant for this one-time import of `csv_source` — the
+    internal `inventory.csv` this creates always has a header row (written by
+    `Inventory.save`), so reloading it later never needs this parameter.
     """
     campaign.validate()
-    imported = import_csv(csv_source, campaign.naming.csv_column)
+    imported = import_csv(csv_source, campaign.naming.csv_column, has_header=has_header)
 
     paths = create_campaign_tree(root)
     save_campaign(campaign, paths.campaign_json)

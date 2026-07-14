@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import csv
 import io
+import itertools
 import re
 import shutil
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -165,12 +167,22 @@ class ImportedInventory:
 
 
 def import_csv(
-    source_path: Path, name_column: str = "filename", *, fix_invalid_characters: bool = True
+    source_path: Path,
+    name_column: str = "filename",
+    *,
+    fix_invalid_characters: bool = True,
+    has_header: bool = True,
 ) -> ImportedInventory:
     """Imports an external CSV (also used to reload `inventory.csv`).
 
     Raises `InvalidCsvError` (E-11) without writing anything to disk if the
     CSV is rejected: all validation happens in memory.
+
+    `has_header`: whether the first physical line is a column-name row
+    (default) or already real data. There is no content-based detection —
+    a headerless, single-column CSV would otherwise silently lose its
+    first name (swallowed as the "column name"), so the caller (CSV
+    wizard step) must say which case this is.
     """
     raw = Path(source_path).read_bytes()
     text, warnings = _decode_csv_bytes(raw)
@@ -179,9 +191,20 @@ def import_csv(
     # `csv.reader` (rather than `DictReader`): `DictReader` silently
     # swallows blank lines without exposing them, but they must be counted.
     raw_reader = csv.reader(io.StringIO(text), delimiter=delimiter)
-    original_fieldnames = next(raw_reader, [])
-    if not original_fieldnames:
-        raise InvalidCsvError(["the CSV file has no header row"])
+    first_row = next(raw_reader, [])
+    if not first_row:
+        message = "the CSV file has no header row" if has_header else "the CSV file is empty"
+        raise InvalidCsvError([message])
+
+    if has_header:
+        original_fieldnames = first_row
+        data_rows: Iterable[tuple[int, list[str]]] = enumerate(raw_reader, start=2)
+    else:
+        # No real header text to match aliases against: the first column is
+        # named after the requested `name_column` directly, so it resolves
+        # below without ambiguity; extra columns get positional names.
+        original_fieldnames = [name_column] + [f"column_{i}" for i in range(2, len(first_row) + 1)]
+        data_rows = itertools.chain([(1, first_row)], enumerate(raw_reader, start=2))
 
     resolved_name_column = _resolve_name_column(original_fieldnames, name_column)
 
@@ -191,7 +214,7 @@ def import_csv(
     blank_skipped = 0
     processed_rows: list[dict[str, str]] = []
 
-    for line_number, raw_fields in enumerate(raw_reader, start=2):
+    for line_number, raw_fields in data_rows:
         if not raw_fields:
             blank_skipped += 1
             continue

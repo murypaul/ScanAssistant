@@ -168,7 +168,7 @@ class MasterExportRunner:
         exports = self._campaign.exports
         key: _CacheKey = (
             name,
-            context.orientation,
+            context.rotation_deg,
             (context.x, context.y, context.width, context.height, context.angle_deg),
             exports.tiff.colorspace,
             framing.size_mode,
@@ -188,7 +188,7 @@ class MasterExportRunner:
             self._decoder,
             context.raw_path,
             frame,
-            orientation=context.orientation,
+            rotation_deg=context.rotation_deg,
             size_mode=framing.size_mode,
             final_dimensions_px=_final_dimensions(framing.final_dimensions_px),
             colorspace=exports.tiff.colorspace,
