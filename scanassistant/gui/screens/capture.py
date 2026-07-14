@@ -46,7 +46,7 @@ from scanassistant.core.events import (
 from scanassistant.core.events import Warning as WarningEvent
 from scanassistant.core.export_runner import MasterExportRunner
 from scanassistant.core.fs import FileSystem
-from scanassistant.core.queue import ExportRunner
+from scanassistant.core.queue import ExportExecutor, ExportRunner, InlineExportExecutor
 from scanassistant.core.session import CaptureSession, SessionHistoryEntry
 from scanassistant.gui.errors import format_critical, format_warning
 from scanassistant.gui.preview_worker import PreviewResult, PreviewWorker
@@ -121,11 +121,17 @@ class CaptureScreen(QWidget):
         *,
         decoder: RawDecoder | None = None,
         export_runner: ExportRunner | None = None,
+        export_executor: ExportExecutor | None = None,
     ) -> None:
         super().__init__(parent)
         self.session: CaptureSession | None = None
         self._decoder = decoder or RawpyDecoder()
         self._export_runner_override = export_runner
+        # Default stays `InlineExportExecutor` (synchronous, deterministic —
+        # what every test relies on): only `gui.main_window`'s real,
+        # user-facing instantiation passes a `ThreadedExportExecutor`, so a
+        # slow export never freezes the Qt thread (DECISIONS.md I-92/I-98).
+        self._export_executor_override = export_executor
         self._preview_worker: PreviewWorker | None = None
         self._stabilizing: set[Path] = set()
         self._loaded_preview_for: str | None = None
@@ -289,6 +295,7 @@ class CaptureScreen(QWidget):
             fs=fs,
             monitor=monitor,
             export_runner=export_runner,
+            export_executor=self._export_executor_override or InlineExportExecutor(),
         )
         if was_stale:
             report = perform_crash_recovery(self.session)
@@ -312,7 +319,8 @@ class CaptureScreen(QWidget):
     def stop(self) -> None:
         self._pump_timer.stop()
         if self.session is not None:
-            self.session.stop()
+            self.session.stop()  # already waits for the export queue to drain
+            self.session.export_executor.shutdown()  # releases the background thread, if any
         self.session = None
         self._pending_conflict = None
         self.conflict_panel.setVisible(False)
