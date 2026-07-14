@@ -45,6 +45,16 @@ keyboard shortcuts.
   - Debian/Ubuntu/Mint: `sudo apt install libimage-exiftool-perl`
   - Windows: download the executable from [exiftool.org](https://exiftool.org)
     and put it on your `PATH` (or point to it in the app's settings).
+- **Hardware**: nothing special — no GPU, no heavy AI model, any machine
+  from the last several years is enough. 4 GB RAM works, 8 GB is
+  comfortable. **Disk space is the real constraint**, not CPU or RAM: each
+  digitized negative produces a RAW file plus a 16-bit TIFF master (by far
+  the largest piece — well over 100 MB at typical DSLR resolutions) and
+  two JPEGs, so budget roughly 150–250 MB per image; a campaign of a few
+  thousand negatives needs hundreds of gigabytes. Point the watched/output
+  storage at something sized for that (external drive, NAS…) rather than a
+  small internal drive. The app itself warns below 10 GB free and stops
+  below 2 GB (configurable).
 
 No network access is required or used at runtime — everything runs locally.
 
@@ -137,6 +147,17 @@ Voir [`USER_GUIDE.fr.md`](USER_GUIDE.fr.md) pour le flux complet, les
   - Debian/Ubuntu/Mint : `sudo apt install libimage-exiftool-perl`
   - Windows : télécharger l'exécutable depuis [exiftool.org](https://exiftool.org)
     et le placer dans le `PATH` (ou l'indiquer dans les réglages de l'app).
+- **Matériel** : rien de particulier — pas de GPU, pas de modèle d'IA
+  lourd, n'importe quelle machine des dernières années suffit. 4 Go de RAM
+  fonctionnent, 8 Go sont confortables. **L'espace disque est la vraie
+  contrainte**, pas le CPU ni la RAM : chaque négatif numérisé produit un
+  RAW, un TIFF maître 16 bits (de loin le plus gros — largement plus de
+  100 Mo aux résolutions habituelles de reflex) et deux JPEG, donc comptez
+  environ 150 à 250 Mo par image ; une campagne de quelques milliers de
+  négatifs demande plusieurs centaines de gigaoctets. Prévoyez un stockage
+  (disque externe, NAS…) dimensionné en conséquence plutôt qu'un petit
+  disque interne. L'app elle-même avertit sous 10 Go libres et s'arrête
+  sous 2 Go (seuils configurables).
 
 Aucun accès réseau n'est requis ni utilisé à l'exécution — tout tourne en
 local.
