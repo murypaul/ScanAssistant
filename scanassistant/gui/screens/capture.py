@@ -566,25 +566,34 @@ class CaptureScreen(QWidget):
             self.preview_area.set_frame_overlay(self._current_frame_result)
 
     def _render_master_preview(self, preview_pixels: np.ndarray) -> np.ndarray:
-        """Preview with the frame applied, on the preview already in memory — no RAW redecode.
+        """Preview with the frame *and rotation* applied, on the preview already in
+        memory — no RAW redecode.
 
         Same geometry logic as the real export (`imaging.geometry.apply_geometry`,
         reused as-is), but always in `native` mode: this toggle shows the
-        crop/deskew, not the campaign's `fixed` scaling, which wouldn't make
-        sense at preview resolution.
+        crop/deskew/rotation, not the campaign's `fixed` scaling, which
+        wouldn't make sense at preview resolution.
+
+        Falls back to a whole-image `FrameGeometry` (width/height 0) rather
+        than bailing out to the raw, unrotated `preview_pixels` when no frame
+        is available yet (detection disabled, or still running in the
+        background): `apply_geometry` already turns a degenerate frame into
+        "crop = whole image" — dropping straight to `preview_pixels` here
+        used to also skip the rotation, which is the one thing this preview
+        exists to show (DECISIONS.md I-99).
         """
         current = self.session.state.current_image if self.session is not None else None
-        frame = self._current_frame_result
-        if current is None or frame is None:
+        if current is None:
             return preview_pixels
+        frame = self._current_frame_result
         geometry = apply_geometry(
             preview_pixels,
             FrameGeometry(
-                x=frame.x,
-                y=frame.y,
-                width=frame.width,
-                height=frame.height,
-                angle_deg=frame.angle_deg,
+                x=frame.x if frame is not None else 0,
+                y=frame.y if frame is not None else 0,
+                width=frame.width if frame is not None else 0,
+                height=frame.height if frame is not None else 0,
+                angle_deg=frame.angle_deg if frame is not None else 0.0,
             ),
             rotation_deg=current.rotation_deg,
             size_mode="native",
@@ -592,14 +601,20 @@ class CaptureScreen(QWidget):
         return geometry.pixels
 
     def _render_positive_preview(self, preview_pixels: np.ndarray) -> np.ndarray:
-        """Positive rendered from the preview already in memory, using campaign settings."""
+        """Positive rendered from the preview already in memory, using campaign settings.
+
+        Crop/deskew/rotation applied first (same geometry as the master
+        preview, DECISIONS.md I-99) so the positive preview matches what the
+        actual export will look like, not the raw unrotated negative.
+        """
         assert self.session is not None
         config = self.session.campaign.exports.jpeg_positive
         manual = config.manual_settings
+        framed_pixels = self._render_master_preview(preview_pixels)
         # `imaging.positive.render_positive` expects 16-bit input; the preview
         # is 8-bit (`imaging.preview.Preview.pixels`) — exact rescale
         # (255 * 257 = 65535), no extra library needed.
-        array16 = preview_pixels.astype(np.uint16) * 257
+        array16 = framed_pixels.astype(np.uint16) * 257
         positive16 = render_positive(
             array16,
             horizontal_flip=config.horizontal_flip,

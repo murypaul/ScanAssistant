@@ -478,7 +478,9 @@ class MainWindow(QMainWindow):
         if session is None:
             self.history_panel.clear_history()
             return
-        self.history_panel.refresh(session.session_history(), session.paths)
+        self.history_panel.refresh(
+            session.session_history(), session.paths, session.campaign.exports.jpeg_positive.suffix
+        )
 
     def _on_history_image_activated(self, name: str) -> None:
         self.capture_screen.reopen_image_for_correction(name)

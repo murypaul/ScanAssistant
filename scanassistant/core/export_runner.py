@@ -137,8 +137,8 @@ class MasterExportRunner:
             return path
 
         if kind == "jpeg_positive":
-            path = self._paths.jpeg_positive_dir / f"{name}_POS.jpg"
             positive_cfg = self._campaign.exports.jpeg_positive
+            path = self._paths.jpeg_positive_dir / f"{name}{positive_cfg.suffix}.jpg"
             manual = positive_cfg.manual_settings
             positive16 = positive_pipeline.render_positive(
                 master.pixels,

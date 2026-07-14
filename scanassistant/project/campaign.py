@@ -93,6 +93,7 @@ class JpegPositiveExportConfig:
     long_edge_px: int = 0  # 0 = full size
     mode: str = "auto"  # simple | auto | manual
     horizontal_flip: bool = True
+    suffix: str = "_POS"  # appended to <NAME> in JPEG_POSITIVE/<NAME><suffix>.jpg
     manual_settings: ManualPositiveSettings = field(default_factory=ManualPositiveSettings)
 
 
@@ -214,6 +215,11 @@ class Campaign:
         if self.exports.jpeg_positive.mode not in {"simple", "auto", "manual"}:
             raise InvalidCampaignError(
                 "exports.jpeg_positive.mode", "must be one of simple, auto, manual"
+            )
+        if _INVALID_FOLDER_NAME_CHARS.search(self.exports.jpeg_positive.suffix):
+            raise InvalidCampaignError(
+                "exports.jpeg_positive.suffix",
+                "must not contain path separators or control characters",
             )
         manual = self.exports.jpeg_positive.manual_settings
         if not -3 <= manual.exposure_ev <= 3:
