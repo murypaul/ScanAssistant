@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWizardPage,
 )
 
+from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.widgets.csv_table import CsvTableWidget
 from scanassistant.i18n import t
 from scanassistant.project.campaign import Campaign, CreatedCampaign, create_campaign
@@ -475,7 +476,9 @@ class NewCampaignWizard(QWizard):
                 has_header=self.csv_page.has_header,
             )
         except (InvalidCampaignError, InvalidCsvError) as exc:
-            QMessageBox.critical(self, t("wizard.creation_failed_title"), str(exc))
+            QMessageBox.critical(
+                self, t("wizard.creation_failed_title"), format_business_error(exc)
+            )
             return False
         except OSError as exc:
             QMessageBox.critical(self, t("wizard.creation_failed_title"), str(exc))

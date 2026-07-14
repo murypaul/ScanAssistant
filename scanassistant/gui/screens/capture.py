@@ -48,6 +48,7 @@ from scanassistant.core.export_runner import MasterExportRunner
 from scanassistant.core.fs import FileSystem
 from scanassistant.core.queue import ExportRunner
 from scanassistant.core.session import CaptureSession, SessionHistoryEntry
+from scanassistant.gui.errors import format_critical, format_warning
 from scanassistant.gui.preview_worker import PreviewResult, PreviewWorker
 from scanassistant.gui.widgets.preview_area import PreviewArea
 from scanassistant.i18n import t
@@ -338,12 +339,12 @@ class CaptureScreen(QWidget):
             self._set_status(t("capture.status_conflict", name=event.name))
             self._show_conflict_panel(event)
         elif isinstance(event, CriticalError):
-            self._set_status(t("capture.status_critical", code=event.code))
-            self._show_critical_banner(event.code)
+            self._set_status(format_critical(event.code, event.details))
+            self._show_critical_banner(event.code, event.details)
         elif isinstance(event, CriticalResolved):
             self._hide_critical_banner()
         elif isinstance(event, WarningEvent):
-            self._set_status(t("capture.status_warning", code=event.code))
+            self._set_status(format_warning(event.code, event.details))
             self._show_warning_banner(event.code, event.details)
         elif isinstance(event, ImageErrored):
             self._set_status(t("capture.status_image_errored", name=event.name, code=event.code))
@@ -360,21 +361,17 @@ class CaptureScreen(QWidget):
         would be unwarranted complexity here.
         """
         self._last_warning = (code, details)
-        self.warning_banner.setText(t("capture.warning_banner", code=code))
+        self.warning_banner.setText(format_warning(code, details))
         self.warning_banner.setVisible(True)
 
     def _show_warning_detail(self) -> None:
         if self._last_warning is None:
             return
         code, details = self._last_warning
-        if "message" in details:
-            text = str(details["message"])
-        else:
-            text = "\n".join(f"{k}: {v}" for k, v in details.items())
-        QMessageBox.information(self, code, text)
+        QMessageBox.information(self, code, format_warning(code, details))
 
-    def _show_critical_banner(self, code: str) -> None:
-        self.critical_banner_label.setText(t("capture.critical_banner", code=code))
+    def _show_critical_banner(self, code: str, details: dict[str, object] | None = None) -> None:
+        self.critical_banner_label.setText(format_critical(code, details or {}))
         self.critical_banner.setVisible(True)
         self.resume_button.setFocus()
 
