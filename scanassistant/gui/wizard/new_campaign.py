@@ -172,6 +172,10 @@ class CsvPage(QWizardPage):
         self.name_column_edit = QLineEdit("filename")
         self.name_column_edit.editingFinished.connect(self._revalidate)
 
+        self.has_header_check = QCheckBox(t("wizard.step3.has_header"))
+        self.has_header_check.setChecked(True)
+        self.has_header_check.toggled.connect(self._revalidate)
+
         self.report_label = QLabel()
         self.report_label.setWordWrap(True)
 
@@ -180,6 +184,7 @@ class CsvPage(QWizardPage):
         form = QFormLayout()
         form.addRow(t("wizard.step3.csv_path"), path_row)
         form.addRow(t("wizard.step3.name_column"), self.name_column_edit)
+        form.addRow(self.has_header_check)
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
@@ -206,7 +211,9 @@ class CsvPage(QWizardPage):
 
         try:
             imported = import_csv(
-                Path(path_text), self.name_column_edit.text().strip() or "filename"
+                Path(path_text),
+                self.name_column_edit.text().strip() or "filename",
+                has_header=self.has_header_check.isChecked(),
             )
         except InvalidCsvError as exc:
             problems = exc.details.get("problems", [])
@@ -247,6 +254,10 @@ class CsvPage(QWizardPage):
     def name_column(self) -> str:
         assert self._imported is not None
         return self._imported.inventory.name_column
+
+    @property
+    def has_header(self) -> bool:
+        return self.has_header_check.isChecked()
 
 
 class FramingPage(QWizardPage):
@@ -350,7 +361,7 @@ class ExportsPage(QWizardPage):
         self.jpeg_positive_quality.setValue(90)
         self.jpeg_positive_long_edge = QSpinBox()
         self.jpeg_positive_long_edge.setRange(0, 20000)
-        self.jpeg_positive_long_edge.setValue(3000)
+        self.jpeg_positive_long_edge.setValue(0)
         self.jpeg_positive_long_edge.setSpecialValueText(t("wizard.step5.long_edge_full"))
         self.jpeg_positive_mode = QComboBox()
         self.jpeg_positive_mode.addItem(t("wizard.step5.mode_simple"), "simple")
@@ -458,7 +469,10 @@ class NewCampaignWizard(QWizard):
         campaign = self._build_campaign()
         try:
             self.result_campaign = create_campaign(
-                self.folders_page.root, campaign, self.csv_page.csv_path
+                self.folders_page.root,
+                campaign,
+                self.csv_page.csv_path,
+                has_header=self.csv_page.has_header,
             )
         except (InvalidCampaignError, InvalidCsvError) as exc:
             QMessageBox.critical(self, t("wizard.creation_failed_title"), str(exc))

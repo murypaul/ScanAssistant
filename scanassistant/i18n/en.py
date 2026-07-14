@@ -178,6 +178,7 @@ STRINGS: dict[str, str] = {
     "wizard.step3.csv_path": "CSV file",
     "wizard.step3.csv_browse": "Select a CSV file",
     "wizard.step3.name_column": "Name column",
+    "wizard.step3.has_header": "First row is a header (uncheck for a plain list of names)",
     "wizard.step3.preview_label": "Preview (first 20 rows):",
     "wizard.step3.validation_ok": "{rows} row(s) ready to import.",
     "wizard.step3.validation_warnings": " ({count} warning(s))",
