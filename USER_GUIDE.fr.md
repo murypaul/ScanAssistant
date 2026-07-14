@@ -8,21 +8,22 @@ capture, et tout ce que propose l'interface. Pour l'installation, voir
 
 ## Vue d'ensemble
 
-Une **campagne** correspond à une session de numérisation : une
-arborescence de dossiers, un fichier de réglages, et un inventaire (une
-liste CSV de noms à attribuer, dans l'ordre). Une fois la campagne ouverte,
-le **mode capture** fait le reste :
+Une **campagne**, c'est une session de numérisation : une arborescence de
+dossiers, un fichier de réglages, et un inventaire (une liste CSV de noms à
+attribuer, dans l'ordre). Une fois la campagne ouverte, le **mode capture**
+fait le reste :
 
-1. Tu poses un négatif sur la table lumineuse et déclenches. L'appareil (ou
-   son outil de transfert) écrit le fichier RAW dans un dossier surveillé.
-2. L'application détecte le nouveau fichier, attend qu'il cesse de
-   grossir (la copie est terminée), puis le déplace et le renomme selon la
-   prochaine entrée de l'inventaire.
+1. Vous posez un négatif sur la table lumineuse et déclenchez. L'appareil
+   (ou son outil de transfert) écrit le fichier RAW dans le dossier
+   surveillé.
+2. L'application détecte le nouveau fichier, attend que sa taille se
+   stabilise (signe que la copie est terminée), puis le déplace et le
+   renomme selon la prochaine entrée de l'inventaire.
 3. Un aperçu s'affiche avec le cadre détecté et un indicateur de confiance.
 4. Les exports TIFF, JPEG maître et JPEG positif se génèrent en
    arrière-plan, métadonnées incluses.
-5. Tu poses l'objet suivant. Le précédent est automatiquement validé dès
-   l'arrivée du suivant — rejette-le d'abord (`R`) si quelque chose
+5. Vous posez l'objet suivant. Le précédent est automatiquement validé dès
+   l'arrivée du suivant — rejetez-le d'abord (`R`) si quelque chose
    clochait.
 
 Rien n'est jamais supprimé : un RAW rejeté part dans `REJECTED/`, un
@@ -39,10 +40,10 @@ Depuis l'écran d'accueil, **New campaign** ouvre un assistant en plusieurs
    pour les fichiers entrants (les fichiers qui y sont déposés sont
    déplacés dans la campagne une fois vérifiés).
 3. **CSV** — choisir le fichier d'inventaire ; l'application détecte son
-   dialecte et te fait confirmer la colonne des noms, avec un aperçu et un
-   rapport de validation avant tout import.
+   format et vous demande de confirmer quelle colonne contient les noms,
+   avec un aperçu et un rapport de validation avant l'import.
 4. **Prise de vue et recadrage** — orientation par défaut, mode de
-   dimensions de sortie, marges, recadrage automatique actif ou non.
+   dimensions de sortie, marges, recadrage automatique activé ou non.
 5. **Exports** — réglages pour le TIFF, le JPEG maître et le JPEG positif.
 6. **Métadonnées** — champs IPTC écrits sur chaque export (créateur,
    institution, copyright, collection, mots-clés).
@@ -51,11 +52,11 @@ Depuis l'écran d'accueil, **New campaign** ouvre un assistant en plusieurs
 
 ## L'écran projet
 
-Ouvert hors mode capture. Onglets : **Summary**, **Folders**, **Capture**,
-**Framing**, **Exports**, **Metadata**, **CSV** (table en lecture seule de
-l'inventaire — recherche, filtre par statut, déplacement du curseur sur
-une ligne), et **Log** (événements du jour, filtrables, avec un raccourci
-vers le dossier de logs).
+Il s'ouvre en dehors du mode capture. Onglets : **Summary**, **Folders**,
+**Capture**, **Framing**, **Exports**, **Metadata**, **CSV** (table de
+l'inventaire en lecture seule, avec recherche, filtre par statut et
+positionnement du curseur sur une ligne), et **Log** (événements du jour,
+filtrables, avec un raccourci vers le dossier de logs).
 
 Chaque changement de réglage est appliqué et enregistré immédiatement — il
 n'y a pas d'étape de sauvegarde séparée.
@@ -87,9 +88,9 @@ cadre réellement appliqué (plutôt que le cadre brut avec surimpression) ;
 
 ## Raccourcis clavier
 
-Tout ce qui suit fonctionne sans toucher la souris ; la souris reste
-disponible partout. Raccourcis à base de lettres (indépendants de la
-disposition clavier), non reconfigurables pour l'instant.
+Tout ce qui suit se fait sans toucher la souris, qui reste disponible à
+tout moment. Les raccourcis reposent sur des lettres (indépendants de la
+disposition du clavier) et ne sont pas encore reconfigurables.
 
 ### Capture
 
@@ -143,12 +144,12 @@ disposition clavier), non reconfigurables pour l'instant.
 
 ## Recadrage et confiance
 
-Le cadre est détecté automatiquement sur l'aperçu embarqué par vision
-classique (aucun ratio ni taille présumés — fonctionne sur des formats
-mélangés). Chaque détection reçoit un score de confiance calculé à partir
-de cinq critères indépendants : à quel point le rectangle remplit le
-cadre, sa rectangularité, sa taille plausible, s'il touche le bord de
-l'image, et sa solidité.
+Le cadre est détecté automatiquement sur l'aperçu embarqué, par vision
+classique, sans présumer d'un ratio ou d'une taille — ce qui permet de
+traiter des formats mélangés. Chaque détection reçoit un score de
+confiance basé sur cinq critères indépendants : le taux de remplissage du
+cadre, sa rectangularité, la plausibilité de sa taille, le contact avec le
+bord de l'image, et sa solidité.
 
 - **Fiable** (vert) — utilisé tel quel.
 - **À vérifier** (orange) — mérite un coup d'œil avant de passer à la
@@ -158,8 +159,8 @@ l'image, et sa solidité.
 
 Les corrections manuelles et les nouvelles détections ne régénèrent les
 exports que de l'image concernée ; les images déjà finalisées restent
-inchangées (utilise la vérification de complétude + régénération pour
-celles-là).
+inchangées (pour celles-ci, passez plutôt par la vérification de
+complétude et sa régénération).
 
 ## Aperçu positif
 
@@ -168,8 +169,8 @@ campagne :
 
 - **simple** — normalisation min/max linéaire, rien d'autre.
 - **auto** (par défaut) — une optimisation exposition/gamma déterministe,
-  aucun apprentissage automatique, même résultat à chaque fois pour une
-  même entrée.
+  sans apprentissage automatique : le résultat est identique à chaque
+  fois pour une même entrée.
 - **manual** — réglages de campagne (exposition, ombres, hautes lumières,
   contraste), ajustables à chaud pendant la capture avec aperçu (`P`).
 
@@ -198,14 +199,15 @@ Rien n'est jamais écrasé silencieusement.
 Trois niveaux, jamais bloquants :
 
 - **Info** — ligne de statut, disparaît après 5 secondes. Événements
-  courants uniquement ; rien qui nécessite un accusé de réception.
+  courants uniquement ; rien qui ne demande d'action de votre part.
 - **Avertissement** — bandeau au-dessus de la ligne de statut, reste tant
-  que la cause persiste, cliquable pour le détail. N'interrompt rien (ex.
-  outil de métadonnées absent, fichier résiduel non nettoyable).
-- **Critique** — bandeau rouge, le pipeline se met en pause (ex. disque
-  presque plein, dossier devenu inaccessible). Les détections continuent
-  de s'accumuler ; rien n'est perdu. Une fois la cause résolue, clique sur
-  **Resume processing**.
+  que la cause persiste, cliquable pour le détail. N'interrompt rien (par
+  exemple : outil de métadonnées introuvable, fichier résiduel impossible
+  à nettoyer).
+- **Critique** — bandeau rouge, le pipeline se met en pause (par exemple :
+  disque presque plein, dossier devenu inaccessible). Les détections
+  continuent de s'accumuler ; rien n'est perdu. Une fois la cause résolue,
+  cliquez sur **Resume processing**.
 
 Si l'application a été fermée brutalement (crash, coupure), la réouverture
 de la campagne affiche un court rapport de reprise : l'image en cours est
@@ -215,20 +217,20 @@ inachevé est remis en file — automatiquement, rien à refaire à la main.
 ## Statistiques et complétude
 
 **Project ▸ Statistics** (aussi disponible hors capture, dès qu'une
-campagne a des entrées) affiche les totaux, les compteurs faits/en
-attente/rejetés/en erreur, et une **vérification de complétude** : pour
-chaque ligne marquée faite, elle confirme que le RAW renommé et chaque
-export attendu existent bien sur disque, liste ce qui manque, et peut
-régénérer la sélection en une action.
+campagne a des entrées) affiche les totaux, le nombre d'images faites, en
+attente, rejetées ou en erreur, et une **vérification de complétude** :
+pour chaque ligne marquée faite, elle confirme que le RAW renommé et
+chaque export attendu existent bien sur disque, liste ce qui manque, et
+peut régénérer la sélection en une action.
 
 ## Configuration
 
-Les réglages de campagne vivent dans `campaign.json` à l'intérieur du
-dossier de campagne et se modifient depuis l'écran projet — aucune édition
-manuelle nécessaire. Un petit ensemble de préférences globales à la
-machine (nombre d'ouvriers, seuils d'espace disque, chemin d'exiftool,
-luminosité de l'interface) vivent dans un fichier de configuration
-utilisateur géré par l'OS (`platformdirs` — ex.
-`~/.config/scanassistant/config.json` sous Linux) ; la luminosité de
-l'interface est le seul réglage accessible par menu (**View ▸ Interface
+Les réglages de campagne sont stockés dans `campaign.json`, à l'intérieur
+du dossier de campagne, et se modifient depuis l'écran projet — aucune
+édition manuelle n'est nécessaire. Un petit nombre de préférences propres
+à la machine (nombre de traitements en parallèle, seuils d'espace disque,
+chemin d'exiftool, luminosité de l'interface) sont stockées dans un
+fichier de configuration utilisateur géré par l'OS (`platformdirs` — par
+exemple `~/.config/scanassistant/config.json` sous Linux) ; la luminosité
+de l'interface est le seul réglage accessible par menu (**View ▸ Interface
 brightness**), les autres s'éditent directement dans ce fichier.

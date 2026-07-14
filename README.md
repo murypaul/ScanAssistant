@@ -90,10 +90,10 @@ GPL-3.0-or-later — see [`LICENSE`](LICENSE).
 
 ## Français
 
-Un assistant de bureau pour les flux de capture en numérisation. Il
-surveille un dossier, ingère et renomme les fichiers RAW selon un
-inventaire CSV, détecte et applique un recadrage automatiquement, génère
-les fichiers dérivés, écrit les métadonnées, et journalise tout — pour que
+Un assistant de bureau pour les campagnes de numérisation. Il surveille un
+dossier, ingère et renomme les fichiers RAW selon un inventaire CSV,
+détecte et applique un recadrage automatiquement, génère les fichiers
+dérivés, écrit les métadonnées, et journalise chaque étape — pour que
 l'opérateur n'ait plus qu'à manipuler l'objet physique et vérifier le
 résultat.
 
@@ -104,24 +104,24 @@ et interruptibles.
 ### Ce que fait l'application
 
 - **Surveillance de dossier** — détecte les nouveaux fichiers RAW dès que
-  l'appareil/l'outil de transfert les écrit, attend la fin de la copie,
+  l'appareil ou l'outil de transfert les écrit, attend la fin de la copie,
   puis les ingère.
 - **Ingestion vérifiée et renommage** — chaque fichier est déplacé (jamais
   dupliqué) et renommé selon la prochaine entrée d'un inventaire CSV, avec
   vérification d'intégrité et traçabilité complète vers le nom d'origine.
 - **Recadrage automatique** — détection du cadre par OpenCV avec un score
   de confiance (fiable / à vérifier / impossible), et correction manuelle
-  rapide.
+  rapide si besoin.
 - **Exports** — TIFF maître 16 bits, JPEG maître, et un JPEG positif de
   lecture (trois modes de rendu), générés en arrière-plan.
-- **Métadonnées** — EXIF conservé, IPTC/XMP écrits depuis les réglages de
-  campagne, profils ICC intégrés.
+- **Métadonnées** — EXIF conservé, IPTC/XMP écrits à partir des réglages
+  de campagne, profils ICC intégrés.
 - **Mode capture tout au clavier** — chaque action pendant la capture
-  (valider, rejeter, recadrer, renommer, mettre en pause) a un raccourci
-  clavier ; la souris reste facultative.
-- **Robustesse** — reprise propre après un arrêt brutal, gestion du disque
-  plein et des dossiers inaccessibles sans perte de fichier, résolution
-  interactive des conflits de noms plutôt qu'un écrasement silencieux.
+  (valider, rejeter, recadrer, renommer, mettre en pause) a son raccourci ;
+  la souris reste facultative.
+- **Robustesse** — reprise propre après un arrêt brutal, disque plein ou
+  dossier devenu inaccessible sans perte de fichier, conflits de noms
+  résolus au cas par cas plutôt qu'un écrasement silencieux.
 - **Traçabilité complète** — chaque action significative est journalisée
   (JSON Lines), indépendamment de l'inventaire CSV lui-même.
 
@@ -133,7 +133,7 @@ Voir [`USER_GUIDE.fr.md`](USER_GUIDE.fr.md) pour le flux complet, les
 - **OS** : Windows 10/11 (x64) ou Linux (x64).
 - **Python** : 3.11 ou supérieur.
 - **exiftool** (optionnel mais recommandé) : sans lui, les exports sont
-  produits sans métadonnées embarquées, avec un avertissement affiché.
+  produits sans métadonnées embarquées, et un avertissement s'affiche.
   - Debian/Ubuntu/Mint : `sudo apt install libimage-exiftool-perl`
   - Windows : télécharger l'exécutable depuis [exiftool.org](https://exiftool.org)
     et le placer dans le `PATH` (ou l'indiquer dans les réglages de l'app).
@@ -156,7 +156,7 @@ Windows (PowerShell) :
 irm https://raw.githubusercontent.com/murypaul/ScanAssistant/master/install.ps1 | iex
 ```
 
-**Installation manuelle**, si tu as déjà les sources (clone ou
+**Installation manuelle**, si vous avez déjà les sources (clone ou
 téléchargement) :
 
 ```sh
