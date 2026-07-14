@@ -31,6 +31,7 @@ from scanassistant.app_context import AppContext
 from scanassistant.config import save_config
 from scanassistant.core.export_runner import MasterExportRunner
 from scanassistant.core.fs import RealFileSystem
+from scanassistant.core.queue import ThreadedExportExecutor
 from scanassistant.core.session import CaptureSession
 from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.screens.capture import CaptureScreen
@@ -94,7 +95,10 @@ class MainWindow(QMainWindow):
         self.project_screen = ProjectScreen()
         self.project_screen.cursor_change_requested.connect(self._on_cursor_change_requested)
 
-        self.capture_screen = CaptureScreen()
+        # Real background thread for exports: without it, regenerating a
+        # slow export synchronously (manual crop confirm, rotation...)
+        # freezes the whole window (DECISIONS.md I-92/I-98).
+        self.capture_screen = CaptureScreen(export_executor=ThreadedExportExecutor())
         self.capture_screen.stopped.connect(self._on_capture_stopped)
         self.capture_screen.queue_changed.connect(self._refresh_export_queue_panel)
         self.capture_screen.queue_changed.connect(self._refresh_history_panel)

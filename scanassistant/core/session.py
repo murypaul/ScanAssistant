@@ -45,11 +45,13 @@ from scanassistant.core.ingest import find_conflicting_path, ingest_file
 from scanassistant.core.queue import (
     EXPORT_TASK_KINDS,
     ExportContext,
+    ExportExecutor,
     ExportFailure,
     ExportQueue,
     ExportResult,
     ExportRunner,
     ExportTask,
+    InlineExportExecutor,
 )
 from scanassistant.core.recovery import rebuild_export_context
 from scanassistant.journal.journal import Journal
@@ -110,6 +112,7 @@ class CaptureSession:
         fs: FileSystem,
         monitor: FolderMonitor,
         export_runner: ExportRunner,
+        export_executor: ExportExecutor | None = None,
         now_wall: type[datetime] = datetime,
         disk_warn_gb: float = 10.0,
         disk_critical_gb: float = 2.0,
@@ -122,6 +125,11 @@ class CaptureSession:
         self.fs = fs
         self.monitor = monitor
         self.export_runner = export_runner
+        # Inline (synchronous) by default: the CLI and every test rely on
+        # this determinism. Only the live GUI wires in a `ThreadedExportExecutor`
+        # (`gui.main_window`), so a slow export never freezes the Qt thread
+        # (DECISIONS.md I-92/I-98).
+        self.export_executor = export_executor or InlineExportExecutor()
         self._now_wall = now_wall
         self._disk_warn_gb = disk_warn_gb
         self._disk_critical_gb = disk_critical_gb
@@ -133,6 +141,19 @@ class CaptureSession:
         self._export_pending_kinds: dict[str, set[str]] = {}
         self._exports_ready: set[str] = set()
         self._awaiting_export: set[str] = set()
+        # Tasks superseded while still in flight (rotation/reframe/retry
+        # re-queuing exports for a name that already has a task running, or
+        # rejection): FIFO on a single-worker executor guarantees these
+        # complete before anything queued after them even starts, so the
+        # count of stale completions still owed for a name is known exactly
+        # at re-queuing time (`_queue_exports`/`reject_current`). Consumed
+        # in `_drain_exports`, which must not credit them to the fresh
+        # pending-kinds tracking (`_export_pending_kinds`) set up afterwards.
+        self._stale_completions: dict[str, int] = {}
+        # Subset of the above where the file the stale task just wrote is
+        # also an orphan to delete (rejection only — rotation/reframe let
+        # the fresh, correct export overwrite it naturally).
+        self._stale_completions_cleanup: set[str] = set()
         self._exhaustion_signaled = False
         self.paused = state.mode == "pause"
         self._suspended_code: str | None = None
@@ -410,7 +431,26 @@ class CaptureSession:
             # that will never happen).
             self._exports_ready.add(name)
             return
-        self.export_queue.enqueue(name, kinds, self._build_export_context(name))
+        self._queue_exports(name, kinds, self._build_export_context(name))
+
+    def _queue_exports(self, name: str, kinds: list[str], context: ExportContext | None) -> None:
+        """Queues export tasks for `name`, (re)setting its pending-kinds tracker.
+
+        If a task for `name` is still in flight from a previous, now
+        superseded queuing (rotation/reframe/retry before the first export
+        finished), its eventual completion must not be credited against
+        *this* fresh set of pending kinds — `_drain_exports` discards it
+        instead (`_stale_completions`).
+
+        `in_flight_count(name)` already includes any task marked stale by an
+        *earlier* superseded queuing that hasn't completed yet (two rotations
+        in a row before the first one's exports finish) — so the tracker is
+        set to that count, not incremented by it, to avoid double-counting.
+        """
+        in_flight = self.export_queue.in_flight_count(name)
+        if in_flight > self._stale_completions.get(name, 0):
+            self._stale_completions[name] = in_flight
+        self.export_queue.enqueue(name, kinds, context)
         self._export_pending_kinds[name] = set(kinds)
 
     def _build_export_context(self, name: str) -> ExportContext:
@@ -439,10 +479,15 @@ class CaptureSession:
         }[kind]
 
     def _drain_exports(self, deadline: float | None = None) -> list[SessionEvent]:
-        """Runs the export queue (real `ExportRunner` or `FakeExportRunner`).
+        """Hands pending export tasks to `self.export_executor` and processes
+        whatever it has completed so far (real `ExportRunner` or
+        `FakeExportRunner`, inline or on a background thread).
 
-        Bounded by `deadline`: whatever's left is processed on the next
-        call — `state.export_queue` keeps an exact record of it.
+        Bounded by `deadline` (submission only — never the work itself):
+        whatever's left in the backlog is submitted on the next call.
+        `state.export_queue` keeps an exact record of both the backlog and
+        anything still in flight, so a crash never drops a task that is
+        merely still running (`ExportQueue.to_state_entries()`).
         """
         events: list[SessionEvent] = []
         if self._suspended_code is not None:
@@ -450,7 +495,38 @@ class CaptureSession:
             # non-suspended `pump()` (or explicitly via `resume_from_critical`).
             self.state.export_queue = self.export_queue.to_state_entries()
             return events
-        for task, result in self.export_queue.drain(self.export_runner, deadline=deadline):
+
+        submitted_any = False
+        while self.export_queue.has_backlog():
+            if deadline is not None and submitted_any and time.monotonic() >= deadline:
+                break
+            task = self.export_queue.checkout_next()
+            assert task is not None
+            self.export_executor.submit(task, self.export_runner)
+            submitted_any = True
+
+        if deadline is None:
+            # Campaign shutdown: must wait for the queue to finish rather
+            # than abandon in-flight tasks (unchanged contract, I-83).
+            self.export_executor.wait_idle()
+
+        for task, result in self.export_executor.collect_completed():
+            self.export_queue.complete(task)
+            stale_count = self._stale_completions.get(task.name)
+            if stale_count:
+                remaining_stale = stale_count - 1
+                if remaining_stale > 0:
+                    self._stale_completions[task.name] = remaining_stale
+                else:
+                    del self._stale_completions[task.name]
+                if task.name in self._stale_completions_cleanup:
+                    # Rejected while this task was already in flight: the
+                    # file it just wrote (if any) is an orphan for an image
+                    # that no longer exists in this form.
+                    self._delete_derivatives(task.name)
+                    if remaining_stale == 0:
+                        self._stale_completions_cleanup.discard(task.name)
+                continue
             if isinstance(result, ExportFailure):
                 events.extend(self._flag_export_failure(task, result))
                 continue
@@ -506,8 +582,7 @@ class CaptureSession:
 
     def enqueue_export_context(self, name: str, kinds: list[str], context: ExportContext) -> None:
         """Queues export tasks with an already-known context (regeneration, crash recovery)."""
-        self.export_queue.enqueue(name, kinds, context)
-        self._export_pending_kinds[name] = set(kinds)
+        self._queue_exports(name, kinds, context)
 
     def _log_export(self, task: ExportTask, result: ExportResult | None) -> None:
         """Logs an `EXPORT` journal entry: effective frame + scale factor."""
@@ -591,6 +666,15 @@ class CaptureSession:
         events: list[SessionEvent] = []
 
         cancelled = self.export_queue.cancel(name)
+        in_flight = self.export_queue.in_flight_count(name)
+        if in_flight:
+            # Already running on the executor (possibly mid-write): can't be
+            # cancelled from here — cleaned up in `_drain_exports` instead,
+            # once its (now orphan) completion comes in. `in_flight_count`
+            # already includes anything marked stale by an earlier
+            # superseded queuing (see `_queue_exports`), hence `max`, not `+=`.
+            self._stale_completions[name] = max(self._stale_completions.get(name, 0), in_flight)
+            self._stale_completions_cleanup.add(name)
         self._export_pending_kinds.pop(name, None)
         self._exports_ready.discard(name)
         self._awaiting_export.discard(name)
