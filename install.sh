@@ -3,14 +3,32 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/murypaul/ScanAssistant/master/install.sh | bash
-#   ./install.sh [target-directory]   # default: ~/ScanAssistant
+#   ./install.sh [target-directory]   # skips the interactive prompt below
 set -euo pipefail
 
 REPO_URL="https://github.com/murypaul/ScanAssistant.git"
 ARCHIVE_URL="https://github.com/murypaul/ScanAssistant/archive/refs/heads/master.zip"
-TARGET_DIR="${1:-$HOME/ScanAssistant}"
+DEFAULT_TARGET_DIR="$HOME/ScanAssistant"
 
 echo "== ScanAssistant installer =="
+
+if [ -n "${1:-}" ]; then
+    TARGET_DIR="$1"
+elif read -r -p "Install ScanAssistant into [$DEFAULT_TARGET_DIR]: " TARGET_DIR < /dev/tty 2>/dev/null; then
+    # `curl | bash` consumes stdin for the script itself, so the prompt
+    # reads from the controlling terminal directly instead. The `read`
+    # itself is the availability check (rather than `[ -r /dev/tty ]`
+    # beforehand): a path can exist and be readable without there being an
+    # actual controlling terminal to open, which would otherwise abort the
+    # whole script under `set -e`.
+    TARGET_DIR="${TARGET_DIR:-$DEFAULT_TARGET_DIR}"
+else
+    # No terminal available (e.g. piped into a non-interactive shell) —
+    # fall back silently rather than block forever on a read that can never
+    # be answered.
+    TARGET_DIR="$DEFAULT_TARGET_DIR"
+fi
+TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
 
 if ! command -v python3 >/dev/null 2>&1; then
     echo "Error: python3 was not found. Install Python 3.11+ first:" >&2

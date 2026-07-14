@@ -15,6 +15,7 @@ from typing import Any
 from PySide6.QtCore import QPoint, QSignalBlocker, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from scanassistant.core.bulk_export import export_derivatives
 from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.widgets.csv_table import CsvTableWidget
 from scanassistant.gui.widgets.log_table import LogTableWidget
@@ -224,9 +226,34 @@ class ProjectScreen(QWidget):
         form = QFormLayout()
         form.addRow(t("wizard.step2.watched_folder"), watched_row)
 
+        self.export_destination_edit = QLineEdit()
+        export_browse = QPushButton(t("wizard.browse"))
+        export_browse.clicked.connect(self._browse_export_destination)
+        export_destination_row = QHBoxLayout()
+        export_destination_row.addWidget(self.export_destination_edit, 1)
+        export_destination_row.addWidget(export_browse)
+
+        self.export_layout_combo = QComboBox()
+        self.export_layout_combo.addItem(t("project.export_layout_flat"), "flat")
+        self.export_layout_combo.addItem(t("project.export_layout_by_type"), "by_type")
+
+        export_button = QPushButton(t("project.export_button"))
+        export_button.clicked.connect(self._export_derivatives_now)
+
+        export_form = QFormLayout()
+        export_form.addRow(t("project.export_destination"), export_destination_row)
+        export_form.addRow(t("project.export_layout"), self.export_layout_combo)
+        export_group = QGroupBox(t("project.export_group"))
+        export_layout = QVBoxLayout()
+        export_layout.addLayout(export_form)
+        export_layout.addWidget(export_button)
+        export_group.setLayout(export_layout)
+
         layout = QVBoxLayout()
         layout.addLayout(form)
         layout.addWidget(open_folder_button)
+        layout.addSpacing(16)
+        layout.addWidget(export_group)
         layout.addStretch(1)
         widget = QWidget()
         widget.setLayout(layout)
@@ -257,6 +284,46 @@ class ProjectScreen(QWidget):
     def _open_campaign_folder(self) -> None:
         if self.paths is not None:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.paths.root)))
+
+    def _browse_export_destination(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, t("project.export_destination"))
+        if path:
+            self.export_destination_edit.setText(path)
+
+    def _export_derivatives_now(self) -> None:
+        """Copies every produced TIFF/JPEG file out of the campaign to an
+        external destination — never touches RAW/ or the campaign folder
+        itself, copy only (rules 1/2)."""
+        if self.paths is None or self.journal is None:
+            return
+        destination_text = self.export_destination_edit.text().strip()
+        if not destination_text:
+            QMessageBox.warning(
+                self, t("project.export_no_destination_title"), t("project.export_no_destination")
+            )
+            return
+        destination = Path(destination_text)
+        layout = self.export_layout_combo.currentData()
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            result = export_derivatives(self.paths, destination, layout=layout)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.journal.log(
+            "PROJECT",
+            "bulk_export",
+            details={
+                "destination": str(destination),
+                "layout": layout,
+                "copied": result.copied,
+                "skipped_existing": result.skipped_existing,
+            },
+        )
+        QMessageBox.information(
+            self,
+            t("project.export_done_title"),
+            t("project.export_done", copied=result.copied, skipped=result.skipped_existing),
+        )
 
     # --- Capture --------------------------------------------------------
 
@@ -547,12 +614,18 @@ class ProjectScreen(QWidget):
         self.jpeg_positive_flip_check = QCheckBox(t("wizard.step5.horizontal_flip"))
         self.jpeg_positive_flip_check.toggled.connect(self._on_jpeg_positive_flip_changed)
 
+        self.jpeg_positive_suffix_edit = QLineEdit()
+        self.jpeg_positive_suffix_edit.editingFinished.connect(
+            self._on_jpeg_positive_suffix_changed
+        )
+
         jpeg_positive_form = QFormLayout()
         jpeg_positive_form.addRow(self.jpeg_positive_enabled_check)
         jpeg_positive_form.addRow(t("wizard.step5.quality"), self.jpeg_positive_quality_spin)
         jpeg_positive_form.addRow(t("wizard.step5.long_edge"), self.jpeg_positive_long_edge_spin)
         jpeg_positive_form.addRow(t("wizard.step5.mode"), self.jpeg_positive_mode_combo)
         jpeg_positive_form.addRow(self.jpeg_positive_flip_check)
+        jpeg_positive_form.addRow(t("wizard.step5.suffix"), self.jpeg_positive_suffix_edit)
         jpeg_positive_group = QGroupBox(t("wizard.step5.jpeg_positive_group"))
         jpeg_positive_group.setLayout(jpeg_positive_form)
 
@@ -606,6 +679,7 @@ class ProjectScreen(QWidget):
             self.jpeg_positive_long_edge_spin,
             self.jpeg_positive_mode_combo,
             self.jpeg_positive_flip_check,
+            self.jpeg_positive_suffix_edit,
             self.manual_exposure_spin,
             self.manual_contrast_spin,
             self.manual_shadows_spin,
@@ -632,6 +706,7 @@ class ProjectScreen(QWidget):
                 self.jpeg_positive_mode_combo.findData(e.jpeg_positive.mode)
             )
             self.jpeg_positive_flip_check.setChecked(e.jpeg_positive.horizontal_flip)
+            self.jpeg_positive_suffix_edit.setText(e.jpeg_positive.suffix)
             manual = e.jpeg_positive.manual_settings
             self.manual_exposure_spin.setValue(manual.exposure_ev)
             self.manual_contrast_spin.setValue(manual.contrast)
@@ -704,6 +779,11 @@ class ProjectScreen(QWidget):
     def _on_jpeg_positive_flip_changed(self, checked: bool) -> None:
         self._commit_export_field(
             "jpeg_positive.horizontal_flip", "jpeg_positive", "horizontal_flip", bool(checked)
+        )
+
+    def _on_jpeg_positive_suffix_changed(self) -> None:
+        self._commit_export_field(
+            "jpeg_positive.suffix", "jpeg_positive", "suffix", self.jpeg_positive_suffix_edit.text()
         )
 
     def _commit_export_field(self, key: str, section: str, attr: str, after: Any) -> None:
