@@ -44,7 +44,9 @@ class HistoryPanel(QListWidget):
         self.clear()
         self._thumbnail_loaded.clear()
 
-    def refresh(self, entries: list[SessionHistoryEntry], paths: CampaignPaths) -> None:
+    def refresh(
+        self, entries: list[SessionHistoryEntry], paths: CampaignPaths, positive_suffix: str
+    ) -> None:
         existing_names = {
             self.item(i).data(_NAME_ROLE)
             for i in range(self.count())  # type: ignore[union-attr]
@@ -60,7 +62,7 @@ class HistoryPanel(QListWidget):
         for entry in entries:
             if entry.name in self._thumbnail_loaded:
                 continue
-            pixmap = self._load_thumbnail(entry.name, paths)
+            pixmap = self._load_thumbnail(entry.name, paths, positive_suffix)
             if pixmap is None:
                 continue  # export not written yet — retried on the next refresh
             item = self._find_item(entry.name)
@@ -75,9 +77,14 @@ class HistoryPanel(QListWidget):
                 return item
         return None
 
-    def _load_thumbnail(self, name: str, paths: CampaignPaths) -> QPixmap | None:
-        for directory in (paths.jpeg_positive_dir, paths.jpeg_master_dir):
-            candidate = directory / f"{name}.jpg"
+    def _load_thumbnail(
+        self, name: str, paths: CampaignPaths, positive_suffix: str
+    ) -> QPixmap | None:
+        candidates = (
+            paths.jpeg_positive_dir / f"{name}{positive_suffix}.jpg",
+            paths.jpeg_master_dir / f"{name}.jpg",
+        )
+        for candidate in candidates:
             if not candidate.exists():
                 continue
             pixmap = QPixmap(str(candidate))

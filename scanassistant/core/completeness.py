@@ -36,7 +36,7 @@ def missing_export_kinds(session: CaptureSession, name: str) -> list[str]:
     ):
         missing.append("jpeg_master")
     if exports.jpeg_positive.enabled and not session.fs.exists(
-        session.paths.jpeg_positive_dir / f"{name}_POS.jpg"
+        session.paths.jpeg_positive_dir / f"{name}{exports.jpeg_positive.suffix}.jpg"
     ):
         missing.append("jpeg_positive")
     return missing
