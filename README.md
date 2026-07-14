@@ -67,10 +67,21 @@ Linux:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/murypaul/ScanAssistant/master/install.sh | bash
 ```
+Asks where to install (default `~/ScanAssistant`). To pick the directory
+without the prompt:
+```sh
+curl -fsSL https://raw.githubusercontent.com/murypaul/ScanAssistant/master/install.sh | bash -s -- /your/chosen/path
+```
 
 Windows (PowerShell):
 ```powershell
 irm https://raw.githubusercontent.com/murypaul/ScanAssistant/master/install.ps1 | iex
+```
+Installs into `%USERPROFILE%\ScanAssistant`. To choose a different
+directory, download the script first, then run it with `-TargetDir`:
+```powershell
+irm https://raw.githubusercontent.com/murypaul/ScanAssistant/master/install.ps1 -OutFile install.ps1
+.\install.ps1 -TargetDir "D:\ScanAssistant"
 ```
 
 **Manual install**, if you already have the source (clone or download):
@@ -171,10 +182,21 @@ Linux :
 ```sh
 curl -fsSL https://raw.githubusercontent.com/murypaul/ScanAssistant/master/install.sh | bash
 ```
+Demande où installer (par défaut `~/ScanAssistant`). Pour choisir le
+dossier sans passer par l'invite :
+```sh
+curl -fsSL https://raw.githubusercontent.com/murypaul/ScanAssistant/master/install.sh | bash -s -- /chemin/de/votre/choix
+```
 
 Windows (PowerShell) :
 ```powershell
 irm https://raw.githubusercontent.com/murypaul/ScanAssistant/master/install.ps1 | iex
+```
+Installe dans `%USERPROFILE%\ScanAssistant`. Pour choisir un autre
+dossier, téléchargez d'abord le script puis lancez-le avec `-TargetDir` :
+```powershell
+irm https://raw.githubusercontent.com/murypaul/ScanAssistant/master/install.ps1 -OutFile install.ps1
+.\install.ps1 -TargetDir "D:\ScanAssistant"
 ```
 
 **Installation manuelle**, si vous avez déjà les sources (clone ou

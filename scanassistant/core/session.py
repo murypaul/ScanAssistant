@@ -156,6 +156,14 @@ class CaptureSession:
         self._stale_completions_cleanup: set[str] = set()
         self._exhaustion_signaled = False
         self.paused = state.mode == "pause"
+        # Set by `reopen_for_correction` when *it* is the one pausing capture
+        # (i.e. the operator wasn't already paused) — lets `validate_current`/
+        # `reject_current` lift that pause automatically once the reopened
+        # slot is closed again, instead of leaving capture paused forever.
+        # Not persisted: on a crash mid-correction, capture simply stays
+        # paused after recovery (same as today), rather than resuming into a
+        # state the operator never confirmed.
+        self._correction_auto_paused = False
         self._suspended_code: str | None = None
         self._disk_warned = False
         self._queue_growth_warned = False
@@ -649,6 +657,7 @@ class CaptureSession:
 
         self._record_session_history(current)
         self.state.current_image = None
+        events.extend(self._resume_if_correction_auto_paused())
         if has_row:
             events.extend(self._save_inventory())
         self._persist_state()
@@ -722,6 +731,7 @@ class CaptureSession:
         events.append(ImageStateChanged(name=name, previous="IN_REVIEW", new="REJECTED"))
 
         self.state.current_image = None
+        events.extend(self._resume_if_correction_auto_paused())
         if has_row:
             events.extend(self._save_inventory())
         self._persist_state()
@@ -954,6 +964,13 @@ class CaptureSession:
         self._persist_state()
         return events
 
+    def _resume_if_correction_auto_paused(self) -> list[SessionEvent]:
+        """Lifts a `reopen_for_correction`-induced pause once its slot closes."""
+        if not self._correction_auto_paused:
+            return []
+        self._correction_auto_paused = False
+        return self.resume()
+
     # --- self-monitoring (disk space / folder accessibility) -------------------
 
     def _check_autosurveillance(self, now: float) -> list[SessionEvent]:
@@ -1098,7 +1115,10 @@ class CaptureSession:
         it: doesn't change the CSV status (still `done`) or the image's
         position in the inventory — `validate_current()` re-finalizes it
         normally once the correction is confirmed. Pauses capture as a side
-        effect so an incoming file can't collide with the reopened slot.
+        effect so an incoming file can't collide with the reopened slot;
+        `validate_current()`/`reject_current()` lift that pause again once
+        the slot closes, provided the operator wasn't already paused before
+        reopening (in which case it's their call to resume, not ours).
         """
         if self.state.current_image is not None:
             raise IllegalTransitionError(self.state.current_image.state, "reopen_for_correction")
@@ -1111,6 +1131,7 @@ class CaptureSession:
 
         if not self.paused:
             self.pause()
+            self._correction_auto_paused = True
 
         self.state.current_image = CurrentImageState(
             assigned_name=entry.name,
