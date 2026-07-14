@@ -1,0 +1,234 @@
+# Guide utilisateur
+
+*[English version available here](USER_GUIDE.md).*
+
+Ce guide couvre le flux complet : créer une campagne, mener une session de
+capture, et tout ce que propose l'interface. Pour l'installation, voir
+[`README.md`](README.md#français).
+
+## Vue d'ensemble
+
+Une **campagne** correspond à une session de numérisation : une
+arborescence de dossiers, un fichier de réglages, et un inventaire (une
+liste CSV de noms à attribuer, dans l'ordre). Une fois la campagne ouverte,
+le **mode capture** fait le reste :
+
+1. Tu poses un négatif sur la table lumineuse et déclenches. L'appareil (ou
+   son outil de transfert) écrit le fichier RAW dans un dossier surveillé.
+2. L'application détecte le nouveau fichier, attend qu'il cesse de
+   grossir (la copie est terminée), puis le déplace et le renomme selon la
+   prochaine entrée de l'inventaire.
+3. Un aperçu s'affiche avec le cadre détecté et un indicateur de confiance.
+4. Les exports TIFF, JPEG maître et JPEG positif se génèrent en
+   arrière-plan, métadonnées incluses.
+5. Tu poses l'objet suivant. Le précédent est automatiquement validé dès
+   l'arrivée du suivant — rejette-le d'abord (`R`) si quelque chose
+   clochait.
+
+Rien n'est jamais supprimé : un RAW rejeté part dans `REJECTED/`, un
+fichier remplacé part dans `BACKUP/`, et le dossier surveillé n'est vidé
+que des fichiers déjà ingérés en toute sécurité.
+
+## Créer une campagne
+
+Depuis l'écran d'accueil, **New campaign** ouvre un assistant en plusieurs
+étapes :
+
+1. **Identité** — nom, description, opérateur, institution, support.
+2. **Dossiers** — emplacement de la campagne, et quel dossier surveiller
+   pour les fichiers entrants (les fichiers qui y sont déposés sont
+   déplacés dans la campagne une fois vérifiés).
+3. **CSV** — choisir le fichier d'inventaire ; l'application détecte son
+   dialecte et te fait confirmer la colonne des noms, avec un aperçu et un
+   rapport de validation avant tout import.
+4. **Prise de vue et recadrage** — orientation par défaut, mode de
+   dimensions de sortie, marges, recadrage automatique actif ou non.
+5. **Exports** — réglages pour le TIFF, le JPEG maître et le JPEG positif.
+6. **Métadonnées** — champs IPTC écrits sur chaque export (créateur,
+   institution, copyright, collection, mots-clés).
+7. **Récapitulatif** — vérification, puis création. Tout reste modifiable
+   ensuite depuis l'écran projet.
+
+## L'écran projet
+
+Ouvert hors mode capture. Onglets : **Summary**, **Folders**, **Capture**,
+**Framing**, **Exports**, **Metadata**, **CSV** (table en lecture seule de
+l'inventaire — recherche, filtre par statut, déplacement du curseur sur
+une ligne), et **Log** (événements du jour, filtrables, avec un raccourci
+vers le dossier de logs).
+
+Chaque changement de réglage est appliqué et enregistré immédiatement — il
+n'y a pas d'étape de sauvegarde séparée.
+
+## Mode capture
+
+Utilisable en plein écran, une image à la fois :
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ File  Project  Capture  Processing  Metadata  View  Help          │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│                  [ aperçu de l'image courante ]                   │
+│              cadre détecté en surimpression, coloré               │
+│                                                                    │
+├──────────────────────────────────────────────────────────────────┤
+│  NEG_00125            ● RELIABLE 0.94            127/842 · 15%    │
+│  next: NEG_00126                              export queue: 2     │
+├──────────────────────────────────────────────────────────────────┤
+│  TIFF written (NEG_00124)                            ● CAPTURE    │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+Le cadre superposé est vert (fiable), orange (à vérifier), ou rouge
+(indéterminé — repli sur l'image entière). `T` bascule vers l'aperçu du
+cadre réellement appliqué (plutôt que le cadre brut avec surimpression) ;
+`P` bascule vers l'aperçu positif.
+
+## Raccourcis clavier
+
+Tout ce qui suit fonctionne sans toucher la souris ; la souris reste
+disponible partout. Raccourcis à base de lettres (indépendants de la
+disposition clavier), non reconfigurables pour l'instant.
+
+### Capture
+
+| Touche | Action |
+| ------ | ------ |
+| Entrée | Valider l'image courante (équivaut à l'arrivée de la suivante) |
+| R | Rejeter l'image courante |
+| V | Basculer l'orientation (portrait/paysage) |
+| ← / → | Nom précédent / suivant (déplace le curseur parmi les entrées en attente) |
+| G | Aller à un nom, ou saisir un nom hors liste (Ctrl+Entrée pour le valider) |
+| C | Recalculer le cadre (relance la détection automatique) |
+| M | Éditer le cadre manuellement |
+| P | Basculer l'aperçu positif |
+| T | Basculer l'aperçu maître (cadre appliqué) |
+| Espace | Pause / reprendre |
+| F11 | Plein écran |
+| Échap | Arrêter la capture (retour à la préparation ; les exports continuent) |
+
+### Édition du cadre (après `M`)
+
+| Touche | Action |
+| ------ | ------ |
+| Flèches | Déplacer le cadre d'1 pixel d'aperçu (Maj : ×10) |
+| + / − | Agrandir / réduire de 1 % (Maj : 5 %), centre conservé |
+| Ctrl+← / Ctrl+→ | Rotation ∓0,1° (Maj : ×10), bornée à ±45° |
+| C | Relancer la détection automatique |
+| Entrée | Valider (marque le cadre comme manuel, régénère les exports) |
+| Échap | Annuler, retour au cadre précédent |
+
+### Panneau de conflit de nom
+
+| Touche | Action |
+| ------ | ------ |
+| 1 / 2 / 3 | Choisir l'option correspondante |
+| Tab / Maj+Tab | Naviguer entre options et champs |
+| Entrée | Valider l'option sélectionnée |
+| Échap | Équivaut à l'option 1 avec un champ vide |
+
+### Partout ailleurs
+
+| Touche | Action |
+| ------ | ------ |
+| Ctrl+N | Nouvelle campagne |
+| Ctrl+O | Ouvrir une campagne |
+| Ctrl+Q | Quitter |
+| F5 | Démarrer la capture |
+| Ctrl+F | Rechercher dans le visualiseur CSV |
+| F1 | Cette liste de raccourcis |
+| F11 | Plein écran |
+| Alt+lettre | Ouvrir le menu correspondant |
+
+## Recadrage et confiance
+
+Le cadre est détecté automatiquement sur l'aperçu embarqué par vision
+classique (aucun ratio ni taille présumés — fonctionne sur des formats
+mélangés). Chaque détection reçoit un score de confiance calculé à partir
+de cinq critères indépendants : à quel point le rectangle remplit le
+cadre, sa rectangularité, sa taille plausible, s'il touche le bord de
+l'image, et sa solidité.
+
+- **Fiable** (vert) — utilisé tel quel.
+- **À vérifier** (orange) — mérite un coup d'œil avant de passer à la
+  suite.
+- **Impossible** (rouge) — repli sur l'image entière non recadrée ; à
+  corriger manuellement (`M`) si besoin.
+
+Les corrections manuelles et les nouvelles détections ne régénèrent les
+exports que de l'image concernée ; les images déjà finalisées restent
+inchangées (utilise la vérification de complétude + régénération pour
+celles-là).
+
+## Aperçu positif
+
+Trois modes de rendu pour le JPEG positif de lecture, réglés par
+campagne :
+
+- **simple** — normalisation min/max linéaire, rien d'autre.
+- **auto** (par défaut) — une optimisation exposition/gamma déterministe,
+  aucun apprentissage automatique, même résultat à chaque fois pour une
+  même entrée.
+- **manual** — réglages de campagne (exposition, ombres, hautes lumières,
+  contraste), ajustables à chaud pendant la capture avec aperçu (`P`).
+
+Le TIFF et le JPEG maîtres ne sont jamais affectés — seul le positif de
+lecture change.
+
+## Conflits de noms
+
+Si le nom que l'application s'apprête à attribuer existe déjà sur disque,
+la capture se met en pause sur ce fichier (les prises suivantes
+s'accumulent en attente) et un panneau apparaît :
+
+- **Rename current image** — donner un autre nom au fichier entrant
+  (`<NAME>_BIS` par défaut) ; la ligne d'inventaire d'origine reste en
+  attente.
+- **Replace existing** — déplacer tous les fichiers existants sous ce nom
+  (RAW et exports) vers `BACKUP/`, puis ingérer le nouveau sous le nom
+  d'origine.
+- **Rename existing file** — renommer les fichiers existants à la place
+  (`<NAME>_OLD` par défaut) et ingérer le nouveau sous le nom d'origine.
+
+Rien n'est jamais écrasé silencieusement.
+
+## Alertes, erreurs et reprise
+
+Trois niveaux, jamais bloquants :
+
+- **Info** — ligne de statut, disparaît après 5 secondes. Événements
+  courants uniquement ; rien qui nécessite un accusé de réception.
+- **Avertissement** — bandeau au-dessus de la ligne de statut, reste tant
+  que la cause persiste, cliquable pour le détail. N'interrompt rien (ex.
+  outil de métadonnées absent, fichier résiduel non nettoyable).
+- **Critique** — bandeau rouge, le pipeline se met en pause (ex. disque
+  presque plein, dossier devenu inaccessible). Les détections continuent
+  de s'accumuler ; rien n'est perdu. Une fois la cause résolue, clique sur
+  **Resume processing**.
+
+Si l'application a été fermée brutalement (crash, coupure), la réouverture
+de la campagne affiche un court rapport de reprise : l'image en cours est
+finalisée, les fichiers temporaires orphelins sont nettoyés, et tout export
+inachevé est remis en file — automatiquement, rien à refaire à la main.
+
+## Statistiques et complétude
+
+**Project ▸ Statistics** (aussi disponible hors capture, dès qu'une
+campagne a des entrées) affiche les totaux, les compteurs faits/en
+attente/rejetés/en erreur, et une **vérification de complétude** : pour
+chaque ligne marquée faite, elle confirme que le RAW renommé et chaque
+export attendu existent bien sur disque, liste ce qui manque, et peut
+régénérer la sélection en une action.
+
+## Configuration
+
+Les réglages de campagne vivent dans `campaign.json` à l'intérieur du
+dossier de campagne et se modifient depuis l'écran projet — aucune édition
+manuelle nécessaire. Un petit ensemble de préférences globales à la
+machine (nombre d'ouvriers, seuils d'espace disque, chemin d'exiftool,
+luminosité de l'interface) vivent dans un fichier de configuration
+utilisateur géré par l'OS (`platformdirs` — ex.
+`~/.config/scanassistant/config.json` sous Linux) ; la luminosité de
+l'interface est le seul réglage accessible par menu (**View ▸ Interface
+brightness**), les autres s'éditent directement dans ce fichier.

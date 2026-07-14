@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Échantillons RAW réels pour vérification manuelle (jamais commités).
+/samples/
+
+# Matériel de développement assisté par IA : utile en local, hors du dépôt
+# public (qui ne contient que ce qui est nécessaire à l'exécution de l'app).
+/CLAUDE.md
+/DECISIONS.md
+/specifications/
+/tests/
+/tools/

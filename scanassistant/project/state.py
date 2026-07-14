@@ -1,0 +1,111 @@
+"""Model and persistence for `state.json`."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+from scanassistant.utils.atomic import atomic_write_text
+
+SCHEMA_VERSION = 1
+
+
+@dataclass
+class FramingState:
+    x: int = 0
+    y: int = 0
+    width: int = 0
+    height: int = 0
+    angle_deg: float = 0.0
+    confidence: float = 0.0
+    source: str = "auto"  # auto | manual | raw
+
+
+@dataclass
+class CurrentImageState:
+    assigned_name: str
+    source_file: str = ""
+    extension: str = ""
+    state: str = "IN_REVIEW"
+    orientation: str = "horizontal"
+    framing: FramingState = field(default_factory=FramingState)
+    exports: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class ExportQueueEntry:
+    name: str
+    tasks: list[str] = field(default_factory=list)
+
+
+@dataclass
+class IgnoredFile:
+    name: str
+    size: int
+    mtime: float
+    reason: str
+
+
+@dataclass
+class ErrorImage:
+    """Error tied to a single image (E-04 after retry, E-05, E-06)."""
+
+    name: str
+    code: str  # E-04 | E-05 | E-06
+    message: str
+    kind: str | None = None  # export kind affected (E-06 only)
+
+
+@dataclass
+class ProjectState:
+    schema_version: int = SCHEMA_VERSION
+    mode: str = "preparation"  # preparation | capture | pause
+    csv_cursor: int = 0
+    current_image: CurrentImageState | None = None
+    export_queue: list[ExportQueueEntry] = field(default_factory=list)
+    ignored_files: list[IgnoredFile] = field(default_factory=list)
+    pause_queue: list[str] = field(default_factory=list)
+    error_images: list[ErrorImage] = field(default_factory=list)
+
+
+def load_state(path: Path) -> ProjectState:
+    """Loads `state.json`."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return _from_dict(data)
+
+
+def save_state(state: ProjectState, path: Path) -> None:
+    """Writes `state.json` atomically, on every structuring event."""
+    atomic_write_text(Path(path), json.dumps(_to_dict(state), indent=2, ensure_ascii=False) + "\n")
+
+
+def _to_dict(state: ProjectState) -> dict[str, Any]:
+    return asdict(state)
+
+
+def _from_dict(data: dict[str, Any]) -> ProjectState:
+    current_image_data = data.get("current_image")
+    current_image = None
+    if isinstance(current_image_data, dict):
+        framing_data = current_image_data.get("framing", {})
+        current_image = CurrentImageState(
+            assigned_name=current_image_data["assigned_name"],
+            source_file=current_image_data.get("source_file", ""),
+            extension=current_image_data.get("extension", ""),
+            state=current_image_data.get("state", "IN_REVIEW"),
+            orientation=current_image_data.get("orientation", "horizontal"),
+            framing=FramingState(**framing_data),
+            exports=current_image_data.get("exports", {}),
+        )
+    return ProjectState(
+        schema_version=data.get("schema_version", SCHEMA_VERSION),
+        mode=data.get("mode", "preparation"),
+        csv_cursor=data.get("csv_cursor", 0),
+        current_image=current_image,
+        export_queue=[ExportQueueEntry(**e) for e in data.get("export_queue", [])],
+        ignored_files=[IgnoredFile(**f) for f in data.get("ignored_files", [])],
+        pause_queue=list(data.get("pause_queue", [])),
+        error_images=[ErrorImage(**e) for e in data.get("error_images", [])],
+    )
