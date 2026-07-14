@@ -36,16 +36,26 @@ class PreviewWorker(QThread):
         decoder: RawDecoder,
         framing_config: FramingConfig,
         parent: QObject | None = None,
+        *,
+        skip_detection: bool = False,
     ) -> None:
         super().__init__(parent)
         self._path = path
         self._decoder = decoder
         self._framing_config = framing_config
+        # Reopening an already-finalized image for correction (history side
+        # panel): its frame is already known (session history) and must not
+        # be silently overwritten by a fresh, possibly different detection.
+        self._skip_detection = skip_detection
 
     def run(self) -> None:
         try:
             preview: Preview = extract_preview(self._path, self._decoder)
-            frame = self._detect_frame(preview) if self._framing_config.enabled else None
+            frame = (
+                None
+                if self._skip_detection
+                else (self._detect_frame(preview) if self._framing_config.enabled else None)
+            )
         except Exception as exc:  # unreadable/corrupt RAW (E-05)
             self.failed.emit(str(exc))
             return

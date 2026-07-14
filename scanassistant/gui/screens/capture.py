@@ -47,11 +47,16 @@ from scanassistant.core.events import Warning as WarningEvent
 from scanassistant.core.export_runner import MasterExportRunner
 from scanassistant.core.fs import FileSystem
 from scanassistant.core.queue import ExportRunner
-from scanassistant.core.session import CaptureSession
+from scanassistant.core.session import CaptureSession, SessionHistoryEntry
 from scanassistant.gui.preview_worker import PreviewResult, PreviewWorker
 from scanassistant.gui.widgets.preview_area import PreviewArea
 from scanassistant.i18n import t
-from scanassistant.imaging.framing import IMPOSSIBLE, FrameResult, detect_frame
+from scanassistant.imaging.framing import (
+    IMPOSSIBLE,
+    ConfidenceComponents,
+    FrameResult,
+    detect_frame,
+)
 from scanassistant.imaging.geometry import FrameGeometry, apply_geometry
 from scanassistant.imaging.positive import ManualSettings, render_positive
 from scanassistant.imaging.raw import RawDecoder, RawpyDecoder
@@ -61,7 +66,7 @@ from scanassistant.metadata.writer import is_available as is_exiftool_available
 from scanassistant.project.campaign import Campaign
 from scanassistant.project.inventory import STATUS_COLUMN, Inventory
 from scanassistant.project.layout import CampaignPaths
-from scanassistant.project.state import ProjectState
+from scanassistant.project.state import FramingState, ProjectState
 from scanassistant.watcher.monitor import FolderMonitor
 from scanassistant.watcher.stability import poll_interval_s
 
@@ -168,6 +173,8 @@ class CaptureScreen(QWidget):
         self.conflict_option1_edit.returnPressed.connect(
             lambda: self._resolve_conflict(1, self.conflict_option1_edit.text().strip())
         )
+        self.conflict_use_next_free_button = QPushButton(t("capture.conflict_use_next_free"))
+        self.conflict_use_next_free_button.clicked.connect(self._use_next_free_name)
         self.conflict_replace_button = QPushButton(t("capture.conflict_option2"))
         self.conflict_replace_button.clicked.connect(lambda: self._resolve_conflict(2))
         self.conflict_option3_edit = QLineEdit()
@@ -177,6 +184,7 @@ class CaptureScreen(QWidget):
         conflict_row1 = QHBoxLayout()
         conflict_row1.addWidget(QLabel(t("capture.conflict_option1")))
         conflict_row1.addWidget(self.conflict_option1_edit, 1)
+        conflict_row1.addWidget(self.conflict_use_next_free_button)
         conflict_row2 = QHBoxLayout()
         conflict_row2.addWidget(self.conflict_replace_button)
         conflict_row2.addStretch(1)
@@ -475,6 +483,55 @@ class CaptureScreen(QWidget):
     def _on_preview_failed(self, error: str) -> None:
         self.preview_area.show_message(t("capture.preview_unavailable", error=error))
 
+    def _load_preview_known_frame(self, name: str, extension: str, framing: FramingState) -> None:
+        """Loads the preview for a reopened image (history panel) without re-detecting.
+
+        Unlike `_load_preview`, the frame is already known (session history)
+        and must not be replaced by a fresh, possibly different detection.
+        """
+        assert self.session is not None
+        self._loaded_preview_for = name
+        self._current_frame_result = None
+        self._update_confidence_label()
+        raw_path = self.session.paths.raw_dir / f"{name}{extension}"
+
+        worker = PreviewWorker(
+            raw_path, self._decoder, self.session.campaign.framing, self, skip_detection=True
+        )
+        worker.succeeded.connect(
+            lambda result, n=name, f=framing: self._on_known_frame_preview_ready(result, n, f)
+        )
+        worker.failed.connect(self._on_preview_failed)
+        worker.finished.connect(worker.deleteLater)
+        self._preview_worker = worker
+        worker.start()
+
+    def _on_known_frame_preview_ready(
+        self, result: PreviewResult, name: str, framing: FramingState
+    ) -> None:
+        session = self.session
+        current = session.state.current_image if session is not None else None
+        if current is None or current.assigned_name != name:
+            return  # image already changed before extraction finished
+        self._current_preview_pixels = result.preview.pixels
+        self._current_preview_scale_factor = result.preview.scale_factor
+        # `framing` is in full-resolution (reference) space, same as what
+        # `_to_reference_space` produces — inverted here to redraw the
+        # overlay at preview resolution.
+        scale = result.preview.scale_factor
+        self._current_frame_result = FrameResult(
+            x=round(framing.x / scale),
+            y=round(framing.y / scale),
+            width=round(framing.width / scale),
+            height=round(framing.height / scale),
+            angle_deg=framing.angle_deg,
+            confidence=framing.confidence,
+            level="manual",
+            components=ConfidenceComponents(0.0, 0.0, 0.0, 0.0, 0.0),
+        )
+        self._display_current_preview()
+        self._update_confidence_label()
+
     # --- positive preview (P key) -----------------------------------------------
 
     def toggle_positive_preview(self) -> None:
@@ -532,7 +589,7 @@ class CaptureScreen(QWidget):
                 height=frame.height,
                 angle_deg=frame.angle_deg,
             ),
-            orientation=current.orientation,
+            rotation_deg=current.rotation_deg,
             size_mode="native",
         )
         return geometry.pixels
@@ -637,7 +694,7 @@ class CaptureScreen(QWidget):
         elif key == Qt.Key.Key_R:
             self.reject_current_image()
         elif key == Qt.Key.Key_V:
-            self.toggle_orientation_action()
+            self.rotate_image_action()
         elif key == Qt.Key.Key_C:
             self.recompute_frame()
         elif key == Qt.Key.Key_M:
@@ -856,15 +913,26 @@ class CaptureScreen(QWidget):
         self._refresh_banner()
         self._refresh_preview_state()
 
-    def toggle_orientation_action(self) -> None:
+    def rotate_image_action(self) -> None:
+        """V key: rotates the current image 90° clockwise, live preview updated immediately.
+
+        The plain negative view never rotates (it mirrors the raw scan, so
+        the frame overlay stays meaningful); switches to the master preview
+        (T) instead, which is the only rendering that actually applies
+        rotation — that's what makes the effect visible right away.
+        """
         if self.session is None or self.session.state.current_image is None:
             return
         try:
-            self.session.toggle_orientation()
+            self.session.rotate_current()
         except IllegalTransitionError:
             return
-        orientation = self.session.state.current_image.orientation
-        self._set_status(t("capture.status_orientation", orientation=orientation))
+        if not self._master_preview_active:
+            self._master_preview_active = True
+            self._positive_preview_active = False
+        self._display_current_preview()
+        rotation_deg = self.session.state.current_image.rotation_deg
+        self._set_status(t("capture.status_rotation", rotation_deg=rotation_deg))
 
     def navigate(self, direction: int) -> None:
         if self.session is None:
@@ -888,6 +956,36 @@ class CaptureScreen(QWidget):
     def stop_capture(self) -> None:
         self.stop()
         self.stopped.emit()
+
+    # --- session history (correction side panel) ---------------------------
+
+    def session_history(self) -> list[SessionHistoryEntry]:
+        return self.session.session_history() if self.session is not None else []
+
+    def reopen_image_for_correction(self, name: str) -> None:
+        """Reopens a finalized image from the history panel for correction.
+
+        Refuses (silently, status line only) if an image is already loaded —
+        finalize or reject it first.
+        """
+        session = self.session
+        if session is None:
+            return
+        try:
+            session.reopen_for_correction(name)
+        except IllegalTransitionError:
+            self._set_status(t("capture.status_reopen_busy"))
+            return
+        except ValueError as exc:
+            self._set_status(str(exc))
+            return
+        current = session.state.current_image
+        assert current is not None
+        self._positive_preview_active = False
+        self._master_preview_active = False
+        self._load_preview_known_frame(current.assigned_name, current.extension, current.framing)
+        self._refresh_banner()
+        self._set_status(t("capture.status_reopened", name=name))
 
     def open_go_to_name(self) -> None:
         if self.session is None:
@@ -929,12 +1027,34 @@ class CaptureScreen(QWidget):
         self.conflict_label.setText(t("capture.conflict_title", name=event.name))
         self.conflict_option1_edit.setText(f"{event.name}_BIS")
         self.conflict_option3_edit.setText(f"{event.name}_OLD")
+        self.conflict_use_next_free_button.setEnabled(self._next_free_name() is not None)
         self.conflict_panel.setVisible(True)
 
     def _hide_conflict_panel(self) -> None:
         self._pending_conflict = None
         self.conflict_panel.setVisible(False)
         self.setFocus()
+
+    def _next_free_name(self) -> str | None:
+        """Next `todo` row after the conflicting one — a suggestion for option 1.
+
+        Read-only: unlike `Inventory.go_to_next_todo()`, doesn't move the
+        cursor (this is just filling a text field, not resolving anything).
+        """
+        if self.session is None:
+            return None
+        inventory = self.session.inventory
+        for row in inventory.rows[inventory.cursor + 1 :]:
+            if row[STATUS_COLUMN] == "todo":
+                return row[inventory.name_column]
+        return None
+
+    def _use_next_free_name(self) -> None:
+        name = self._next_free_name()
+        if name is not None:
+            self.conflict_option1_edit.setText(name)
+            self.conflict_option1_edit.setFocus()
+            self.conflict_option1_edit.selectAll()
 
     def _select_conflict_option(self, option: int) -> None:
         if option == 1:

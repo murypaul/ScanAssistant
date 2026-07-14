@@ -33,7 +33,7 @@ class ExportContext:
     raw_path: Path
     extension: str
     source_file: str
-    orientation: str  # horizontal | vertical
+    rotation_deg: int  # 0 | 90 | 180 | 270, clockwise
     x: int
     y: int
     width: int

@@ -51,5 +51,22 @@ if ! command -v exiftool >/dev/null 2>&1; then
     echo "      until installed. Debian/Ubuntu/Mint: sudo apt install libimage-exiftool-perl" >&2
 fi
 
+# Desktop launcher: lets ScanAssistant be started from the applications menu
+# like any other app, with no terminal window (Terminal=false).
+APPS_DIR="$HOME/.local/share/applications"
+mkdir -p "$APPS_DIR"
+cat > "$APPS_DIR/scanassistant.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=ScanAssistant
+Comment=Heritage negative digitization assistant
+Exec=$TARGET_DIR/run.sh
+Icon=$TARGET_DIR/scanassistant/resources/icon.png
+Terminal=false
+Categories=Graphics;Photography;
+DESKTOP
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" 2>/dev/null
+echo "Desktop launcher installed: $APPS_DIR/scanassistant.desktop"
+
 echo "Setting up and launching ScanAssistant..."
 exec bash "$TARGET_DIR/run.sh"

@@ -36,7 +36,7 @@ def develop_master(
     raw_path: Path,
     frame: FrameGeometry,
     *,
-    orientation: str,
+    rotation_deg: int,
     size_mode: str,
     final_dimensions_px: tuple[int, int],
     colorspace: str,
@@ -46,7 +46,7 @@ def develop_master(
     geometry = apply_geometry(
         development.pixels,
         frame,
-        orientation=orientation,
+        rotation_deg=rotation_deg,
         size_mode=size_mode,
         final_dimensions_px=final_dimensions_px,
     )

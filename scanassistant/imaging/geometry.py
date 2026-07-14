@@ -38,11 +38,11 @@ def apply_geometry(
     pixels: np.ndarray,
     frame: FrameGeometry,
     *,
-    orientation: str,
+    rotation_deg: int = 0,
     size_mode: str = "native",
     final_dimensions_px: tuple[int, int] = (6016, 4016),
 ) -> GeometryResult:
-    """Deskews, crops, and (fixed mode) rescales the frame."""
+    """Deskews, crops, rotates (0/90/180/270°, V key), and (fixed mode) rescales the frame."""
     if frame.width <= 0 or frame.height <= 0:
         # No valid frame (e.g. no detection yet, framing disabled): falls
         # back to the whole image, same as the IMPOSSIBLE case — never a
@@ -50,15 +50,15 @@ def apply_geometry(
         height, width = pixels.shape[:2]
         frame = FrameGeometry(x=0, y=0, width=width, height=height, angle_deg=0.0)
     if size_mode == "fixed":
-        return _apply_fixed(pixels, frame, orientation, final_dimensions_px)
-    return _apply_native(pixels, frame, orientation)
+        return _apply_fixed(pixels, frame, rotation_deg, final_dimensions_px)
+    return _apply_native(pixels, frame, rotation_deg)
 
 
-def _apply_native(pixels: np.ndarray, frame: FrameGeometry, orientation: str) -> GeometryResult:
+def _apply_native(pixels: np.ndarray, frame: FrameGeometry, rotation_deg: int) -> GeometryResult:
     cx = frame.x + frame.width / 2
     cy = frame.y + frame.height / 2
     cropped = _deskew_and_crop(pixels, frame, frame.width, frame.height, center=(cx, cy))
-    cropped = _apply_orientation(cropped, orientation)
+    cropped = _rotate(cropped, rotation_deg)
     height, width = cropped.shape[:2]
     return GeometryResult(
         pixels=cropped,
@@ -72,14 +72,19 @@ def _apply_native(pixels: np.ndarray, frame: FrameGeometry, orientation: str) ->
 def _apply_fixed(
     pixels: np.ndarray,
     frame: FrameGeometry,
-    orientation: str,
+    rotation_deg: int,
     final_dimensions_px: tuple[int, int],
 ) -> GeometryResult:
     image_height, image_width = pixels.shape[:2]
     target_w, target_h = final_dimensions_px
-    if orientation == "vertical":
+    rotated_90 = rotation_deg in (90, 270)
+    if rotated_90:
         target_w, target_h = target_h, target_w
-    ratio = target_w / target_h
+    # The crop itself is sized in *pre-rotation* space (the frame lives in the
+    # original, unrotated image); a 90°/270° rotation swaps axes afterwards,
+    # so the ratio used to size the crop must be the inverse of the (already
+    # swapped) target ratio.
+    ratio = target_h / target_w if rotated_90 else target_w / target_h
 
     width, height = frame.width, frame.height
     if height <= 0:
@@ -109,10 +114,11 @@ def _apply_fixed(
         bounds_adjusted = True
 
     cropped = _deskew_and_crop(pixels, frame, width, height, center=(clamped_cx, clamped_cy))
+    cropped = _rotate(cropped, rotation_deg)
     resized = cv2.resize(
         cropped, (round(target_w), round(target_h)), interpolation=cv2.INTER_LANCZOS4
     )
-    scale_factor = target_w / width if width else 1.0
+    scale_factor = target_w / (height if rotated_90 else width) if width else 1.0
     return GeometryResult(
         pixels=resized,
         output_width=round(target_w),
@@ -165,11 +171,9 @@ def _crop_axis_aligned(
     return np.ascontiguousarray(pixels[y0:y1, x0:x1])
 
 
-def _apply_orientation(pixels: np.ndarray, orientation: str) -> np.ndarray:
-    height, width = pixels.shape[:2]
-    mismatched = (orientation == "vertical" and width > height) or (
-        orientation == "horizontal" and height > width
-    )
-    if not mismatched:
+def _rotate(pixels: np.ndarray, rotation_deg: int) -> np.ndarray:
+    """Rotates `pixels` clockwise by 0/90/180/270° (V key, `core.session.rotate_current`)."""
+    times = (rotation_deg // 90) % 4
+    if times == 0:
         return pixels
-    return np.ascontiguousarray(np.rot90(pixels, k=1))
+    return np.ascontiguousarray(np.rot90(pixels, k=-times))

@@ -54,14 +54,18 @@ def rebuild_export_context(
     ]
 
     source_file = ""
-    orientation = "horizontal"
+    rotation_deg = 0
     frame: dict[str, object] | None = None
     for entry in own_entries:
         details = entry.get("details") or {}
         if entry.get("type") == "NAMING" and entry.get("action") == "assigned":
             source_file = details.get("source_file", source_file)
-        if entry.get("type") == "FRAMING" and entry.get("action") == "orientation":
-            orientation = details.get("orientation", {}).get("after", orientation)
+        if entry.get("type") == "FRAMING" and entry.get("action") == "rotation":
+            rotation_deg = int(details.get("rotation_deg", {}).get("after", rotation_deg))
+        elif entry.get("type") == "FRAMING" and entry.get("action") == "orientation":
+            # Journal written before the orientation -> rotation_deg migration.
+            legacy = details.get("orientation", {}).get("after")
+            rotation_deg = 90 if legacy == "vertical" else 0
         if all(key in details for key in _FRAME_DETAIL_KEYS):
             frame = details  # most recent wins (entries are chronological)
 
@@ -72,7 +76,7 @@ def rebuild_export_context(
         raw_path=raw_path,
         extension=raw_path.suffix,
         source_file=source_file,
-        orientation=orientation,
+        rotation_deg=rotation_deg,
         x=int(frame["x"]),  # type: ignore[call-overload]
         y=int(frame["y"]),  # type: ignore[call-overload]
         width=int(frame["width"]),  # type: ignore[call-overload]

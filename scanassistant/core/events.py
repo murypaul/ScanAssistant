@@ -60,11 +60,11 @@ class NameConflictResolved:
 
 
 @dataclass(frozen=True)
-class OrientationToggled:
-    """Portrait/landscape toggle (V key)."""
+class RotationChanged:
+    """90° rotation cycle applied to the current image (V key)."""
 
     name: str
-    orientation: str  # horizontal | vertical
+    rotation_deg: int  # 0 | 90 | 180 | 270
 
 
 @dataclass(frozen=True)
@@ -118,7 +118,7 @@ SessionEvent = (
     | ImageStateChanged
     | NameConflictDetected
     | NameConflictResolved
-    | OrientationToggled
+    | RotationChanged
     | FramingApplied
     | ImageRejected
     | Warning
