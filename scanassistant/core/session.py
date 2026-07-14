@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -33,7 +33,7 @@ from scanassistant.core.events import (
     ImageStateChanged,
     NameConflictDetected,
     NameConflictResolved,
-    OrientationToggled,
+    RotationChanged,
     SessionEvent,
     StabilizationTimedOut,
 )
@@ -55,7 +55,7 @@ from scanassistant.core.recovery import rebuild_export_context
 from scanassistant.journal.journal import Journal
 from scanassistant.metadata.xmp_sidecar import render_raw_sidecar
 from scanassistant.project.campaign import Campaign
-from scanassistant.project.inventory import Inventory, validate_name
+from scanassistant.project.inventory import STATUS_COLUMN, Inventory, validate_name
 from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.state import (
     CurrentImageState,
@@ -79,6 +79,21 @@ class _PendingConflict:
     path: Path
     name: str
     existing_path: Path
+
+
+@dataclass(frozen=True)
+class SessionHistoryEntry:
+    """Snapshot of an image finalized during this run, for the history side panel.
+
+    In-memory only (not persisted to `state.json`): the history resets on
+    restart, matching "this capture session" rather than the whole campaign.
+    """
+
+    name: str
+    source_file: str
+    extension: str
+    rotation_deg: int
+    framing: FramingState
 
 
 class CaptureSession:
@@ -112,6 +127,7 @@ class CaptureSession:
         self._disk_critical_gb = disk_critical_gb
 
         self.export_queue = ExportQueue.from_state_entries(state.export_queue)
+        self._session_history: list[SessionHistoryEntry] = []
         self._pending_ingest: deque[Path] = deque()
         self._conflict: _PendingConflict | None = None
         self._export_pending_kinds: dict[str, set[str]] = {}
@@ -345,6 +361,9 @@ class CaptureSession:
             source_file=source_path.name,
             extension=result.extension,
             state="IN_REVIEW",
+            # Campaign default is only a starting point; V then cycles the
+            # image's own rotation freely (0/90/180/270), independently.
+            rotation_deg=90 if self.campaign.framing.default_orientation == "vertical" else 0,
         )
         events.append(ImageStateChanged(name=name, previous="INGESTED", new="IN_REVIEW"))
 
@@ -403,7 +422,7 @@ class CaptureSession:
             raw_path=self.paths.raw_dir / f"{name}{current.extension}",
             extension=current.extension,
             source_file=current.source_file,
-            orientation=current.orientation,
+            rotation_deg=current.rotation_deg,
             x=framing.x,
             y=framing.y,
             width=framing.width,
@@ -500,7 +519,7 @@ class CaptureSession:
                 width=task.context.width,
                 height=task.context.height,
                 angle_deg=task.context.angle_deg,
-                orientation=task.context.orientation,
+                rotation_deg=task.context.rotation_deg,
             )
         warn = False
         if result is not None:
@@ -537,20 +556,23 @@ class CaptureSession:
             raise IllegalTransitionError(current.state, "VALIDATED")
 
         name = current.assigned_name
-        has_row = self.inventory.row(name) is not None
-        if has_row:
+        row = self.inventory.row(name)
+        has_row = row is not None
+        if row is not None:
+            before_status = row[STATUS_COLUMN]
             self.inventory.set_status(name, "done")
             self.journal.log(
                 "CSV",
                 "status",
                 image=name,
-                details={"row": name, "before": "todo", "after": "done"},
+                details={"row": name, "before": before_status, "after": "done"},
             )
         events: list[SessionEvent] = [
             ImageStateChanged(name=name, previous="IN_REVIEW", new="VALIDATED")
         ]
         self._mark_completed_if_ready(name, events)
 
+        self._record_session_history(current)
         self.state.current_image = None
         if has_row:
             events.extend(self._save_inventory())
@@ -632,29 +654,29 @@ class CaptureSession:
                     deleted.append(str(entry))
         return deleted
 
-    # --- orientation (V key) --------------------------------------------------
+    # --- rotation (V key) --------------------------------------------------
 
-    def toggle_orientation(self) -> list[SessionEvent]:
-        """Toggles portrait/landscape orientation of the current image (V key).
+    def rotate_current(self) -> list[SessionEvent]:
+        """Rotates the current image 90° clockwise, cycling 0→90→180→270→0 (V key).
 
         Any export tasks already queued are cancelled and re-queued with the
-        new orientation.
+        new rotation.
         """
         current = self.state.current_image
         if current is None or current.state != "IN_REVIEW":
-            raise IllegalTransitionError(current.state if current else "NONE", "orientation")
+            raise IllegalTransitionError(current.state if current else "NONE", "rotation")
 
         name = current.assigned_name
-        before = current.orientation
-        after = "vertical" if before == "horizontal" else "horizontal"
-        current.orientation = after
+        before = current.rotation_deg
+        after = (before + 90) % 360
+        current.rotation_deg = after
         self.journal.log(
             "FRAMING",
-            "orientation",
+            "rotation",
             image=name,
-            details={"orientation": {"before": before, "after": after}},
+            details={"rotation_deg": {"before": before, "after": after}},
         )
-        events: list[SessionEvent] = [OrientationToggled(name=name, orientation=after)]
+        events: list[SessionEvent] = [RotationChanged(name=name, rotation_deg=after)]
 
         self._export_pending_kinds.pop(name, None)
         self.export_queue.cancel(name)
@@ -754,6 +776,14 @@ class CaptureSession:
     def _resolve_conflict_rename_incoming(
         self, conflict: _PendingConflict, new_name: str | None
     ) -> list[SessionEvent]:
+        """Option 1: renames the incoming file.
+
+        The conflicting row (`conflict.name`) stays `todo`, untouched, for a
+        later capture — unless `target` happens to be a real pending row
+        itself (e.g. the "use next free name" suggestion in the GUI), in
+        which case it's consumed like a normal ingestion (row marked, cursor
+        advanced past it) rather than left dangling as an off-list name.
+        """
         target = new_name or f"{conflict.name}_BIS"
         validate_name(target)
         if find_conflicting_path(target, self.paths, self.fs) is not None:
@@ -765,7 +795,12 @@ class CaptureSession:
             details={"option": 1, "old": conflict.name, "new": target},
         )
         events: list[SessionEvent] = [NameConflictResolved(option=1, old=conflict.name, new=target)]
-        events.extend(self._ingest_one(conflict.path, target, csv_row=None))
+        target_row = self.inventory.row(target)
+        if target_row is not None and target_row[STATUS_COLUMN] == "todo":
+            self.inventory.go_to_name(target)
+            events.extend(self._ingest_one(conflict.path, target, csv_row=target))
+        else:
+            events.extend(self._ingest_one(conflict.path, target, csv_row=None))
         return events
 
     def _resolve_conflict_replace_existing(self, conflict: _PendingConflict) -> list[SessionEvent]:
@@ -951,6 +986,59 @@ class CaptureSession:
         self._inventory_mtime = self._safe_mtime(self.paths.inventory_csv)
         self.journal.log("SYSTEM", "resumed", details={"code": "E-13"})
         return [CriticalResolved(code="E-13")]
+
+    # --- session history (correction side panel) --------------------------
+
+    def _record_session_history(self, current: CurrentImageState) -> None:
+        """Snapshots a just-validated image, replacing any earlier entry for it."""
+        name = current.assigned_name
+        self._session_history = [e for e in self._session_history if e.name != name]
+        self._session_history.append(
+            SessionHistoryEntry(
+                name=name,
+                source_file=current.source_file,
+                extension=current.extension,
+                rotation_deg=current.rotation_deg,
+                framing=replace(current.framing),
+            )
+        )
+
+    def session_history(self) -> list[SessionHistoryEntry]:
+        """Images finalized during this run, oldest first (history side panel)."""
+        return list(self._session_history)
+
+    def reopen_for_correction(self, name: str) -> list[SessionEvent]:
+        """Reopens a finalized image from this session's history for correction.
+
+        For catching a mistake (wrong rotation, bad crop) right after making
+        it: doesn't change the CSV status (still `done`) or the image's
+        position in the inventory — `validate_current()` re-finalizes it
+        normally once the correction is confirmed. Pauses capture as a side
+        effect so an incoming file can't collide with the reopened slot.
+        """
+        if self.state.current_image is not None:
+            raise IllegalTransitionError(self.state.current_image.state, "reopen_for_correction")
+        entry = next((e for e in self._session_history if e.name == name), None)
+        if entry is None:
+            raise ValueError(f"{name!r} is not in this session's history")
+        raw_path = self.paths.raw_dir / f"{entry.name}{entry.extension}"
+        if not self.fs.exists(raw_path):
+            raise ValueError(f"RAW file for {name!r} is missing")
+
+        if not self.paused:
+            self.pause()
+
+        self.state.current_image = CurrentImageState(
+            assigned_name=entry.name,
+            source_file=entry.source_file,
+            extension=entry.extension,
+            state="IN_REVIEW",
+            rotation_deg=entry.rotation_deg,
+            framing=replace(entry.framing),
+        )
+        self.journal.log("CAPTURE", "reopened_for_correction", image=name)
+        self._persist_state()
+        return [ImageStateChanged(name=name, previous="COMPLETED", new="IN_REVIEW")]
 
     # --- navigation --------------------------------------------------------
 

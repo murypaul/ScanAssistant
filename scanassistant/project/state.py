@@ -29,7 +29,7 @@ class CurrentImageState:
     source_file: str = ""
     extension: str = ""
     state: str = "IN_REVIEW"
-    orientation: str = "horizontal"
+    rotation_deg: int = 0  # 0 | 90 | 180 | 270, clockwise (V key)
     framing: FramingState = field(default_factory=FramingState)
     exports: dict[str, str] = field(default_factory=dict)
 
@@ -95,7 +95,12 @@ def _from_dict(data: dict[str, Any]) -> ProjectState:
             source_file=current_image_data.get("source_file", ""),
             extension=current_image_data.get("extension", ""),
             state=current_image_data.get("state", "IN_REVIEW"),
-            orientation=current_image_data.get("orientation", "horizontal"),
+            rotation_deg=current_image_data.get(
+                "rotation_deg",
+                # Reads a state.json written before the orientation -> rotation_deg
+                # migration: "vertical" becomes a 90° rotation, "horizontal" 0°.
+                90 if current_image_data.get("orientation") == "vertical" else 0,
+            ),
             framing=FramingState(**framing_data),
             exports=current_image_data.get("exports", {}),
         )
