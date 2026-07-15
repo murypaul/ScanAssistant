@@ -145,6 +145,7 @@ def _drive_capture(args: argparse.Namespace, opened: OpenedCampaign, *, was_stal
         watch_mode="polling",
         stabilization_delay_s=opened.campaign.capture.stabilization_delay_s,
         stabilization_timeout_s=opened.campaign.capture.stabilization_timeout_s,
+        extra_ignored_suffixes=tuple(opened.campaign.capture.extra_ignored_suffixes),
     )
     session = CaptureSession(
         paths=opened.paths,

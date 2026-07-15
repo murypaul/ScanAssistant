@@ -17,7 +17,8 @@ from scanassistant.utils.atomic import atomic_write_bytes, atomic_write_text
 STATUS_COLUMN = "status"
 SOURCE_FILE_COLUMN = "source_file"
 NAME_ALIASES = ("filename", "name", "nom_fichier", "fichier", "nom")
-MAX_NAME_LENGTH = 100
+MAX_NAME_LENGTH = 100  # default; operator-configurable (config.json:csv.max_name_length)
+MAX_NAME_LENGTH_CEILING = 300  # hard ceiling: config.py validates against this
 DELIMITER_CANDIDATES = (";", ",", "\t")
 
 _INVALID_CHARS_PATTERN = re.compile(r"[^A-Za-z0-9._-]")
@@ -172,6 +173,7 @@ def import_csv(
     *,
     fix_invalid_characters: bool = True,
     has_header: bool = True,
+    max_name_length: int = MAX_NAME_LENGTH,
 ) -> ImportedInventory:
     """Imports an external CSV (also used to reload `inventory.csv`).
 
@@ -183,6 +185,11 @@ def import_csv(
     a headerless, single-column CSV would otherwise silently lose its
     first name (swallowed as the "column name"), so the caller (CSV
     wizard step) must say which case this is.
+
+    `max_name_length`: operator-configurable (config.json:csv.max_name_length,
+    [10;MAX_NAME_LENGTH_CEILING]); `load_inventory()` below always passes the
+    ceiling instead, so a reload never rejects a name that was valid at
+    import time under a looser setting than whatever is configured now.
     """
     raw = Path(source_path).read_bytes()
     text, warnings = _decode_csv_bytes(raw)
@@ -232,9 +239,9 @@ def import_csv(
         if _has_extension(name):
             problems.append(f"line {line_number}: name must not include a file extension: {name!r}")
             continue
-        if len(name) > MAX_NAME_LENGTH:
+        if len(name) > max_name_length:
             problems.append(
-                f"line {line_number}: name exceeds {MAX_NAME_LENGTH} characters: {name!r}"
+                f"line {line_number}: name exceeds {max_name_length} characters: {name!r}"
             )
             continue
         if _INVALID_CHARS_PATTERN.search(name):
@@ -297,8 +304,13 @@ def import_csv(
 
 
 def load_inventory(path: Path, name_column: str) -> Inventory:
-    """Reloads `inventory.csv` for an already-created campaign (same rules as import)."""
-    return import_csv(path, name_column).inventory
+    """Reloads `inventory.csv` for an already-created campaign (same rules as import).
+
+    Always permissive on name length (`MAX_NAME_LENGTH_CEILING`, never the
+    live `csv.max_name_length` setting): every row here was already valid
+    when written, under whatever setting was active then.
+    """
+    return import_csv(path, name_column, max_name_length=MAX_NAME_LENGTH_CEILING).inventory
 
 
 def export_inventory(inventory_path: Path, destination: Path) -> None:
@@ -314,7 +326,7 @@ def has_been_modified_externally(path: Path, known_mtime: float) -> bool:
 # --- internal helpers -------------------------------------------------------
 
 
-def validate_name(name: str) -> None:
+def validate_name(name: str, *, max_name_length: int = MAX_NAME_LENGTH) -> None:
     """Rules common to every image name: free-form name or conflict
 
     resolution (`<NAME>_BIS`/`<NAME>_OLD`). Raises `ValueError` on an
@@ -325,8 +337,8 @@ def validate_name(name: str) -> None:
         raise ValueError(f"Name must not include a file extension: {name!r}")
     if not name:
         raise ValueError("Name must not be empty")
-    if len(name) > MAX_NAME_LENGTH:
-        raise ValueError(f"Name exceeds {MAX_NAME_LENGTH} characters: {name!r}")
+    if len(name) > max_name_length:
+        raise ValueError(f"Name exceeds {max_name_length} characters: {name!r}")
     if _INVALID_CHARS_PATTERN.search(name):
         raise ValueError(f"Invalid characters in name: {name!r}")
 

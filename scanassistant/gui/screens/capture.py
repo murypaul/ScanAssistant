@@ -66,7 +66,7 @@ from scanassistant.journal.journal import Journal
 from scanassistant.metadata.writer import ExifToolMetadataWriter
 from scanassistant.metadata.writer import is_available as is_exiftool_available
 from scanassistant.project.campaign import Campaign
-from scanassistant.project.inventory import STATUS_COLUMN, Inventory
+from scanassistant.project.inventory import MAX_NAME_LENGTH, STATUS_COLUMN, Inventory
 from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.state import FramingState, ProjectState
 from scanassistant.watcher.monitor import FolderMonitor
@@ -272,6 +272,10 @@ class CaptureScreen(QWidget):
         fs: FileSystem,
         exiftool_executable: str = "",
         was_stale: bool = False,
+        disk_warn_gb: float = 10.0,
+        disk_critical_gb: float = 2.0,
+        max_name_length: int = MAX_NAME_LENGTH,
+        export_queue_warn_threshold: int = 20,
     ) -> None:
         monitor = FolderMonitor(
             Path(campaign.capture.watched_folder),
@@ -279,6 +283,7 @@ class CaptureScreen(QWidget):
             watch_mode="polling",
             stabilization_delay_s=campaign.capture.stabilization_delay_s,
             stabilization_timeout_s=campaign.capture.stabilization_timeout_s,
+            extra_ignored_suffixes=tuple(campaign.capture.extra_ignored_suffixes),
         )
         export_runner = self._export_runner_override or MasterExportRunner(
             decoder=self._decoder,
@@ -297,6 +302,10 @@ class CaptureScreen(QWidget):
             monitor=monitor,
             export_runner=export_runner,
             export_executor=self._export_executor_override or InlineExportExecutor(),
+            disk_warn_gb=disk_warn_gb,
+            disk_critical_gb=disk_critical_gb,
+            max_name_length=max_name_length,
+            export_queue_warn_threshold=export_queue_warn_threshold,
         )
         if was_stale:
             report = perform_crash_recovery(self.session)
@@ -317,12 +326,52 @@ class CaptureScreen(QWidget):
         self._pump_timer.start(interval_ms)
         self.setFocus()
 
-    def stop(self) -> None:
+    def stop(self, *, wait_for_exports: bool = True) -> None:
         self._pump_timer.stop()
         if self.session is not None:
-            self._dispatch(self.session.stop())  # already waits for the export queue to drain
-            self.session.export_executor.shutdown()  # releases the background thread, if any
+            self._dispatch(self.session.stop(wait_for_exports=wait_for_exports))
+            if wait_for_exports:
+                self.session.export_executor.shutdown()  # releases the background thread, if any
+            # else: abandoned deliberately (Quit without waiting) — the
+            # daemon thread dies with the process, whatever it was still
+            # writing is safely re-run from the untouched RAW next launch.
         self.session = None
+        self._pending_conflict = None
+        self.conflict_panel.setVisible(False)
+
+    # --- non-blocking shutdown (drain_on_exit) ----------------------------------
+
+    def begin_shutdown(self) -> int:
+        """First step of closing the app while a capture session is open.
+
+        Stops monitoring the watched folder, finalizes the current image,
+        and submits the whole export backlog without blocking. The session
+        is kept alive (unlike `stop()`) so the caller can either wait it out
+        (`poll_export_progress`) or abandon it (`finish_shutdown`).
+        Returns the number of exports still pending right after submission.
+        """
+        self._pump_timer.stop()
+        if self.session is None:
+            return 0
+        self._dispatch(self.session.stop(wait_for_exports=False))
+        return len(self.session.export_queue)
+
+    def poll_export_progress(self) -> int:
+        """Call periodically after `begin_shutdown()`. Returns the number of
+        exports still pending; 0 once it is safe to actually close."""
+        if self.session is None:
+            return 0
+        self._dispatch(self.session.collect_export_progress())
+        return len(self.session.export_queue)
+
+    def finish_shutdown(self, *, wait_for_exports: bool) -> None:
+        """Second step, after `begin_shutdown()`. `wait_for_exports=True` only
+        once `poll_export_progress()` has reached 0 (never blocks then);
+        `False` abandons whatever is still in flight (Quit without waiting)."""
+        if self.session is not None:
+            if wait_for_exports:
+                self.session.export_executor.shutdown()
+            self.session = None
         self._pending_conflict = None
         self.conflict_panel.setVisible(False)
 

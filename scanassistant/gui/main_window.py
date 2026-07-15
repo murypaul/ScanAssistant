@@ -11,16 +11,19 @@ import contextlib
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDockWidget,
     QFileDialog,
+    QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -34,6 +37,7 @@ from scanassistant.core.export_runner import MasterExportRunner
 from scanassistant.core.fs import RealFileSystem
 from scanassistant.core.queue import ThreadedExportExecutor
 from scanassistant.core.session import CaptureSession
+from scanassistant.gui.dialogs.preferences import PreferencesDialog
 from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.screens.capture import CaptureScreen
 from scanassistant.gui.screens.home import HomeScreen
@@ -87,6 +91,9 @@ class MainWindow(QMainWindow):
         self._shortcuts_window: QWidget | None = None
         self._update_check_worker: UpdateCheckWorker | None = None
         self._update_apply_worker: UpdateApplyWorker | None = None
+        self._shutdown_panel: QWidget | None = None
+        self._shutdown_label: QLabel | None = None
+        self._shutdown_timer: QTimer | None = None
 
         self.setWindowTitle(t("home.title"))
         self.setMinimumSize(1280, 720)
@@ -155,6 +162,10 @@ class MainWindow(QMainWindow):
         self._add_action(self.file_menu, t("menu.file_open"), "Ctrl+O", self._on_open_campaign)
         self.recent_menu = self.file_menu.addMenu(t("menu.file_recent"))
         self._rebuild_recent_menu()
+        self.file_menu.addSeparator()
+        self.action_preferences = self._add_action(
+            self.file_menu, t("menu.file_preferences"), None, self._show_preferences
+        )
         self.file_menu.addSeparator()
         self._add_action(self.file_menu, t("menu.file_quit"), "Ctrl+Q", self.close)
 
@@ -341,12 +352,14 @@ class MainWindow(QMainWindow):
         self.project_menu.setEnabled(False)
         self.action_start_capture.setEnabled(False)
         self.action_check_updates.setEnabled(True)
+        self.action_preferences.setEnabled(True)
 
     def _show_project(self) -> None:
         self._stack.setCurrentWidget(self.project_screen)
         self.project_menu.setEnabled(True)
         self.action_start_capture.setEnabled(True)
         self.action_check_updates.setEnabled(True)
+        self.action_preferences.setEnabled(True)
 
     def _show_capture(self) -> None:
         self._stack.setCurrentWidget(self.capture_screen)
@@ -354,12 +367,19 @@ class MainWindow(QMainWindow):
         # No popup during capture (règle absolue 4): the update check result
         # is a `QMessageBox`, out of place here even on manual request.
         self.action_check_updates.setEnabled(False)
+        self.action_preferences.setEnabled(False)
         self.capture_screen.setFocus()
+
+    # --- preferences -------------------------------------------------------
+
+    def _show_preferences(self) -> None:
+        dialog = PreferencesDialog(self.context, check_updates=self._check_for_updates, parent=self)
+        dialog.exec()
 
     # --- campaign creation / opening --------------------------------------------
 
     def _on_new_campaign(self) -> None:
-        wizard = NewCampaignWizard(self)
+        wizard = NewCampaignWizard(self, max_name_length=self.context.config.csv.max_name_length)
         if wizard.exec() == QDialog.DialogCode.Accepted and wizard.result_campaign:
             self._open_project(wizard.result_campaign.paths.root)
 
@@ -457,6 +477,7 @@ class MainWindow(QMainWindow):
             watch_mode="polling",
             stabilization_delay_s=campaign.capture.stabilization_delay_s,
             stabilization_timeout_s=campaign.capture.stabilization_timeout_s,
+            extra_ignored_suffixes=tuple(campaign.capture.extra_ignored_suffixes),
         )
         export_runner = MasterExportRunner(
             decoder=RawpyDecoder(),
@@ -474,6 +495,8 @@ class MainWindow(QMainWindow):
             fs=RealFileSystem(),
             monitor=monitor,
             export_runner=export_runner,
+            disk_warn_gb=self.context.config.thresholds.disk_warn_gb,
+            disk_critical_gb=self.context.config.thresholds.disk_critical_gb,
         )
 
     # --- "Export queue" panel ---------------------------------------------------
@@ -605,6 +628,10 @@ class MainWindow(QMainWindow):
             fs=RealFileSystem(),
             exiftool_executable=self.context.config.paths.exiftool,
             was_stale=self._lock_was_stale,
+            disk_warn_gb=self.context.config.thresholds.disk_warn_gb,
+            disk_critical_gb=self.context.config.thresholds.disk_critical_gb,
+            max_name_length=self.context.config.csv.max_name_length,
+            export_queue_warn_threshold=self.context.config.thresholds.export_queue_warn,
         )
         self._lock_was_stale = False  # consumed: no double recovery
         self._wire_capture_actions()
@@ -826,10 +853,76 @@ class MainWindow(QMainWindow):
                 self, t("update.check_title"), t("update.apply_failed", error=result.error)
             )
 
-    # --- clean shutdown ----------------------------------------------------
+    # --- clean shutdown (processing.drain_on_exit) -----------------------------
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        if self.capture_screen.session is not None:
-            self.capture_screen.stop()  # finalizes the current image
+        if self._shutdown_panel is not None:
+            # Already finalizing from a previous close attempt (e.g. a second
+            # click on the window's close button): keep waiting, don't
+            # restart the finalize/submit step a second time.
+            event.ignore()
+            return
+
+        if self.capture_screen.session is None:
+            self._release_lock()
+            super().closeEvent(event)
+            return
+
+        pending = self.capture_screen.begin_shutdown()
+        if pending == 0:
+            # Nothing left to wait for: shut the executor thread down cleanly.
+            self.capture_screen.finish_shutdown(wait_for_exports=True)
+            self._release_lock()
+            super().closeEvent(event)
+            return
+        if not self.context.config.processing.drain_on_exit:
+            self.capture_screen.finish_shutdown(wait_for_exports=False)
+            self._release_lock()
+            super().closeEvent(event)
+            return
+
+        event.ignore()
+        self._show_shutdown_panel(pending)
+
+    def _show_shutdown_panel(self, pending: int) -> None:
+        panel = QWidget()
+        panel.setWindowTitle(t("shutdown.title"))
+        panel.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        label = QLabel(t("shutdown.pending", count=pending))
+        button = QPushButton(t("shutdown.quit_without_waiting"))
+        button.clicked.connect(self._force_quit_without_waiting)
+        row = QHBoxLayout()
+        row.addWidget(label, stretch=1)
+        row.addWidget(button)
+        QVBoxLayout(panel).addLayout(row)
+        panel.resize(420, 80)
+        self._shutdown_panel = panel
+        self._shutdown_label = label
+        panel.show()
+        panel.raise_()
+
+        timer = QTimer(self)
+        timer.timeout.connect(self._poll_shutdown)
+        timer.start(300)
+        self._shutdown_timer = timer
+
+    def _poll_shutdown(self) -> None:
+        pending = self.capture_screen.poll_export_progress()
+        if pending == 0:
+            self._finish_shutdown(wait_for_exports=True)
+            return
+        self._shutdown_label.setText(t("shutdown.pending", count=pending))
+
+    def _force_quit_without_waiting(self) -> None:
+        self._finish_shutdown(wait_for_exports=False)
+
+    def _finish_shutdown(self, *, wait_for_exports: bool) -> None:
+        if self._shutdown_timer is not None:
+            self._shutdown_timer.stop()
+            self._shutdown_timer = None
+        if self._shutdown_panel is not None:
+            self._shutdown_panel.close()
+            self._shutdown_panel = None
+        self.capture_screen.finish_shutdown(wait_for_exports=wait_for_exports)
         self._release_lock()
-        super().closeEvent(event)
+        self.close()

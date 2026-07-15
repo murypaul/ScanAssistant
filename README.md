@@ -123,7 +123,8 @@ update — the in-app check will tell you this rather than fail silently.
 ## Why open source
 
 This project was built primarily with AI-assisted coding tools, with a
-human directing the design, the trade-offs, and the review. When most of an
+human directing the design, the trade-offs, and the review. I think that
+raises a genuine ethical question of ownership: when most of an
 implementation comes from that kind of collaboration rather than purely
 from hand-written effort, I don't think it's mine to keep closed — so it's
 released under the GPL for anyone to use, study, or build on.
@@ -271,7 +272,8 @@ la vérification intégrée vous l'indiquera plutôt que d'échouer en silence.
 
 Ce projet a été construit principalement avec des outils de développement
 assistés par IA, un humain dirigeant la conception, les arbitrages et la
-relecture. Quand l'essentiel d'une implémentation vient de ce type de
+relecture. Cela pose selon moi une véritable question éthique de
+propriété : quand l'essentiel d'une implémentation vient de ce type de
 collaboration plutôt que d'un travail manuel classique, je ne considère pas
 qu'elle m'appartienne en propre — d'où la publication sous licence GPL,
 ouverte à qui veut l'utiliser, l'étudier ou la reprendre.

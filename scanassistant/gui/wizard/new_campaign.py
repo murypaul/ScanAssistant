@@ -46,7 +46,7 @@ from scanassistant.project.campaign import (
     load_campaign,
 )
 from scanassistant.project.errors import InvalidCampaignError, InvalidCsvError, ScanAssistantError
-from scanassistant.project.inventory import ImportedInventory, import_csv
+from scanassistant.project.inventory import MAX_NAME_LENGTH, ImportedInventory, import_csv
 from scanassistant.project.layout import CampaignPaths
 
 
@@ -195,8 +195,9 @@ class CsvPage(QWizardPage):
 
     PREVIEW_LIMIT = 20
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_name_length: int = MAX_NAME_LENGTH) -> None:
         super().__init__()
+        self._max_name_length = max_name_length
         self.setTitle(t("wizard.step3.title"))
         self.setSubTitle(t("wizard.step3.subtitle"))
 
@@ -253,6 +254,7 @@ class CsvPage(QWizardPage):
                 Path(path_text),
                 self.name_column_edit.text().strip() or "filename",
                 has_header=self.has_header_check.isChecked(),
+                max_name_length=self._max_name_length,
             )
         except InvalidCsvError as exc:
             problems = exc.details.get("problems", [])
@@ -525,8 +527,11 @@ class SummaryPage(QWizardPage):
 
 
 class NewCampaignWizard(QWizard):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, *, max_name_length: int = MAX_NAME_LENGTH
+    ) -> None:
         super().__init__(parent)
+        self._max_name_length = max_name_length
         self.setWindowTitle(t("wizard.title"))
         self.setOption(QWizard.WizardOption.NoBackButtonOnLastPage, False)
         self.setButtonText(QWizard.WizardButton.FinishButton, t("wizard.step7.create_button"))
@@ -534,7 +539,7 @@ class NewCampaignWizard(QWizard):
 
         self.identity_page = IdentityPage()
         self.folders_page = FoldersPage(self.identity_page)
-        self.csv_page = CsvPage()
+        self.csv_page = CsvPage(max_name_length=max_name_length)
         self.framing_page = FramingPage()
         self.exports_page = ExportsPage()
         self.metadata_page = MetadataPage()
@@ -571,6 +576,7 @@ class NewCampaignWizard(QWizard):
                 campaign,
                 self.csv_page.csv_path,
                 has_header=self.csv_page.has_header,
+                max_name_length=self._max_name_length,
             )
         except (InvalidCampaignError, InvalidCsvError) as exc:
             QMessageBox.critical(

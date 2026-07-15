@@ -44,6 +44,7 @@ STRINGS: dict[str, str] = {
     "menu.file_new": "New campaign",
     "menu.file_open": "Open…",
     "menu.file_recent": "Recent campaigns",
+    "menu.file_preferences": "Preferences…",
     "menu.file_quit": "Quit",
     "menu.project": "Project",
     "menu.project_settings": "Campaign settings…",
@@ -68,6 +69,61 @@ STRINGS: dict[str, str] = {
     "export_queue.title": "Export queue",
     "export_queue.column_name": "Name",
     "export_queue.column_kind": "Kind",
+    # --- Shutdown while exports are pending (processing.drain_on_exit) ---
+    "shutdown.title": "Finalizing",
+    "shutdown.pending": "Finalizing: {count} export(s) pending…",
+    "shutdown.quit_without_waiting": "Quit without waiting",
+    # --- Preferences dialog (global config.json, File ▸ Preferences…) ---
+    "preferences.title": "Preferences",
+    "preferences.tab_general": "General",
+    "preferences.tab_processing": "Processing",
+    "preferences.tab_thresholds": "Thresholds",
+    "preferences.tab_updates": "Updates",
+    "preferences.reopen_last": "Reopen last project on startup",
+    "preferences.exiftool": "exiftool path",
+    "preferences.exiftool_tooltip": (
+        "Leave empty to search automatically on PATH. Only needed if exiftool"
+        " isn't found there — without it, exports still work but carry no"
+        " EXIF/IPTC/XMP metadata."
+    ),
+    "preferences.test": "Test",
+    "preferences.drain_on_exit": "Wait for pending exports before closing",
+    "preferences.drain_on_exit_tooltip": (
+        "On: closing waits for TIFF/JPEG conversions still in progress,"
+        " showing their count, with a Quit without waiting option. Off:"
+        " closes immediately — nothing is lost, pending conversions simply"
+        " resume the next time this campaign is opened."
+    ),
+    "preferences.max_name_length": "Maximum name length",
+    "preferences.max_name_length_tooltip": (
+        "Longest negative name accepted when importing a new CSV. Existing"
+        " campaigns stay readable regardless of this setting."
+    ),
+    "preferences.disk_warn": "Disk space warning",
+    "preferences.disk_warn_tooltip": (
+        "Below this much free space, a warning banner appears — capture keeps running."
+    ),
+    "preferences.disk_critical": "Disk space critical",
+    "preferences.disk_critical_tooltip": (
+        "Below this much free space, processing is suspended until space is"
+        " freed and the operator resumes it. Must be lower than the warning"
+        " threshold."
+    ),
+    "preferences.export_queue_warn": "Export queue warning size",
+    "preferences.export_queue_warn_tooltip": (
+        "Above this many pending exports, a warning banner appears — the"
+        " queue keeps draining normally, this is an early warning only."
+    ),
+    "preferences.updates_check_enabled": "Check for updates at startup",
+    "preferences.updates_check_enabled_tooltip": (
+        "The only network access this app ever makes: a single git fetch"
+        " when the app opens, to compare against the tracked remote. Nothing"
+        " is sent beyond that; a manual check (Help ▸ Check for updates…) is"
+        " always available regardless of this setting."
+    ),
+    "preferences.export_settings": "Export settings…",
+    "preferences.import_settings": "Import settings…",
+    "preferences.restart_notice": "Settings imported. Restart ScanAssistant to fully apply them.",
     "history.title": "Session history",
     "positive_settings.title": "Positive settings",
     "menu.project_open_folder": "Open campaign folder",
@@ -277,6 +333,13 @@ STRINGS: dict[str, str] = {
     "project.stabilization_delay": "Stabilization delay",
     "project.stabilization_timeout": "Stabilization timeout",
     "project.verify_checksum": "Verify SHA-256 on cross-volume ingestion",
+    "project.extra_ignored_suffixes": "Additional ignored file suffixes",
+    "project.extra_ignored_suffixes_tooltip": (
+        "Added on top of the built-in ignore list (.tmp, .part, .crdownload,"
+        " hidden files) — never replaces it. Use only for a junk-file pattern"
+        " your camera or card software actually produces: a suffix that"
+        " matches a real capture would hide it from the watched folder."
+    ),
     "project.csv_search_placeholder": "Search by name (Ctrl+F)",
     "project.csv_filter_all": "All statuses",
     "project.csv_filter_todo": "Todo",

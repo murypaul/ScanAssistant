@@ -57,7 +57,12 @@ from scanassistant.core.recovery import rebuild_export_context
 from scanassistant.journal.journal import Journal
 from scanassistant.metadata.xmp_sidecar import render_raw_sidecar
 from scanassistant.project.campaign import Campaign
-from scanassistant.project.inventory import STATUS_COLUMN, Inventory, validate_name
+from scanassistant.project.inventory import (
+    MAX_NAME_LENGTH,
+    STATUS_COLUMN,
+    Inventory,
+    validate_name,
+)
 from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.state import (
     CurrentImageState,
@@ -116,6 +121,8 @@ class CaptureSession:
         now_wall: type[datetime] = datetime,
         disk_warn_gb: float = 10.0,
         disk_critical_gb: float = 2.0,
+        max_name_length: int = MAX_NAME_LENGTH,
+        export_queue_warn_threshold: int = _EXPORT_QUEUE_WARN_THRESHOLD,
     ) -> None:
         self.paths = paths
         self.campaign = campaign
@@ -133,6 +140,8 @@ class CaptureSession:
         self._now_wall = now_wall
         self._disk_warn_gb = disk_warn_gb
         self._disk_critical_gb = disk_critical_gb
+        self._max_name_length = max_name_length
+        self._export_queue_warn_threshold = export_queue_warn_threshold
 
         self.export_queue = ExportQueue.from_state_entries(state.export_queue)
         self._session_history: list[SessionHistoryEntry] = []
@@ -198,7 +207,7 @@ class CaptureSession:
     def _check_queue_growth(self) -> list[SessionEvent]:
         """Warns once the export queue backs up beyond the threshold."""
         size = len(self.export_queue)
-        if size > _EXPORT_QUEUE_WARN_THRESHOLD:
+        if size > self._export_queue_warn_threshold:
             if self._queue_growth_warned:
                 return []
             self._queue_growth_warned = True
@@ -486,7 +495,9 @@ class CaptureSession:
             "jpeg_positive": exports.jpeg_positive.enabled,
         }[kind]
 
-    def _drain_exports(self, deadline: float | None = None) -> list[SessionEvent]:
+    def _drain_exports(
+        self, deadline: float | None = None, *, wait: bool = True
+    ) -> list[SessionEvent]:
         """Hands pending export tasks to `self.export_executor` and processes
         whatever it has completed so far (real `ExportRunner` or
         `FakeExportRunner`, inline or on a background thread).
@@ -513,9 +524,11 @@ class CaptureSession:
             self.export_executor.submit(task, self.export_runner)
             submitted_any = True
 
-        if deadline is None:
+        if deadline is None and wait:
             # Campaign shutdown: must wait for the queue to finish rather
-            # than abandon in-flight tasks (unchanged contract, I-83).
+            # than abandon in-flight tasks (unchanged contract, I-83) —
+            # unless the caller explicitly opted out (`wait=False`,
+            # `processing.drain_on_exit`).
             self.export_executor.wait_idle()
 
         for task, result in self.export_executor.collect_completed():
@@ -894,7 +907,7 @@ class CaptureSession:
         advanced past it) rather than left dangling as an off-list name.
         """
         target = new_name or f"{conflict.name}_BIS"
-        validate_name(target)
+        validate_name(target, max_name_length=self._max_name_length)
         if find_conflicting_path(target, self.paths, self.fs) is not None:
             raise ValueError(f"Name already in use: {target!r}")
 
@@ -942,7 +955,7 @@ class CaptureSession:
         becomes the file's name once it lands in `BACKUP/`.
         """
         target = new_name or f"{conflict.name}_OLD"
-        validate_name(target)
+        validate_name(target, max_name_length=self._max_name_length)
         if find_conflicting_path(target, self.paths, self.fs) is not None:
             raise ValueError(f"Name already in use: {target!r}")
 
@@ -1182,8 +1195,11 @@ class CaptureSession:
         process = process or set()
         events: list[SessionEvent] = []
         extensions = {e.lower() for e in self.campaign.capture.extensions}
+        extra_ignored_suffixes = tuple(self.campaign.capture.extra_ignored_suffixes)
         candidates = [
-            p for p in self.fs.list_dir(self.monitor.folder) if is_candidate_file(p, extensions)
+            p
+            for p in self.fs.list_dir(self.monitor.folder)
+            if is_candidate_file(p, extensions, extra_ignored_suffixes=extra_ignored_suffixes)
         ]
         known_ignored = {f.name for f in self.state.ignored_files}
         to_seed: list[Path] = []
@@ -1210,17 +1226,36 @@ class CaptureSession:
         self._persist_state()
         return events
 
-    def stop(self) -> list[SessionEvent]:
+    def stop(self, *, wait_for_exports: bool = True) -> list[SessionEvent]:
         """Exits capture mode / clean shutdown: finalizes the current image.
 
-        Fully drains the export queue, blocking (`deadline=None`), before
-        leaving capture mode: unlike the periodic bounded drain in `pump()`,
-        shutdown must wait for the queue to finish rather than abandon
-        in-flight tasks.
+        `wait_for_exports=True` (default) fully drains the export queue,
+        blocking (`deadline=None`), before leaving capture mode: unlike the
+        periodic bounded drain in `pump()`, shutdown must wait for the queue
+        to finish rather than abandon in-flight tasks. `wait_for_exports=False`
+        (GUI-only: `processing.drain_on_exit`) still submits the whole
+        backlog but returns immediately — safe because whatever is still in
+        flight stays recorded in `state.export_queue` either way (`ExportQueue`
+        tracks in-flight tasks) and is simply re-run from the untouched RAW
+        on the next launch.
         """
         events = self.validate_current()
-        events.extend(self._drain_exports())
+        events.extend(self._drain_exports(wait=wait_for_exports))
         self.state.mode = "preparation"
+        self._persist_state()
+        return events
+
+    def collect_export_progress(self) -> list[SessionEvent]:
+        """Non-blocking check-in while waiting out a `stop(wait_for_exports=False)`.
+
+        Collects whatever the background executor has finished since the
+        last call (bookkeeping: journal, CSV status, `state.export_queue`)
+        without submitting anything new or blocking — the backlog was
+        already fully submitted by `stop()`. Persists the shrunk queue so a
+        crash during the wait never re-does more than what's genuinely
+        still in flight.
+        """
+        events = self._drain_exports(wait=False)
         self._persist_state()
         return events
 

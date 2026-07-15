@@ -352,12 +352,19 @@ class ProjectScreen(QWidget):
         self.verify_checksum_check = QCheckBox(t("project.verify_checksum"))
         self.verify_checksum_check.toggled.connect(self._on_verify_checksum_changed)
 
+        self.extra_ignored_suffixes_edit = QLineEdit()
+        self.extra_ignored_suffixes_edit.setToolTip(t("project.extra_ignored_suffixes_tooltip"))
+        self.extra_ignored_suffixes_edit.editingFinished.connect(
+            self._on_extra_ignored_suffixes_changed
+        )
+
         form = QFormLayout()
         form.addRow(t("project.extensions"), self.extensions_edit)
         form.addRow(t("project.watch_mode"), self.watch_mode_combo)
         form.addRow(t("project.stabilization_delay"), self.stabilization_delay_spin)
         form.addRow(t("project.stabilization_timeout"), self.stabilization_timeout_spin)
         form.addRow(self.verify_checksum_check)
+        form.addRow(t("project.extra_ignored_suffixes"), self.extra_ignored_suffixes_edit)
 
         widget = QWidget()
         widget.setLayout(form)
@@ -374,6 +381,7 @@ class ProjectScreen(QWidget):
                 self.stabilization_delay_spin,
                 self.stabilization_timeout_spin,
                 self.verify_checksum_check,
+                self.extra_ignored_suffixes_edit,
             ):
                 stack.enter_context(QSignalBlocker(w))
             self.extensions_edit.setText(", ".join(c.extensions))
@@ -381,6 +389,7 @@ class ProjectScreen(QWidget):
             self.stabilization_delay_spin.setValue(c.stabilization_delay_s)
             self.stabilization_timeout_spin.setValue(c.stabilization_timeout_s)
             self.verify_checksum_check.setChecked(c.verify_checksum)
+            self.extra_ignored_suffixes_edit.setText(", ".join(c.extra_ignored_suffixes))
 
     def _on_extensions_changed(self) -> None:
         if self.campaign is None:
@@ -431,6 +440,16 @@ class ProjectScreen(QWidget):
             return
         self.campaign.capture.verify_checksum = after
         self._commit("capture.verify_checksum", before, after)
+
+    def _on_extra_ignored_suffixes_changed(self) -> None:
+        if self.campaign is None:
+            return
+        before = self.campaign.capture.extra_ignored_suffixes
+        after = [s.strip() for s in self.extra_ignored_suffixes_edit.text().split(",") if s.strip()]
+        if after == before:
+            return
+        self.campaign.capture.extra_ignored_suffixes = after
+        self._commit("capture.extra_ignored_suffixes", before, after)
 
     # --- Framing --------------------------------------------------------
 
