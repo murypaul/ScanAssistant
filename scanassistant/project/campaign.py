@@ -16,7 +16,12 @@ from typing import Any
 
 from scanassistant.journal.journal import Journal
 from scanassistant.project.errors import InvalidCampaignError, MissingInventoryError
-from scanassistant.project.inventory import Inventory, import_csv, load_inventory
+from scanassistant.project.inventory import (
+    MAX_NAME_LENGTH,
+    Inventory,
+    import_csv,
+    load_inventory,
+)
 from scanassistant.project.layout import CampaignPaths, create_campaign_tree
 from scanassistant.project.state import ProjectState, load_state, save_state
 from scanassistant.utils.atomic import atomic_write_text
@@ -43,6 +48,11 @@ class CaptureConfig:
     stabilization_timeout_s: int = 120
     watch_mode: str = "auto"  # auto | native | polling
     verify_checksum: bool = True
+    # Filename suffixes to ignore in the watched folder, on top of the
+    # built-in ones (watcher.monitor.IGNORED_NAME_SUFFIXES) — never a
+    # replacement for them. For camera/card software producing junk-file
+    # patterns the built-in list doesn't already know about.
+    extra_ignored_suffixes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -93,7 +103,7 @@ class JpegPositiveExportConfig:
     long_edge_px: int = 0  # 0 = full size
     mode: str = "auto"  # simple | auto | manual
     horizontal_flip: bool = True
-    suffix: str = "_POS"  # appended to <NAME> in JPEG_POSITIVE/<NAME><suffix>.jpg
+    suffix: str = "-POS"  # appended to <NAME> in JPEG_POSITIVE/<NAME><suffix>.jpg
     manual_settings: ManualPositiveSettings = field(default_factory=ManualPositiveSettings)
 
 
@@ -157,6 +167,16 @@ class Campaign:
             if not ext.startswith("."):
                 raise InvalidCampaignError(
                     "capture.extensions", f"extension must start with '.': {ext!r}"
+                )
+        for suffix in self.capture.extra_ignored_suffixes:
+            if not suffix:
+                raise InvalidCampaignError(
+                    "capture.extra_ignored_suffixes", "suffixes must not be empty"
+                )
+            if suffix.lower() in {ext.lower() for ext in self.capture.extensions}:
+                raise InvalidCampaignError(
+                    "capture.extra_ignored_suffixes",
+                    f"{suffix!r} matches a RAW extension — would hide captured files",
                 )
         if not 0.5 <= self.capture.stabilization_delay_s <= 30:
             raise InvalidCampaignError("capture.stabilization_delay_s", "must be within [0.5, 30]")
@@ -269,7 +289,12 @@ class CreatedCampaign:
 
 
 def create_campaign(
-    root: Path, campaign: Campaign, csv_source: Path, *, has_header: bool = True
+    root: Path,
+    campaign: Campaign,
+    csv_source: Path,
+    *,
+    has_header: bool = True,
+    max_name_length: int = MAX_NAME_LENGTH,
 ) -> CreatedCampaign:
     """Creates a complete campaign on disk.
 
@@ -279,9 +304,16 @@ def create_campaign(
     `has_header`: only relevant for this one-time import of `csv_source` — the
     internal `inventory.csv` this creates always has a header row (written by
     `Inventory.save`), so reloading it later never needs this parameter.
+
+    `max_name_length`: operator-configurable (config.json:csv.max_name_length).
     """
     campaign.validate()
-    imported = import_csv(csv_source, campaign.naming.csv_column, has_header=has_header)
+    imported = import_csv(
+        csv_source,
+        campaign.naming.csv_column,
+        has_header=has_header,
+        max_name_length=max_name_length,
+    )
 
     paths = create_campaign_tree(root)
     save_campaign(campaign, paths.campaign_json)

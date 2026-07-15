@@ -93,12 +93,38 @@ cd ScanAssistant
 ```
 
 `run.sh`/`run.bat` create a virtual environment, install the app into it,
-and launch it — safe to re-run any time, it only sets up once.
+and launch it — safe to re-run any time: the environment itself is only
+created once, but the app is reinstalled into it on every launch so a
+`git pull` (manual or via the in-app updater below) always takes effect.
+
+## Updating
+
+ScanAssistant is offline by design — no network access at runtime, with
+one narrow, explicit exception for updates. Two ways to trigger it, both
+opt-in, neither automatic in the background:
+
+- **Help ▸ Check for updates…**, any time. Tells you if you're up to date
+  and, if not, offers to update in place: it runs the same `git pull` the
+  install scripts use, then reinstalls dependencies, right where the app
+  already lives — no re-download, no new folder. Restart afterwards to use
+  the new version.
+- An opt-in check once at startup, off by default. There's no settings
+  screen for it yet, so it's a manual edit: set `"check_enabled": true`
+  under `"updates"` in `config.json` (the app's config directory, found by
+  `platformdirs.user_config_dir("scanassistant")` — e.g.
+  `~/.config/scanassistant/config.json` on Linux). If an update is found,
+  a quiet note appears on the home screen — never a popup.
+
+Both need `git` and a checkout with a remote configured (exactly what the
+install scripts set up). If you installed from a source archive instead
+(no `git` available at install time), re-run `install.sh`/`install.ps1` to
+update — the in-app check will tell you this rather than fail silently.
 
 ## Why open source
 
 This project was built primarily with AI-assisted coding tools, with a
-human directing the design, the trade-offs, and the review. When most of an
+human directing the design, the trade-offs, and the review. I think that
+raises a genuine ethical question of ownership: when most of an
 implementation comes from that kind of collaboration rather than purely
 from hand-written effort, I don't think it's mine to keep closed — so it's
 released under the GPL for anyone to use, study, or build on.
@@ -209,13 +235,45 @@ cd ScanAssistant
 ```
 
 `run.sh`/`run.bat` créent un environnement virtuel, y installent l'app, et
-la lancent — sans risque à relancer, la préparation ne se fait qu'une fois.
+la lancent — sans risque à relancer : l'environnement lui-même n'est créé
+qu'une fois, mais l'app y est réinstallée à chaque lancement, pour qu'un
+`git pull` (manuel ou via la mise à jour intégrée ci-dessous) soit toujours
+pris en compte.
+
+### Mise à jour
+
+ScanAssistant est hors ligne par conception — aucun accès réseau à
+l'exécution, avec une seule exception explicite et ciblée pour les mises à
+jour. Deux façons de la déclencher, toutes deux volontaires, jamais
+automatiques en tâche de fond :
+
+- **Help ▸ Check for updates…**, à tout moment. Indique si vous êtes à
+  jour et, sinon, propose de mettre à jour sur place : la même commande
+  `git pull` que les scripts d'installation, puis une réinstallation des
+  dépendances, exactement là où l'app se trouve déjà — pas de nouveau
+  téléchargement, pas de nouveau dossier. Redémarrez ensuite pour utiliser
+  la nouvelle version.
+- Une vérification automatique unique au démarrage, désactivée par défaut.
+  Pas encore d'écran de réglages pour ça : ça se fait en éditant
+  `config.json` à la main, en passant `"check_enabled": true` sous
+  `"updates"` (dossier de configuration de l'app, donné par
+  `platformdirs.user_config_dir("scanassistant")` — par exemple
+  `~/.config/scanassistant/config.json` sous Linux). Si une mise à jour est
+  trouvée, une note discrète apparaît sur l'écran d'accueil — jamais de
+  popup.
+
+Les deux nécessitent `git` et une copie du dépôt avec un remote configuré
+(exactement ce que mettent en place les scripts d'installation). Si vous
+avez installé depuis une archive source (pas de `git` disponible à
+l'installation), relancez `install.sh`/`install.ps1` pour mettre à jour —
+la vérification intégrée vous l'indiquera plutôt que d'échouer en silence.
 
 ### Pourquoi open source
 
 Ce projet a été construit principalement avec des outils de développement
 assistés par IA, un humain dirigeant la conception, les arbitrages et la
-relecture. Quand l'essentiel d'une implémentation vient de ce type de
+relecture. Cela pose selon moi une véritable question éthique de
+propriété : quand l'essentiel d'une implémentation vient de ce type de
 collaboration plutôt que d'un travail manuel classique, je ne considère pas
 qu'elle m'appartienne en propre — d'où la publication sous licence GPL,
 ouverte à qui veut l'utiliser, l'étudier ou la reprendre.

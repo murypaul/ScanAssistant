@@ -31,12 +31,20 @@ IGNORED_NAME_PREFIXES = (".", "~")
 IGNORED_NAME_SUFFIXES = (".tmp", ".part", ".crdownload")
 
 
-def is_candidate_file(path: Path, extensions: set[str]) -> bool:
-    """Detection filter: accepted extension, not hidden/temporary."""
+def is_candidate_file(
+    path: Path, extensions: set[str], *, extra_ignored_suffixes: tuple[str, ...] = ()
+) -> bool:
+    """Detection filter: accepted extension, not hidden/temporary.
+
+    `extra_ignored_suffixes`: operator-configured, per-campaign additions
+    (`campaign.capture.extra_ignored_suffixes`) — always on top of the
+    built-in `IGNORED_NAME_SUFFIXES`, never a replacement for them.
+    """
     name = path.name
     if name.startswith(IGNORED_NAME_PREFIXES):
         return False
-    if name.lower().endswith(IGNORED_NAME_SUFFIXES):
+    extra_lower = tuple(s.lower() for s in extra_ignored_suffixes)
+    if name.lower().endswith(IGNORED_NAME_SUFFIXES + extra_lower):
         return False
     return path.suffix.lower() in extensions
 
@@ -84,9 +92,11 @@ class FolderMonitor:
         stabilization_timeout_s: float = 120.0,
         stat_fn: Callable[[Path], FileSnapshot] = _default_stat,
         on_mode_resolved: Callable[[str], None] | None = None,
+        extra_ignored_suffixes: tuple[str, ...] = (),
     ) -> None:
         self.folder = Path(folder)
         self._extensions = {e.lower() for e in extensions}
+        self._extra_ignored_suffixes = extra_ignored_suffixes
         self._stabilization_delay_s = stabilization_delay_s
         self._stabilization_timeout_s = stabilization_timeout_s
         self._stat_fn = stat_fn
@@ -141,7 +151,10 @@ class FolderMonitor:
             candidates = {
                 p
                 for p in self._known
-                if p not in self._handled and is_candidate_file(p, self._extensions)
+                if p not in self._handled
+                and is_candidate_file(
+                    p, self._extensions, extra_ignored_suffixes=self._extra_ignored_suffixes
+                )
             }
 
         for path in candidates:

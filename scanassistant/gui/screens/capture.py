@@ -41,6 +41,7 @@ from scanassistant.core.events import (
     ImageStabilized,
     ImageStateChanged,
     NameConflictDetected,
+    SessionEvent,
     StabilizationTimedOut,
 )
 from scanassistant.core.events import Warning as WarningEvent
@@ -50,6 +51,13 @@ from scanassistant.core.queue import ExportExecutor, ExportRunner, InlineExportE
 from scanassistant.core.session import CaptureSession, SessionHistoryEntry
 from scanassistant.gui.errors import format_critical, format_warning
 from scanassistant.gui.preview_worker import PreviewResult, PreviewWorker
+from scanassistant.gui.shortcuts import (
+    CAPTURE,
+    FRAME_EDIT,
+    NAME_CONFLICT,
+    matches,
+    merge_with_defaults,
+)
 from scanassistant.gui.widgets.preview_area import PreviewArea
 from scanassistant.i18n import t
 from scanassistant.imaging.framing import (
@@ -65,7 +73,7 @@ from scanassistant.journal.journal import Journal
 from scanassistant.metadata.writer import ExifToolMetadataWriter
 from scanassistant.metadata.writer import is_available as is_exiftool_available
 from scanassistant.project.campaign import Campaign
-from scanassistant.project.inventory import STATUS_COLUMN, Inventory
+from scanassistant.project.inventory import MAX_NAME_LENGTH, STATUS_COLUMN, Inventory
 from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.state import FramingState, ProjectState
 from scanassistant.watcher.monitor import FolderMonitor
@@ -122,9 +130,11 @@ class CaptureScreen(QWidget):
         decoder: RawDecoder | None = None,
         export_runner: ExportRunner | None = None,
         export_executor: ExportExecutor | None = None,
+        shortcuts: dict[str, dict[str, str]] | None = None,
     ) -> None:
         super().__init__(parent)
         self.session: CaptureSession | None = None
+        self._shortcuts = merge_with_defaults(shortcuts or {})
         self._decoder = decoder or RawpyDecoder()
         self._export_runner_override = export_runner
         # Default stays `InlineExportExecutor` (synchronous, deterministic —
@@ -258,6 +268,10 @@ class CaptureScreen(QWidget):
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
+    def set_shortcuts(self, shortcuts: dict[str, dict[str, str]]) -> None:
+        """Applies a new shortcut map (Preferences ▸ Shortcuts) without restarting capture."""
+        self._shortcuts = merge_with_defaults(shortcuts)
+
     # --- lifecycle ---------------------------------------------------------
 
     def start(
@@ -271,6 +285,10 @@ class CaptureScreen(QWidget):
         fs: FileSystem,
         exiftool_executable: str = "",
         was_stale: bool = False,
+        disk_warn_gb: float = 10.0,
+        disk_critical_gb: float = 2.0,
+        max_name_length: int = MAX_NAME_LENGTH,
+        export_queue_warn_threshold: int = 20,
     ) -> None:
         monitor = FolderMonitor(
             Path(campaign.capture.watched_folder),
@@ -278,6 +296,7 @@ class CaptureScreen(QWidget):
             watch_mode="polling",
             stabilization_delay_s=campaign.capture.stabilization_delay_s,
             stabilization_timeout_s=campaign.capture.stabilization_timeout_s,
+            extra_ignored_suffixes=tuple(campaign.capture.extra_ignored_suffixes),
         )
         export_runner = self._export_runner_override or MasterExportRunner(
             decoder=self._decoder,
@@ -296,6 +315,10 @@ class CaptureScreen(QWidget):
             monitor=monitor,
             export_runner=export_runner,
             export_executor=self._export_executor_override or InlineExportExecutor(),
+            disk_warn_gb=disk_warn_gb,
+            disk_critical_gb=disk_critical_gb,
+            max_name_length=max_name_length,
+            export_queue_warn_threshold=export_queue_warn_threshold,
         )
         if was_stale:
             report = perform_crash_recovery(self.session)
@@ -303,7 +326,7 @@ class CaptureScreen(QWidget):
         if not is_exiftool_available(exiftool_executable):
             # Persistent warning: exports will be produced without metadata.
             self._show_warning_banner("A-01", {"message": t("metadata.exiftool_unavailable")})
-        self.session.initial_scan()
+        self._dispatch(self.session.initial_scan())
         self._stabilizing.clear()
         self._loaded_preview_for = None
         self._refresh_banner()
@@ -316,12 +339,52 @@ class CaptureScreen(QWidget):
         self._pump_timer.start(interval_ms)
         self.setFocus()
 
-    def stop(self) -> None:
+    def stop(self, *, wait_for_exports: bool = True) -> None:
         self._pump_timer.stop()
         if self.session is not None:
-            self.session.stop()  # already waits for the export queue to drain
-            self.session.export_executor.shutdown()  # releases the background thread, if any
+            self._dispatch(self.session.stop(wait_for_exports=wait_for_exports))
+            if wait_for_exports:
+                self.session.export_executor.shutdown()  # releases the background thread, if any
+            # else: abandoned deliberately (Quit without waiting) — the
+            # daemon thread dies with the process, whatever it was still
+            # writing is safely re-run from the untouched RAW next launch.
         self.session = None
+        self._pending_conflict = None
+        self.conflict_panel.setVisible(False)
+
+    # --- non-blocking shutdown (drain_on_exit) ----------------------------------
+
+    def begin_shutdown(self) -> int:
+        """First step of closing the app while a capture session is open.
+
+        Stops monitoring the watched folder, finalizes the current image,
+        and submits the whole export backlog without blocking. The session
+        is kept alive (unlike `stop()`) so the caller can either wait it out
+        (`poll_export_progress`) or abandon it (`finish_shutdown`).
+        Returns the number of exports still pending right after submission.
+        """
+        self._pump_timer.stop()
+        if self.session is None:
+            return 0
+        self._dispatch(self.session.stop(wait_for_exports=False))
+        return len(self.session.export_queue)
+
+    def poll_export_progress(self) -> int:
+        """Call periodically after `begin_shutdown()`. Returns the number of
+        exports still pending; 0 once it is safe to actually close."""
+        if self.session is None:
+            return 0
+        self._dispatch(self.session.collect_export_progress())
+        return len(self.session.export_queue)
+
+    def finish_shutdown(self, *, wait_for_exports: bool) -> None:
+        """Second step, after `begin_shutdown()`. `wait_for_exports=True` only
+        once `poll_export_progress()` has reached 0 (never blocks then);
+        `False` abandons whatever is still in flight (Quit without waiting)."""
+        if self.session is not None:
+            if wait_for_exports:
+                self.session.export_executor.shutdown()
+            self.session = None
         self._pending_conflict = None
         self.conflict_panel.setVisible(False)
 
@@ -330,11 +393,23 @@ class CaptureScreen(QWidget):
     def _pump(self) -> None:
         if self.session is None:
             return
-        for event in self.session.pump(time.monotonic()):
-            self._handle_event(event)
+        self._dispatch(self.session.pump(time.monotonic()))
         self._refresh_banner()
         self._refresh_preview_state()
         self.queue_changed.emit()
+
+    def _dispatch(self, events: list[SessionEvent]) -> None:
+        """Routes session-returned events to the same handler `_pump()` uses.
+
+        Every `CaptureSession` action called directly from this screen
+        (reject, validate, rotate, resolve conflict, resume, …) can — like
+        `pump()` — surface a conflict panel or a critical/warning banner as
+        a *side effect* of what it does internally (e.g. draining a paused
+        queue). Those events must reach `_handle_event` exactly like the
+        ones from the polling loop, or they're silently lost.
+        """
+        for event in events:
+            self._handle_event(event)
 
     def _handle_event(self, event: object) -> None:
         if isinstance(event, ImageDetected):
@@ -391,7 +466,7 @@ class CaptureScreen(QWidget):
         session = self.session
         if session is None:
             return
-        session.resume_from_critical()
+        self._dispatch(session.resume_from_critical())
         self._hide_critical_banner()
         self._refresh_banner()
         self._refresh_preview_state()
@@ -644,8 +719,9 @@ class CaptureScreen(QWidget):
         if frame.level == IMPOSSIBLE and journal_action == "auto":
             journal_action = "raw"
         reference = _to_reference_space(frame, self._current_preview_scale_factor)
+        events: list[SessionEvent] = []
         with contextlib.suppress(IllegalTransitionError):
-            session.apply_frame(
+            events = session.apply_frame(
                 name,
                 x=reference.x,
                 y=reference.y,
@@ -664,6 +740,7 @@ class CaptureScreen(QWidget):
                 },
                 level=frame.level,
             )
+        self._dispatch(events)
 
     def recompute_frame(self) -> None:
         """C key: reruns automatic frame detection."""
@@ -708,30 +785,30 @@ class CaptureScreen(QWidget):
             self._handle_edit_mode_key(event)
             return
 
-        key = event.key()
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        actions = self._shortcuts[CAPTURE]
+        if matches(event, actions["finalize"]):
             self.finalize_current()
-        elif key == Qt.Key.Key_R:
+        elif matches(event, actions["reject"]):
             self.reject_current_image()
-        elif key == Qt.Key.Key_V:
+        elif matches(event, actions["rotate"]):
             self.rotate_image_action()
-        elif key == Qt.Key.Key_C:
+        elif matches(event, actions["recompute_frame"]):
             self.recompute_frame()
-        elif key == Qt.Key.Key_M:
+        elif matches(event, actions["edit_frame"]):
             self.enter_edit_mode()
-        elif key == Qt.Key.Key_P:
+        elif matches(event, actions["positive_preview"]):
             self.toggle_positive_preview()
-        elif key == Qt.Key.Key_T:
+        elif matches(event, actions["master_preview"]):
             self.toggle_master_preview()
-        elif key == Qt.Key.Key_Left:
+        elif matches(event, actions["navigate_previous"]):
             self.navigate(-1)
-        elif key == Qt.Key.Key_Right:
+        elif matches(event, actions["navigate_next"]):
             self.navigate(1)
-        elif key == Qt.Key.Key_G:
+        elif matches(event, actions["go_to_name"]):
             self.open_go_to_name()
-        elif key == Qt.Key.Key_Space:
+        elif matches(event, actions["pause_resume"]):
             self.toggle_pause()
-        elif key == Qt.Key.Key_Escape:
+        elif matches(event, actions["stop_capture"]):
             self.stop_capture()
         else:
             super().keyPressEvent(event)
@@ -768,12 +845,12 @@ class CaptureScreen(QWidget):
             super().keyPressEvent(event)
             return
 
-        key = event.key()
-        if key == Qt.Key.Key_1:
+        actions = self._shortcuts[NAME_CONFLICT]
+        if matches(event, actions["option_1"]):
             self._select_conflict_option(1)
-        elif key == Qt.Key.Key_2:
+        elif matches(event, actions["option_2"]):
             self._select_conflict_option(2)
-        elif key == Qt.Key.Key_3:
+        elif matches(event, actions["option_3"]):
             self._select_conflict_option(3)
         else:
             super().keyPressEvent(event)
@@ -801,14 +878,16 @@ class CaptureScreen(QWidget):
             self._edit_resize(1 + (0.05 if shift else 0.01))
         elif key == Qt.Key.Key_Minus:
             self._edit_resize(1 - (0.05 if shift else 0.01))
-        elif key == Qt.Key.Key_C:
-            self._edit_recompute()
-        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self._confirm_edit()
-        elif key == Qt.Key.Key_Escape:
-            self._cancel_edit()
         else:
-            return
+            actions = self._shortcuts[FRAME_EDIT]
+            if matches(event, actions["recompute"]):
+                self._edit_recompute()
+            elif matches(event, actions["confirm"]):
+                self._confirm_edit()
+            elif matches(event, actions["cancel"]):
+                self._cancel_edit()
+            else:
+                return
         event.accept()
 
     def _edit_move(self, *, dx: int, dy: int) -> None:
@@ -884,8 +963,9 @@ class CaptureScreen(QWidget):
         frame = self._edit_frame
         if session is not None and current is not None and frame is not None:
             reference = _to_reference_space(frame, self._current_preview_scale_factor)
+            events: list[SessionEvent] = []
             with contextlib.suppress(IllegalTransitionError):
-                session.apply_frame(
+                events = session.apply_frame(
                     current.assigned_name,
                     x=reference.x,
                     y=reference.y,
@@ -897,6 +977,7 @@ class CaptureScreen(QWidget):
                     journal_action="manual",
                     level=None,
                 )
+            self._dispatch(events)
             manual_frame = replace(frame, level="manual")
             self._current_frame_result = manual_frame
             self.preview_area.set_frame_overlay(manual_frame)
@@ -917,9 +998,10 @@ class CaptureScreen(QWidget):
         if self.session is None:
             return
         try:
-            self.session.validate_current()
+            events = self.session.validate_current()
         except IllegalTransitionError:
             return
+        self._dispatch(events)
         self._refresh_banner()
         self._refresh_preview_state()
 
@@ -927,9 +1009,16 @@ class CaptureScreen(QWidget):
         if self.session is None:
             return
         try:
-            self.session.reject_current()
+            events = self.session.reject_current()
         except IllegalTransitionError:
             return
+        except ValueError as exc:
+            # Defense in depth (CLAUDE.md rule 4: no unhandled system error
+            # during capture) — shouldn't happen once the CSV row is reset
+            # to `todo` before the cursor move inside `reject_current()`.
+            self._set_status(str(exc))
+            return
+        self._dispatch(events)
         self._refresh_banner()
         self._refresh_preview_state()
 
@@ -944,9 +1033,10 @@ class CaptureScreen(QWidget):
         if self.session is None or self.session.state.current_image is None:
             return
         try:
-            self.session.rotate_current()
+            events = self.session.rotate_current()
         except IllegalTransitionError:
             return
+        self._dispatch(events)
         if not self._master_preview_active:
             self._master_preview_active = True
             self._positive_preview_active = False
@@ -967,7 +1057,7 @@ class CaptureScreen(QWidget):
         if self.session is None:
             return
         if self.session.paused:
-            self.session.resume()
+            self._dispatch(self.session.resume())
         else:
             self.session.pause()
         self._refresh_banner()
@@ -992,13 +1082,14 @@ class CaptureScreen(QWidget):
         if session is None:
             return
         try:
-            session.reopen_for_correction(name)
+            events = session.reopen_for_correction(name)
         except IllegalTransitionError:
             self._set_status(t("capture.status_reopen_busy"))
             return
         except ValueError as exc:
             self._set_status(str(exc))
             return
+        self._dispatch(events)
         current = session.state.current_image
         assert current is not None
         self._positive_preview_active = False
@@ -1090,10 +1181,11 @@ class CaptureScreen(QWidget):
         if self.session is None or self._pending_conflict is None:
             return
         try:
-            self.session.resolve_conflict(option, new_name=new_name or None)
+            events = self.session.resolve_conflict(option, new_name=new_name or None)
         except ValueError as exc:
             self._set_status(str(exc))
             return
         self._hide_conflict_panel()
+        self._dispatch(events)
         self._refresh_banner()
         self._refresh_preview_state()

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import platformdirs
 
+from scanassistant.project.inventory import MAX_NAME_LENGTH, MAX_NAME_LENGTH_CEILING
 from scanassistant.utils.atomic import atomic_write_text
 
 SCHEMA_VERSION = 1
@@ -52,14 +53,29 @@ class PathsConfig:
 
 
 @dataclass
-class WatchConfig:
-    poll_interval_s: float = 1.0  # [0.5;10]
-
-
-@dataclass
 class ThresholdsConfig:
     disk_warn_gb: int = 10  # [1;500]
     disk_critical_gb: int = 2  # [1;100], must be < disk_warn_gb
+    # E-15 — early-warning banner only, never a hard limit: exports queued
+    # past this size still all run, just slower than they're arriving.
+    export_queue_warn: int = 20  # [5;500]
+
+
+@dataclass
+class CsvConfig:
+    # Bounded by MAX_NAME_LENGTH_CEILING so a reload of an existing
+    # inventory.csv (project.inventory.load_inventory, always permissive)
+    # never rejects a name that was valid when imported under a looser
+    # setting than whatever is configured now.
+    max_name_length: int = MAX_NAME_LENGTH  # [10;MAX_NAME_LENGTH_CEILING]
+
+
+@dataclass
+class UpdatesConfig:
+    # Opt-in only (CLAUDE.md règle absolue 3, dérogation I-102): when true,
+    # a single `git fetch`-based check runs once at startup. Never
+    # periodic, never silent about its result either way.
+    check_enabled: bool = False
 
 
 @dataclass
@@ -69,29 +85,43 @@ class GlobalConfig:
     ui: UiConfig = field(default_factory=UiConfig)
     processing: ProcessingConfig = field(default_factory=ProcessingConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
-    watch: WatchConfig = field(default_factory=WatchConfig)
     thresholds: ThresholdsConfig = field(default_factory=ThresholdsConfig)
+    csv: CsvConfig = field(default_factory=CsvConfig)
+    updates: UpdatesConfig = field(default_factory=UpdatesConfig)
+    # context -> action -> key string (e.g. "R", "Ctrl+N"). Deliberately kept
+    # a plain dict here rather than validated against the allowed key class:
+    # that check needs Qt (scanassistant.gui.shortcuts), and this module has
+    # no PySide6 dependency. Missing/invalid entries fall back to the
+    # built-in default wherever the GUI actually reads this map.
+    shortcuts: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def validate(self) -> None:
         """Checks the normative bounds. Raises `ValueError` otherwise."""
         if not 1 <= self.processing.workers <= 4:
             raise ValueError("processing.workers must be within [1, 4]")
-        if not 0.5 <= self.watch.poll_interval_s <= 10:
-            raise ValueError("watch.poll_interval_s must be within [0.5, 10]")
         if not 1 <= self.thresholds.disk_warn_gb <= 500:
             raise ValueError("thresholds.disk_warn_gb must be within [1, 500]")
         if not 1 <= self.thresholds.disk_critical_gb <= 100:
             raise ValueError("thresholds.disk_critical_gb must be within [1, 100]")
         if not self.thresholds.disk_critical_gb < self.thresholds.disk_warn_gb:
             raise ValueError("thresholds.disk_critical_gb must be < thresholds.disk_warn_gb")
+        if not 5 <= self.thresholds.export_queue_warn <= 500:
+            raise ValueError("thresholds.export_queue_warn must be within [5, 500]")
         if self.ui.brightness not in {"normal", "dimmed", "minimal"}:
             raise ValueError("ui.brightness must be one of: normal, dimmed, minimal")
         if self.ui.language not in {"en"}:
             raise ValueError("ui.language must be one of: en")
+        if not 10 <= self.csv.max_name_length <= MAX_NAME_LENGTH_CEILING:
+            raise ValueError(f"csv.max_name_length must be within [10, {MAX_NAME_LENGTH_CEILING}]")
         if len(self.general.recent_projects) > MAX_RECENT_PROJECTS:
             raise ValueError(
                 f"general.recent_projects must contain at most {MAX_RECENT_PROJECTS} entries"
             )
+        if not isinstance(self.shortcuts, dict) or not all(
+            isinstance(actions, dict) and all(isinstance(v, str) for v in actions.values())
+            for actions in self.shortcuts.values()
+        ):
+            raise ValueError("shortcuts must be a mapping of context -> action -> key string")
 
 
 def config_dir() -> Path:
@@ -128,6 +158,8 @@ def _from_dict(data: dict) -> GlobalConfig:
         ui=UiConfig(**data.get("ui", {})),
         processing=ProcessingConfig(**data.get("processing", {})),
         paths=PathsConfig(**data.get("paths", {})),
-        watch=WatchConfig(**data.get("watch", {})),
         thresholds=ThresholdsConfig(**data.get("thresholds", {})),
+        csv=CsvConfig(**data.get("csv", {})),
+        updates=UpdatesConfig(**data.get("updates", {})),
+        shortcuts=data.get("shortcuts", {}),
     )

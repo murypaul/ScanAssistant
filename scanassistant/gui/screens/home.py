@@ -56,14 +56,26 @@ class HomeScreen(QWidget):
         self._recent_list = QListWidget()
         self._recent_list.itemActivated.connect(self._on_recent_activated)
 
+        # Opt-in startup update check only (CLAUDE.md règle absolue 3,
+        # I-102) — discreet, never a popup, hidden unless there's actually
+        # something to report.
+        self._update_banner = QLabel()
+        self._update_banner.setProperty("role", "secondary")
+        self._update_banner.setVisible(False)
+
         layout = QVBoxLayout(self)
         layout.addWidget(title)
         layout.addLayout(buttons_row)
+        layout.addWidget(self._update_banner)
         layout.addSpacing(24)
         layout.addWidget(recent_label)
         layout.addWidget(self._recent_list, stretch=1)
 
         self.set_recent_projects([])
+
+    def show_update_available(self, message: str) -> None:
+        self._update_banner.setText(message)
+        self._update_banner.setVisible(True)
 
     def set_recent_projects(self, paths: list[str]) -> None:
         self._recent_list.clear()

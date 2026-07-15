@@ -8,18 +8,22 @@ disabled rather than omitted.
 from __future__ import annotations
 
 import contextlib
+import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDockWidget,
     QFileDialog,
+    QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -33,12 +37,21 @@ from scanassistant.core.export_runner import MasterExportRunner
 from scanassistant.core.fs import RealFileSystem
 from scanassistant.core.queue import ThreadedExportExecutor
 from scanassistant.core.session import CaptureSession
+from scanassistant.gui.dialogs.preferences import PreferencesDialog
 from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.screens.capture import CaptureScreen
 from scanassistant.gui.screens.home import HomeScreen
 from scanassistant.gui.screens.project import ProjectScreen
 from scanassistant.gui.screens.statistics import StatisticsScreen
+from scanassistant.gui.shortcuts import (
+    CAPTURE,
+    FRAME_EDIT,
+    GLOBAL,
+    NAME_CONFLICT,
+    merge_with_defaults,
+)
 from scanassistant.gui.theme import apply_theme
+from scanassistant.gui.update_worker import UpdateApplyWorker, UpdateCheckWorker
 from scanassistant.gui.widgets.export_queue_panel import ExportQueuePanel
 from scanassistant.gui.widgets.history_panel import HistoryPanel
 from scanassistant.gui.widgets.pin_checkbox import make_pin_checkbox
@@ -53,35 +66,70 @@ from scanassistant.project.campaign import Campaign, open_campaign, save_campaig
 from scanassistant.project.errors import InvalidCampaignError, ScanAssistantError
 from scanassistant.project.inventory import Inventory
 from scanassistant.project.lock import ProjectLock, acquire_lock
+from scanassistant.updater import UpdateApplyResult, UpdateCheckResult
 from scanassistant.watcher.monitor import FolderMonitor
 
-_SHORTCUTS_TEXT = """\
-Ctrl+N   New campaign (outside capture)
-Ctrl+O   Open a campaign (outside capture)
-Ctrl+Q   Quit
-Ctrl+F   Search in the CSV viewer
-F5       Start capture (preparation)
-F11      Full screen
-F1       This help
 
-Capture mode (from M4):
-Enter    Finalize the current image        R   Reject the current image
-V        Rotate 90°                          G   Go to name
-Left/Right  Previous/next name              C   Recompute frame
-M        Edit frame                         P   Positive preview
-T        Master preview                     Space   Pause / Resume
-Escape   Stop capture
-"""
+def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
+    g, c, fe, nc = (
+        shortcuts[GLOBAL],
+        shortcuts[CAPTURE],
+        shortcuts[FRAME_EDIT],
+        shortcuts[NAME_CONFLICT],
+    )
+    lines = [
+        "Global:",
+        f"  {g['new_campaign']}  New campaign (outside capture)",
+        f"  {g['open_campaign']}  Open a campaign (outside capture)",
+        f"  {g['quit']}  Quit",
+        f"  {g['search_csv']}  Search in the CSV viewer",
+        f"  {g['start_capture']}  Start capture (preparation)",
+        f"  {g['fullscreen']}  Full screen",
+        f"  {g['shortcuts_help']}  This help",
+        "",
+        "Capture mode:",
+        f"  {c['finalize']}  Finalize the current image",
+        f"  {c['reject']}  Reject the current image",
+        f"  {c['rotate']}  Rotate 90°",
+        f"  {c['go_to_name']}  Go to name",
+        f"  {c['navigate_previous']} / {c['navigate_next']}  Previous / next name",
+        f"  {c['recompute_frame']}  Recompute frame",
+        f"  {c['edit_frame']}  Edit frame",
+        f"  {c['positive_preview']}  Positive preview",
+        f"  {c['master_preview']}  Master preview",
+        f"  {c['pause_resume']}  Pause / Resume",
+        f"  {c['stop_capture']}  Stop capture",
+        "",
+        "Frame edit mode (after Edit frame):",
+        "  Arrows  Move the frame (Shift: x10)",
+        "  +/-  Resize (Shift: larger step)",
+        "  Ctrl+Arrows  Rotate (Shift: x10)",
+        f"  {fe['recompute']}  Recompute automatically",
+        f"  {fe['confirm']}  Confirm",
+        f"  {fe['cancel']}  Cancel",
+        "",
+        "Name conflict:",
+        f"  {nc['option_1']} / {nc['option_2']} / {nc['option_3']}  Pick an option",
+        "  Tab  Move between fields",
+    ]
+    return "\n".join(lines)
 
 
 class MainWindow(QMainWindow):
     def __init__(self, context: AppContext) -> None:
         super().__init__()
         self.context = context
+        self._shortcuts = merge_with_defaults(context.config.shortcuts)
         self._lock: ProjectLock | None = None
         self._lock_was_stale = False
         self._journal: Journal | None = None
         self._shortcuts_window: QWidget | None = None
+        self._shortcuts_text_edit: QTextEdit | None = None
+        self._update_check_worker: UpdateCheckWorker | None = None
+        self._update_apply_worker: UpdateApplyWorker | None = None
+        self._shutdown_panel: QWidget | None = None
+        self._shutdown_label: QLabel | None = None
+        self._shutdown_timer: QTimer | None = None
 
         self.setWindowTitle(t("home.title"))
         self.setMinimumSize(1280, 720)
@@ -98,7 +146,9 @@ class MainWindow(QMainWindow):
         # Real background thread for exports: without it, regenerating a
         # slow export synchronously (manual crop confirm, rotation...)
         # freezes the whole window (DECISIONS.md I-92/I-98).
-        self.capture_screen = CaptureScreen(export_executor=ThreadedExportExecutor())
+        self.capture_screen = CaptureScreen(
+            export_executor=ThreadedExportExecutor(), shortcuts=self._shortcuts
+        )
         self.capture_screen.stopped.connect(self._on_capture_stopped)
         self.capture_screen.queue_changed.connect(self._refresh_export_queue_panel)
         self.capture_screen.queue_changed.connect(self._refresh_history_panel)
@@ -137,26 +187,43 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._show_home()
 
+        if self.context.config.updates.check_enabled:
+            self._start_update_check(manual=False)
+
     # --- menus -----------------------------------------------------------------
 
     def _build_menus(self) -> None:
         menu_bar = self.menuBar()
 
+        g = self._shortcuts[GLOBAL]
         self.file_menu = menu_bar.addMenu(t("menu.file"))
-        self._add_action(self.file_menu, t("menu.file_new"), "Ctrl+N", self._on_new_campaign)
-        self._add_action(self.file_menu, t("menu.file_open"), "Ctrl+O", self._on_open_campaign)
+        self.action_new_campaign = self._add_action(
+            self.file_menu, t("menu.file_new"), g["new_campaign"], self._on_new_campaign
+        )
+        self.action_open_campaign = self._add_action(
+            self.file_menu, t("menu.file_open"), g["open_campaign"], self._on_open_campaign
+        )
         self.recent_menu = self.file_menu.addMenu(t("menu.file_recent"))
         self._rebuild_recent_menu()
         self.file_menu.addSeparator()
-        self._add_action(self.file_menu, t("menu.file_quit"), "Ctrl+Q", self.close)
+        self.action_preferences = self._add_action(
+            self.file_menu, t("menu.file_preferences"), None, self._show_preferences
+        )
+        self.file_menu.addSeparator()
+        self.action_quit = self._add_action(
+            self.file_menu, t("menu.file_quit"), g["quit"], self.close
+        )
 
         self.project_menu = menu_bar.addMenu(t("menu.project"))
         self.action_campaign_settings = self._add_action(
             self.project_menu, t("menu.project_settings"), None, self._on_campaign_settings
         )
         csv_menu = self.project_menu.addMenu(t("menu.project_csv"))
-        self._add_action(
-            csv_menu, t("menu.project_csv_view"), None, self.project_screen.focus_csv_search
+        self.action_search_csv = self._add_action(
+            csv_menu,
+            t("menu.project_csv_view"),
+            g["search_csv"],
+            self.project_screen.focus_csv_search,
         )
         self._add_action(
             csv_menu, t("menu.project_csv_reload"), None, self.project_screen.reload_csv
@@ -182,7 +249,7 @@ class MainWindow(QMainWindow):
         # giving them a menu shortcut too would double-trigger them.
         self.capture_menu = menu_bar.addMenu(t("menu.capture"))
         self.action_start_capture = self._add_action(
-            self.capture_menu, t("menu.capture_start"), "F5", self._on_start_capture
+            self.capture_menu, t("menu.capture_start"), g["start_capture"], self._on_start_capture
         )
         self.action_start_capture.setEnabled(False)
         self.action_stop_capture = self._add_action(
@@ -258,7 +325,7 @@ class MainWindow(QMainWindow):
 
         self.view_menu = menu_bar.addMenu(t("menu.view"))
         self.action_fullscreen = self._add_action(
-            self.view_menu, t("menu.view_fullscreen"), "F11", self._toggle_fullscreen
+            self.view_menu, t("menu.view_fullscreen"), g["fullscreen"], self._toggle_fullscreen
         )
         self.action_fullscreen.setCheckable(True)
 
@@ -300,7 +367,12 @@ class MainWindow(QMainWindow):
         )
 
         self.help_menu = menu_bar.addMenu(t("menu.help"))
-        self._add_action(self.help_menu, t("menu.help_shortcuts"), "F1", self._show_shortcuts)
+        self.action_shortcuts_help = self._add_action(
+            self.help_menu, t("menu.help_shortcuts"), g["shortcuts_help"], self._show_shortcuts
+        )
+        self.action_check_updates = self._add_action(
+            self.help_menu, t("menu.help_check_updates"), None, self._check_for_updates
+        )
         self._add_action(self.help_menu, t("menu.help_about"), None, self._show_about)
 
     def _add_action(self, menu: QMenu, label: str, shortcut: str | None, slot: object) -> QAction:
@@ -329,21 +401,56 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(self.home_screen)
         self.project_menu.setEnabled(False)
         self.action_start_capture.setEnabled(False)
+        self.action_check_updates.setEnabled(True)
+        self.action_preferences.setEnabled(True)
 
     def _show_project(self) -> None:
         self._stack.setCurrentWidget(self.project_screen)
         self.project_menu.setEnabled(True)
         self.action_start_capture.setEnabled(True)
+        self.action_check_updates.setEnabled(True)
+        self.action_preferences.setEnabled(True)
 
     def _show_capture(self) -> None:
         self._stack.setCurrentWidget(self.capture_screen)
         self.project_menu.setEnabled(False)
+        # No popup during capture (règle absolue 4): the update check result
+        # is a `QMessageBox`, out of place here even on manual request.
+        self.action_check_updates.setEnabled(False)
+        self.action_preferences.setEnabled(False)
         self.capture_screen.setFocus()
+
+    # --- preferences -------------------------------------------------------
+
+    def _show_preferences(self) -> None:
+        dialog = PreferencesDialog(self.context, check_updates=self._check_for_updates, parent=self)
+        dialog.exec()
+        self._apply_shortcuts()
+
+    def _apply_shortcuts(self) -> None:
+        """Reloads `context.config.shortcuts` and re-applies every binding.
+
+        Called once the Preferences dialog closes: cheap enough (a dozen
+        `QAction.setShortcut` calls plus refreshing `CaptureScreen`'s map)
+        to just always redo, rather than track which ones actually changed.
+        """
+        self._shortcuts = merge_with_defaults(self.context.config.shortcuts)
+        g = self._shortcuts[GLOBAL]
+        self.action_new_campaign.setShortcut(QKeySequence(g["new_campaign"]))
+        self.action_open_campaign.setShortcut(QKeySequence(g["open_campaign"]))
+        self.action_quit.setShortcut(QKeySequence(g["quit"]))
+        self.action_search_csv.setShortcut(QKeySequence(g["search_csv"]))
+        self.action_start_capture.setShortcut(QKeySequence(g["start_capture"]))
+        self.action_shortcuts_help.setShortcut(QKeySequence(g["shortcuts_help"]))
+        self.action_fullscreen.setShortcut(QKeySequence(g["fullscreen"]))
+        self.capture_screen.set_shortcuts(self._shortcuts)
+        if self._shortcuts_window is not None:
+            self._refresh_shortcuts_text()
 
     # --- campaign creation / opening --------------------------------------------
 
     def _on_new_campaign(self) -> None:
-        wizard = NewCampaignWizard(self)
+        wizard = NewCampaignWizard(self, max_name_length=self.context.config.csv.max_name_length)
         if wizard.exec() == QDialog.DialogCode.Accepted and wizard.result_campaign:
             self._open_project(wizard.result_campaign.paths.root)
 
@@ -441,6 +548,7 @@ class MainWindow(QMainWindow):
             watch_mode="polling",
             stabilization_delay_s=campaign.capture.stabilization_delay_s,
             stabilization_timeout_s=campaign.capture.stabilization_timeout_s,
+            extra_ignored_suffixes=tuple(campaign.capture.extra_ignored_suffixes),
         )
         export_runner = MasterExportRunner(
             decoder=RawpyDecoder(),
@@ -458,6 +566,8 @@ class MainWindow(QMainWindow):
             fs=RealFileSystem(),
             monitor=monitor,
             export_runner=export_runner,
+            disk_warn_gb=self.context.config.thresholds.disk_warn_gb,
+            disk_critical_gb=self.context.config.thresholds.disk_critical_gb,
         )
 
     # --- "Export queue" panel ---------------------------------------------------
@@ -589,6 +699,10 @@ class MainWindow(QMainWindow):
             fs=RealFileSystem(),
             exiftool_executable=self.context.config.paths.exiftool,
             was_stale=self._lock_was_stale,
+            disk_warn_gb=self.context.config.thresholds.disk_warn_gb,
+            disk_critical_gb=self.context.config.thresholds.disk_critical_gb,
+            max_name_length=self.context.config.csv.max_name_length,
+            export_queue_warn_threshold=self.context.config.thresholds.export_queue_warn,
         )
         self._lock_was_stale = False  # consumed: no double recovery
         self._wire_capture_actions()
@@ -729,22 +843,162 @@ class MainWindow(QMainWindow):
             window.resize(520, 360)
             text_edit = QTextEdit(window)
             text_edit.setReadOnly(True)
-            text_edit.setPlainText(_SHORTCUTS_TEXT)
             layout = QVBoxLayout(window)
             layout.addWidget(make_pin_checkbox(window))
             layout.addWidget(text_edit)
             self._shortcuts_window = window
+            self._shortcuts_text_edit = text_edit
+            self._refresh_shortcuts_text()
         self._shortcuts_window.show()
         self._shortcuts_window.raise_()
         self._shortcuts_window.activateWindow()
 
+    def _refresh_shortcuts_text(self) -> None:
+        if self._shortcuts_text_edit is not None:
+            self._shortcuts_text_edit.setPlainText(_build_shortcuts_text(self._shortcuts))
+
     def _show_about(self) -> None:
         QMessageBox.about(self, t("menu.help_about"), t("app.version_line", version=__version__))
 
-    # --- clean shutdown ----------------------------------------------------
+    # --- updates (I-102: manual click or opt-in startup check only) ------------
+
+    def _app_dir(self) -> Path:
+        """The current installation's own directory — never a different one."""
+        return Path(__file__).resolve().parents[2]
+
+    def _check_for_updates(self) -> None:
+        self._start_update_check(manual=True)
+
+    def _start_update_check(self, *, manual: bool) -> None:
+        worker = UpdateCheckWorker(self._app_dir())
+        worker.finished_check.connect(lambda result: self._on_update_check_finished(result, manual))
+        self._update_check_worker = worker
+        worker.start()
+
+    def _on_update_check_finished(self, result: UpdateCheckResult, manual: bool) -> None:
+        self._update_check_worker = None
+        if result.error is not None:
+            if manual:
+                message = (
+                    t("update.not_git")
+                    if result.error == "Not a git installation."
+                    else t("update.check_failed", error=result.error)
+                )
+                QMessageBox.warning(self, t("update.check_title"), message)
+            # Automatic (opt-in) check: fails silently — a missing network
+            # is an entirely normal condition for this offline-first app,
+            # not something to nag the operator about at every startup.
+            return
+
+        if not result.available:
+            if manual:
+                QMessageBox.information(self, t("update.check_title"), t("update.up_to_date"))
+            return
+
+        if manual:
+            answer = QMessageBox.question(
+                self,
+                t("update.check_title"),
+                t(
+                    "update.available_question",
+                    local=result.local_commit,
+                    remote=result.remote_commit,
+                ),
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._apply_update()
+        else:
+            self.home_screen.show_update_available(
+                t("home.update_available", local=result.local_commit, remote=result.remote_commit)
+            )
+
+    def _apply_update(self) -> None:
+        self.action_check_updates.setEnabled(False)
+        worker = UpdateApplyWorker(self._app_dir(), sys.executable)
+        worker.finished_apply.connect(self._on_update_apply_finished)
+        self._update_apply_worker = worker
+        worker.start()
+
+    def _on_update_apply_finished(self, result: UpdateApplyResult) -> None:
+        self._update_apply_worker = None
+        self.action_check_updates.setEnabled(True)
+        if result.success:
+            QMessageBox.information(self, t("update.check_title"), t("update.apply_success"))
+        else:
+            QMessageBox.warning(
+                self, t("update.check_title"), t("update.apply_failed", error=result.error)
+            )
+
+    # --- clean shutdown (processing.drain_on_exit) -----------------------------
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        if self.capture_screen.session is not None:
-            self.capture_screen.stop()  # finalizes the current image
+        if self._shutdown_panel is not None:
+            # Already finalizing from a previous close attempt (e.g. a second
+            # click on the window's close button): keep waiting, don't
+            # restart the finalize/submit step a second time.
+            event.ignore()
+            return
+
+        if self.capture_screen.session is None:
+            self._release_lock()
+            super().closeEvent(event)
+            return
+
+        pending = self.capture_screen.begin_shutdown()
+        if pending == 0:
+            # Nothing left to wait for: shut the executor thread down cleanly.
+            self.capture_screen.finish_shutdown(wait_for_exports=True)
+            self._release_lock()
+            super().closeEvent(event)
+            return
+        if not self.context.config.processing.drain_on_exit:
+            self.capture_screen.finish_shutdown(wait_for_exports=False)
+            self._release_lock()
+            super().closeEvent(event)
+            return
+
+        event.ignore()
+        self._show_shutdown_panel(pending)
+
+    def _show_shutdown_panel(self, pending: int) -> None:
+        panel = QWidget()
+        panel.setWindowTitle(t("shutdown.title"))
+        panel.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        label = QLabel(t("shutdown.pending", count=pending))
+        button = QPushButton(t("shutdown.quit_without_waiting"))
+        button.clicked.connect(self._force_quit_without_waiting)
+        row = QHBoxLayout()
+        row.addWidget(label, stretch=1)
+        row.addWidget(button)
+        QVBoxLayout(panel).addLayout(row)
+        panel.resize(420, 80)
+        self._shutdown_panel = panel
+        self._shutdown_label = label
+        panel.show()
+        panel.raise_()
+
+        timer = QTimer(self)
+        timer.timeout.connect(self._poll_shutdown)
+        timer.start(300)
+        self._shutdown_timer = timer
+
+    def _poll_shutdown(self) -> None:
+        pending = self.capture_screen.poll_export_progress()
+        if pending == 0:
+            self._finish_shutdown(wait_for_exports=True)
+            return
+        self._shutdown_label.setText(t("shutdown.pending", count=pending))
+
+    def _force_quit_without_waiting(self) -> None:
+        self._finish_shutdown(wait_for_exports=False)
+
+    def _finish_shutdown(self, *, wait_for_exports: bool) -> None:
+        if self._shutdown_timer is not None:
+            self._shutdown_timer.stop()
+            self._shutdown_timer = None
+        if self._shutdown_panel is not None:
+            self._shutdown_panel.close()
+            self._shutdown_panel = None
+        self.capture_screen.finish_shutdown(wait_for_exports=wait_for_exports)
         self._release_lock()
-        super().closeEvent(event)
+        self.close()

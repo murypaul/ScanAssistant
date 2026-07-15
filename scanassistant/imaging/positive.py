@@ -57,7 +57,7 @@ def render_positive(
 def write_jpeg_positive(
     positive16: np.ndarray, path: Path, *, quality: int, long_edge_px: int
 ) -> None:
-    """Writes `JPEG_POSITIVE/<NAME>_POS.jpg`."""
+    """Writes `JPEG_POSITIVE/<NAME>-POS.jpg`."""
     pixels8 = (positive16 // 257).astype(np.uint8)
     image = Image.fromarray(pixels8, mode="L")
     image = resize_long_edge(image, long_edge_px)
