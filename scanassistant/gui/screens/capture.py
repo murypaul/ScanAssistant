@@ -41,6 +41,7 @@ from scanassistant.core.events import (
     ImageStabilized,
     ImageStateChanged,
     NameConflictDetected,
+    SessionEvent,
     StabilizationTimedOut,
 )
 from scanassistant.core.events import Warning as WarningEvent
@@ -303,7 +304,7 @@ class CaptureScreen(QWidget):
         if not is_exiftool_available(exiftool_executable):
             # Persistent warning: exports will be produced without metadata.
             self._show_warning_banner("A-01", {"message": t("metadata.exiftool_unavailable")})
-        self.session.initial_scan()
+        self._dispatch(self.session.initial_scan())
         self._stabilizing.clear()
         self._loaded_preview_for = None
         self._refresh_banner()
@@ -319,7 +320,7 @@ class CaptureScreen(QWidget):
     def stop(self) -> None:
         self._pump_timer.stop()
         if self.session is not None:
-            self.session.stop()  # already waits for the export queue to drain
+            self._dispatch(self.session.stop())  # already waits for the export queue to drain
             self.session.export_executor.shutdown()  # releases the background thread, if any
         self.session = None
         self._pending_conflict = None
@@ -330,11 +331,23 @@ class CaptureScreen(QWidget):
     def _pump(self) -> None:
         if self.session is None:
             return
-        for event in self.session.pump(time.monotonic()):
-            self._handle_event(event)
+        self._dispatch(self.session.pump(time.monotonic()))
         self._refresh_banner()
         self._refresh_preview_state()
         self.queue_changed.emit()
+
+    def _dispatch(self, events: list[SessionEvent]) -> None:
+        """Routes session-returned events to the same handler `_pump()` uses.
+
+        Every `CaptureSession` action called directly from this screen
+        (reject, validate, rotate, resolve conflict, resume, …) can — like
+        `pump()` — surface a conflict panel or a critical/warning banner as
+        a *side effect* of what it does internally (e.g. draining a paused
+        queue). Those events must reach `_handle_event` exactly like the
+        ones from the polling loop, or they're silently lost.
+        """
+        for event in events:
+            self._handle_event(event)
 
     def _handle_event(self, event: object) -> None:
         if isinstance(event, ImageDetected):
@@ -391,7 +404,7 @@ class CaptureScreen(QWidget):
         session = self.session
         if session is None:
             return
-        session.resume_from_critical()
+        self._dispatch(session.resume_from_critical())
         self._hide_critical_banner()
         self._refresh_banner()
         self._refresh_preview_state()
@@ -644,8 +657,9 @@ class CaptureScreen(QWidget):
         if frame.level == IMPOSSIBLE and journal_action == "auto":
             journal_action = "raw"
         reference = _to_reference_space(frame, self._current_preview_scale_factor)
+        events: list[SessionEvent] = []
         with contextlib.suppress(IllegalTransitionError):
-            session.apply_frame(
+            events = session.apply_frame(
                 name,
                 x=reference.x,
                 y=reference.y,
@@ -664,6 +678,7 @@ class CaptureScreen(QWidget):
                 },
                 level=frame.level,
             )
+        self._dispatch(events)
 
     def recompute_frame(self) -> None:
         """C key: reruns automatic frame detection."""
@@ -884,8 +899,9 @@ class CaptureScreen(QWidget):
         frame = self._edit_frame
         if session is not None and current is not None and frame is not None:
             reference = _to_reference_space(frame, self._current_preview_scale_factor)
+            events: list[SessionEvent] = []
             with contextlib.suppress(IllegalTransitionError):
-                session.apply_frame(
+                events = session.apply_frame(
                     current.assigned_name,
                     x=reference.x,
                     y=reference.y,
@@ -897,6 +913,7 @@ class CaptureScreen(QWidget):
                     journal_action="manual",
                     level=None,
                 )
+            self._dispatch(events)
             manual_frame = replace(frame, level="manual")
             self._current_frame_result = manual_frame
             self.preview_area.set_frame_overlay(manual_frame)
@@ -917,9 +934,10 @@ class CaptureScreen(QWidget):
         if self.session is None:
             return
         try:
-            self.session.validate_current()
+            events = self.session.validate_current()
         except IllegalTransitionError:
             return
+        self._dispatch(events)
         self._refresh_banner()
         self._refresh_preview_state()
 
@@ -927,9 +945,16 @@ class CaptureScreen(QWidget):
         if self.session is None:
             return
         try:
-            self.session.reject_current()
+            events = self.session.reject_current()
         except IllegalTransitionError:
             return
+        except ValueError as exc:
+            # Defense in depth (CLAUDE.md rule 4: no unhandled system error
+            # during capture) — shouldn't happen once the CSV row is reset
+            # to `todo` before the cursor move inside `reject_current()`.
+            self._set_status(str(exc))
+            return
+        self._dispatch(events)
         self._refresh_banner()
         self._refresh_preview_state()
 
@@ -944,9 +969,10 @@ class CaptureScreen(QWidget):
         if self.session is None or self.session.state.current_image is None:
             return
         try:
-            self.session.rotate_current()
+            events = self.session.rotate_current()
         except IllegalTransitionError:
             return
+        self._dispatch(events)
         if not self._master_preview_active:
             self._master_preview_active = True
             self._positive_preview_active = False
@@ -967,7 +993,7 @@ class CaptureScreen(QWidget):
         if self.session is None:
             return
         if self.session.paused:
-            self.session.resume()
+            self._dispatch(self.session.resume())
         else:
             self.session.pause()
         self._refresh_banner()
@@ -992,13 +1018,14 @@ class CaptureScreen(QWidget):
         if session is None:
             return
         try:
-            session.reopen_for_correction(name)
+            events = session.reopen_for_correction(name)
         except IllegalTransitionError:
             self._set_status(t("capture.status_reopen_busy"))
             return
         except ValueError as exc:
             self._set_status(str(exc))
             return
+        self._dispatch(events)
         current = session.state.current_image
         assert current is not None
         self._positive_preview_active = False
@@ -1090,10 +1117,11 @@ class CaptureScreen(QWidget):
         if self.session is None or self._pending_conflict is None:
             return
         try:
-            self.session.resolve_conflict(option, new_name=new_name or None)
+            events = self.session.resolve_conflict(option, new_name=new_name or None)
         except ValueError as exc:
             self._set_status(str(exc))
             return
         self._hide_conflict_panel()
+        self._dispatch(events)
         self._refresh_banner()
         self._refresh_preview_state()

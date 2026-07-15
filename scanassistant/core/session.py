@@ -701,8 +701,23 @@ class CaptureSession:
         if self.fs.exists(sidecar_path):
             self.fs.rename(sidecar_path, self.paths.rejected_dir / f"{camera_stem}__{name}.xmp")
 
-        has_row = self.inventory.row(name) is not None
-        if has_row:
+        row = self.inventory.row(name)
+        has_row = row is not None
+        if row is not None:
+            before_status = row[STATUS_COLUMN]
+            if before_status != "todo":
+                # Rejecting an image reopened via `reopen_for_correction`
+                # (I-88): its row is still `done`, untouched by the reopen
+                # itself. `go_to_name` below requires `todo`, and F-11 says
+                # a rejected name always returns to the reserve regardless
+                # of how it got here.
+                self.inventory.set_status(name, "todo")
+                self.journal.log(
+                    "CSV",
+                    "status",
+                    image=name,
+                    details={"row": name, "before": before_status, "after": "todo"},
+                )
             self.inventory.set_source_file(name, "")
             before_cursor = self.inventory.cursor
             self.inventory.go_to_name(name)
