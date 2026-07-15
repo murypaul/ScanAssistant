@@ -39,6 +39,10 @@ class GeneralConfig:
 class UiConfig:
     brightness: str = "normal"  # normal | dimmed | minimal
     language: str = "en"  # en for now; fr planned
+    # Base64 of QMainWindow.saveState(): visibility, dock area, floating
+    # position/size and tab order of the Export queue / Session history /
+    # Positive settings panels. Empty until the app has been closed once.
+    dock_layout: str = ""
 
 
 @dataclass

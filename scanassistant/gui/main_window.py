@@ -7,11 +7,13 @@ disabled rather than omitted.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import contextlib
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QByteArray, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -185,6 +187,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.positive_settings_dock)
 
         self._build_menus()
+        self._restore_dock_layout()
         self._show_home()
 
         if self.context.config.updates.check_enabled:
@@ -570,6 +573,27 @@ class MainWindow(QMainWindow):
             disk_critical_gb=self.context.config.thresholds.disk_critical_gb,
         )
 
+    # --- dock layout (Export queue / Session history / Positive settings) ------
+
+    def _restore_dock_layout(self) -> None:
+        """Reapplies each panel's visibility, dock area, and floating position/size
+        from the last time the app was closed. Silently keeps the default (hidden,
+        docked where `addDockWidget` put it) if nothing was saved yet or the saved
+        state doesn't apply (corrupted value, incompatible after an upgrade)."""
+        encoded = self.context.config.ui.dock_layout
+        if not encoded:
+            return
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error):
+            return
+        self.restoreState(QByteArray(raw))
+
+    def _save_dock_layout(self) -> None:
+        state = bytes(self.saveState())
+        self.context.config.ui.dock_layout = base64.b64encode(state).decode("ascii")
+        save_config(self.context.config)
+
     # --- "Export queue" panel ---------------------------------------------------
 
     def _toggle_export_queue_panel(self) -> None:
@@ -938,6 +962,8 @@ class MainWindow(QMainWindow):
             # restart the finalize/submit step a second time.
             event.ignore()
             return
+
+        self._save_dock_layout()
 
         if self.capture_screen.session is None:
             self._release_lock()

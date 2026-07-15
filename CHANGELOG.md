@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0 — 2026-07-15
+
+### New / Changed
+
+**Interface**
+- The Export queue, Session history, and Positive settings side panels now
+  remember whether they were open and where you left them — docked side,
+  floating position, size — and reopen the same way the next time you
+  launch the app.
+
 ## 1.2.0 — 2026-07-15
 
 ### New / Changed
