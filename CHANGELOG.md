@@ -30,6 +30,10 @@
   away to the master preview.
 - Added `K`, a dedicated key that cycles the preview through negative →
   positive → master, independently of the existing `P`/`T` toggles.
+- The Export queue, Session history, and Positive settings panels no
+  longer follow you to the Home or Project screen — they're confined to
+  the capture screen, remembering what was open so it comes back the
+  same way next time you start capturing.
 
 **Framing**
 - Added optional rule-of-thirds guide lines while editing the crop (`G`

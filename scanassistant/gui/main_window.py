@@ -134,6 +134,10 @@ class MainWindow(QMainWindow):
         self._shutdown_panel: QWidget | None = None
         self._shutdown_label: QLabel | None = None
         self._shutdown_timer: QTimer | None = None
+        # Export queue / Session history / Positive settings only make sense
+        # during capture — remembers what was open so leaving and returning
+        # to the capture screen restores it exactly (`_set_capture_docks_available`).
+        self._capture_docks_were_visible: dict[QDockWidget, bool] = {}
 
         self.setWindowTitle(t("home.title"))
         self.setMinimumSize(1280, 720)
@@ -411,6 +415,7 @@ class MainWindow(QMainWindow):
         self.action_start_capture.setEnabled(False)
         self.action_check_updates.setEnabled(True)
         self.action_preferences.setEnabled(True)
+        self._set_capture_docks_available(False)
 
     def _show_project(self) -> None:
         self._stack.setCurrentWidget(self.project_screen)
@@ -418,6 +423,7 @@ class MainWindow(QMainWindow):
         self.action_start_capture.setEnabled(True)
         self.action_check_updates.setEnabled(True)
         self.action_preferences.setEnabled(True)
+        self._set_capture_docks_available(False)
 
     def _show_capture(self) -> None:
         self._stack.setCurrentWidget(self.capture_screen)
@@ -426,7 +432,26 @@ class MainWindow(QMainWindow):
         # is a `QMessageBox`, out of place here even on manual request.
         self.action_check_updates.setEnabled(False)
         self.action_preferences.setEnabled(False)
+        self._set_capture_docks_available(True)
         self.capture_screen.setFocus()
+
+    def _set_capture_docks_available(self, available: bool) -> None:
+        """Export queue / Session history / Positive settings only belong on
+        the capture screen. Elsewhere they're hidden and their View menu
+        entries disabled (shown-disabled, not omitted — same convention as
+        every other mode-specific menu item), remembering whatever was open
+        so it comes back exactly as left."""
+        docks = (self.export_queue_dock, self.history_dock, self.positive_settings_dock)
+        actions = (self.action_export_queue, self.action_history, self.action_positive_settings)
+        if available:
+            for dock in docks:
+                dock.setVisible(self._capture_docks_were_visible.get(dock, False))
+        else:
+            for dock in docks:
+                self._capture_docks_were_visible[dock] = dock.isVisible()
+                dock.setVisible(False)
+        for action in actions:
+            action.setEnabled(available)
 
     # --- preferences -------------------------------------------------------
 
