@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Crée/active un venv puis lance ScanAssistant (12_CONTRAINTES_TECHNIQUES.md §6).
+# Crée/active un venv puis lance ScanAssistant.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
