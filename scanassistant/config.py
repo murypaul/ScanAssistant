@@ -63,6 +63,14 @@ class ThresholdsConfig:
 
 
 @dataclass
+class UpdatesConfig:
+    # Opt-in only (CLAUDE.md règle absolue 3, dérogation I-102): when true,
+    # a single `git fetch`-based check runs once at startup. Never
+    # periodic, never silent about its result either way.
+    check_enabled: bool = False
+
+
+@dataclass
 class GlobalConfig:
     schema_version: int = SCHEMA_VERSION
     general: GeneralConfig = field(default_factory=GeneralConfig)
@@ -71,6 +79,7 @@ class GlobalConfig:
     paths: PathsConfig = field(default_factory=PathsConfig)
     watch: WatchConfig = field(default_factory=WatchConfig)
     thresholds: ThresholdsConfig = field(default_factory=ThresholdsConfig)
+    updates: UpdatesConfig = field(default_factory=UpdatesConfig)
 
     def validate(self) -> None:
         """Checks the normative bounds. Raises `ValueError` otherwise."""
@@ -130,4 +139,5 @@ def _from_dict(data: dict) -> GlobalConfig:
         paths=PathsConfig(**data.get("paths", {})),
         watch=WatchConfig(**data.get("watch", {})),
         thresholds=ThresholdsConfig(**data.get("thresholds", {})),
+        updates=UpdatesConfig(**data.get("updates", {})),
     )

@@ -8,6 +8,7 @@ disabled rather than omitted.
 from __future__ import annotations
 
 import contextlib
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -39,6 +40,7 @@ from scanassistant.gui.screens.home import HomeScreen
 from scanassistant.gui.screens.project import ProjectScreen
 from scanassistant.gui.screens.statistics import StatisticsScreen
 from scanassistant.gui.theme import apply_theme
+from scanassistant.gui.update_worker import UpdateApplyWorker, UpdateCheckWorker
 from scanassistant.gui.widgets.export_queue_panel import ExportQueuePanel
 from scanassistant.gui.widgets.history_panel import HistoryPanel
 from scanassistant.gui.widgets.pin_checkbox import make_pin_checkbox
@@ -53,6 +55,7 @@ from scanassistant.project.campaign import Campaign, open_campaign, save_campaig
 from scanassistant.project.errors import InvalidCampaignError, ScanAssistantError
 from scanassistant.project.inventory import Inventory
 from scanassistant.project.lock import ProjectLock, acquire_lock
+from scanassistant.updater import UpdateApplyResult, UpdateCheckResult
 from scanassistant.watcher.monitor import FolderMonitor
 
 _SHORTCUTS_TEXT = """\
@@ -82,6 +85,8 @@ class MainWindow(QMainWindow):
         self._lock_was_stale = False
         self._journal: Journal | None = None
         self._shortcuts_window: QWidget | None = None
+        self._update_check_worker: UpdateCheckWorker | None = None
+        self._update_apply_worker: UpdateApplyWorker | None = None
 
         self.setWindowTitle(t("home.title"))
         self.setMinimumSize(1280, 720)
@@ -136,6 +141,9 @@ class MainWindow(QMainWindow):
 
         self._build_menus()
         self._show_home()
+
+        if self.context.config.updates.check_enabled:
+            self._start_update_check(manual=False)
 
     # --- menus -----------------------------------------------------------------
 
@@ -301,6 +309,9 @@ class MainWindow(QMainWindow):
 
         self.help_menu = menu_bar.addMenu(t("menu.help"))
         self._add_action(self.help_menu, t("menu.help_shortcuts"), "F1", self._show_shortcuts)
+        self.action_check_updates = self._add_action(
+            self.help_menu, t("menu.help_check_updates"), None, self._check_for_updates
+        )
         self._add_action(self.help_menu, t("menu.help_about"), None, self._show_about)
 
     def _add_action(self, menu: QMenu, label: str, shortcut: str | None, slot: object) -> QAction:
@@ -329,15 +340,20 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(self.home_screen)
         self.project_menu.setEnabled(False)
         self.action_start_capture.setEnabled(False)
+        self.action_check_updates.setEnabled(True)
 
     def _show_project(self) -> None:
         self._stack.setCurrentWidget(self.project_screen)
         self.project_menu.setEnabled(True)
         self.action_start_capture.setEnabled(True)
+        self.action_check_updates.setEnabled(True)
 
     def _show_capture(self) -> None:
         self._stack.setCurrentWidget(self.capture_screen)
         self.project_menu.setEnabled(False)
+        # No popup during capture (règle absolue 4): the update check result
+        # is a `QMessageBox`, out of place here even on manual request.
+        self.action_check_updates.setEnabled(False)
         self.capture_screen.setFocus()
 
     # --- campaign creation / opening --------------------------------------------
@@ -740,6 +756,75 @@ class MainWindow(QMainWindow):
 
     def _show_about(self) -> None:
         QMessageBox.about(self, t("menu.help_about"), t("app.version_line", version=__version__))
+
+    # --- updates (I-102: manual click or opt-in startup check only) ------------
+
+    def _app_dir(self) -> Path:
+        """The current installation's own directory — never a different one."""
+        return Path(__file__).resolve().parents[2]
+
+    def _check_for_updates(self) -> None:
+        self._start_update_check(manual=True)
+
+    def _start_update_check(self, *, manual: bool) -> None:
+        worker = UpdateCheckWorker(self._app_dir())
+        worker.finished_check.connect(lambda result: self._on_update_check_finished(result, manual))
+        self._update_check_worker = worker
+        worker.start()
+
+    def _on_update_check_finished(self, result: UpdateCheckResult, manual: bool) -> None:
+        self._update_check_worker = None
+        if result.error is not None:
+            if manual:
+                message = (
+                    t("update.not_git")
+                    if result.error == "Not a git installation."
+                    else t("update.check_failed", error=result.error)
+                )
+                QMessageBox.warning(self, t("update.check_title"), message)
+            # Automatic (opt-in) check: fails silently — a missing network
+            # is an entirely normal condition for this offline-first app,
+            # not something to nag the operator about at every startup.
+            return
+
+        if not result.available:
+            if manual:
+                QMessageBox.information(self, t("update.check_title"), t("update.up_to_date"))
+            return
+
+        if manual:
+            answer = QMessageBox.question(
+                self,
+                t("update.check_title"),
+                t(
+                    "update.available_question",
+                    local=result.local_commit,
+                    remote=result.remote_commit,
+                ),
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._apply_update()
+        else:
+            self.home_screen.show_update_available(
+                t("home.update_available", local=result.local_commit, remote=result.remote_commit)
+            )
+
+    def _apply_update(self) -> None:
+        self.action_check_updates.setEnabled(False)
+        worker = UpdateApplyWorker(self._app_dir(), sys.executable)
+        worker.finished_apply.connect(self._on_update_apply_finished)
+        self._update_apply_worker = worker
+        worker.start()
+
+    def _on_update_apply_finished(self, result: UpdateApplyResult) -> None:
+        self._update_apply_worker = None
+        self.action_check_updates.setEnabled(True)
+        if result.success:
+            QMessageBox.information(self, t("update.check_title"), t("update.apply_success"))
+        else:
+            QMessageBox.warning(
+                self, t("update.check_title"), t("update.apply_failed", error=result.error)
+            )
 
     # --- clean shutdown ----------------------------------------------------
 

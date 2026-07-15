@@ -105,7 +105,22 @@ STRINGS: dict[str, str] = {
     "menu.view_positive_settings": "Positive settings",
     "menu.help": "Help",
     "menu.help_shortcuts": "Keyboard shortcuts",
+    "menu.help_check_updates": "Check for updates…",
     "menu.help_about": "About",
+    # --- Updates (I-102: manual or opt-in-at-startup only, never periodic) ---
+    "update.check_title": "Check for updates",
+    "update.up_to_date": "ScanAssistant is up to date.",
+    "update.not_git": (
+        "This installation wasn't set up with git — reinstall using "
+        "install.sh/install.ps1 to update."
+    ),
+    "update.check_failed": "Could not check for updates: {error}",
+    "update.available_question": "An update is available ({local} → {remote}). Update now?",
+    "update.apply_success": "Update applied. Restart ScanAssistant to use the new version.",
+    "update.apply_failed": "Update failed: {error}",
+    "home.update_available": (
+        "An update is available ({local} → {remote}) — Help ▸ Check for updates."
+    ),
     # --- Capture screen (06 §8, M4) ---
     "capture.preview_ready_next": "Ready — next: {name}",
     "capture.preview_copying": "{name} — copying…",
