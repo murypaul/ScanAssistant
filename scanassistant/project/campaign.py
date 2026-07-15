@@ -93,7 +93,7 @@ class JpegPositiveExportConfig:
     long_edge_px: int = 0  # 0 = full size
     mode: str = "auto"  # simple | auto | manual
     horizontal_flip: bool = True
-    suffix: str = "_POS"  # appended to <NAME> in JPEG_POSITIVE/<NAME><suffix>.jpg
+    suffix: str = "-POS"  # appended to <NAME> in JPEG_POSITIVE/<NAME><suffix>.jpg
     manual_settings: ManualPositiveSettings = field(default_factory=ManualPositiveSettings)
 
 
