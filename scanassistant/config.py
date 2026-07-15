@@ -88,6 +88,12 @@ class GlobalConfig:
     thresholds: ThresholdsConfig = field(default_factory=ThresholdsConfig)
     csv: CsvConfig = field(default_factory=CsvConfig)
     updates: UpdatesConfig = field(default_factory=UpdatesConfig)
+    # context -> action -> key string (e.g. "R", "Ctrl+N"). Deliberately kept
+    # a plain dict here rather than validated against the allowed key class:
+    # that check needs Qt (scanassistant.gui.shortcuts), and this module has
+    # no PySide6 dependency. Missing/invalid entries fall back to the
+    # built-in default wherever the GUI actually reads this map.
+    shortcuts: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def validate(self) -> None:
         """Checks the normative bounds. Raises `ValueError` otherwise."""
@@ -111,6 +117,11 @@ class GlobalConfig:
             raise ValueError(
                 f"general.recent_projects must contain at most {MAX_RECENT_PROJECTS} entries"
             )
+        if not isinstance(self.shortcuts, dict) or not all(
+            isinstance(actions, dict) and all(isinstance(v, str) for v in actions.values())
+            for actions in self.shortcuts.values()
+        ):
+            raise ValueError("shortcuts must be a mapping of context -> action -> key string")
 
 
 def config_dir() -> Path:
@@ -150,4 +161,5 @@ def _from_dict(data: dict) -> GlobalConfig:
         thresholds=ThresholdsConfig(**data.get("thresholds", {})),
         csv=CsvConfig(**data.get("csv", {})),
         updates=UpdatesConfig(**data.get("updates", {})),
+        shortcuts=data.get("shortcuts", {}),
     )

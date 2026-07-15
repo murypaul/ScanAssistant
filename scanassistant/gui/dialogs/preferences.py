@@ -13,6 +13,8 @@ from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 
+from PySide6.QtCore import Signal
+from PySide6.QtGui import QFocusEvent, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -31,8 +34,98 @@ from PySide6.QtWidgets import (
 
 from scanassistant.app_context import AppContext
 from scanassistant.config import load_config, save_config
+from scanassistant.gui.shortcuts import (
+    CONTEXTS,
+    DEFAULT_SHORTCUTS,
+    conflicting_action,
+    is_allowed_key,
+    merge_with_defaults,
+)
 from scanassistant.i18n import t
 from scanassistant.metadata.writer import is_available as is_exiftool_available
+
+_ACTION_LABEL_KEYS: dict[str, dict[str, str]] = {
+    "capture": {
+        "finalize": "preferences.shortcut_finalize",
+        "reject": "preferences.shortcut_reject",
+        "rotate": "preferences.shortcut_rotate",
+        "recompute_frame": "preferences.shortcut_recompute_frame",
+        "edit_frame": "preferences.shortcut_edit_frame",
+        "positive_preview": "preferences.shortcut_positive_preview",
+        "master_preview": "preferences.shortcut_master_preview",
+        "go_to_name": "preferences.shortcut_go_to_name",
+        "pause_resume": "preferences.shortcut_pause_resume",
+        "stop_capture": "preferences.shortcut_stop_capture",
+        "navigate_previous": "preferences.shortcut_navigate_previous",
+        "navigate_next": "preferences.shortcut_navigate_next",
+    },
+    "frame_edit": {
+        "confirm": "preferences.shortcut_confirm",
+        "cancel": "preferences.shortcut_cancel",
+        "recompute": "preferences.shortcut_recompute_frame",
+    },
+    "name_conflict": {
+        "option_1": "preferences.shortcut_option_1",
+        "option_2": "preferences.shortcut_option_2",
+        "option_3": "preferences.shortcut_option_3",
+    },
+    "global": {
+        "new_campaign": "preferences.shortcut_new_campaign",
+        "open_campaign": "preferences.shortcut_open_campaign",
+        "quit": "preferences.shortcut_quit",
+        "search_csv": "preferences.shortcut_search_csv",
+        "start_capture": "preferences.shortcut_start_capture",
+        "shortcuts_help": "preferences.shortcut_shortcuts_help",
+        "fullscreen": "preferences.shortcut_fullscreen",
+    },
+}
+
+_CONTEXT_LABEL_KEYS = {
+    "capture": "preferences.shortcuts_context_capture",
+    "frame_edit": "preferences.shortcuts_context_frame_edit",
+    "name_conflict": "preferences.shortcuts_context_name_conflict",
+    "global": "preferences.shortcuts_context_global",
+}
+
+
+class _KeyCaptureButton(QPushButton):
+    """Click, then press a key: emits the captured `QKeySequence` string.
+
+    Clicking elsewhere (focus loss) cancels without emitting — there's no
+    dedicated cancel key, since Escape must itself stay assignable.
+    """
+
+    key_captured = Signal(str)
+
+    def __init__(self, key_string: str, parent: QWidget | None = None) -> None:
+        super().__init__(key_string, parent)
+        self._capturing = False
+        self._display_text = key_string
+        self.clicked.connect(self._begin_capture)
+
+    def set_key_string(self, key_string: str) -> None:
+        self._display_text = key_string
+        self.setText(key_string)
+
+    def _begin_capture(self) -> None:
+        self._capturing = True
+        self.setText(t("preferences.shortcuts_press_key"))
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if not self._capturing:
+            super().keyPressEvent(event)
+            return
+        self._capturing = False
+        key_string = QKeySequence(event.keyCombination()).toString()
+        self.setText(self._display_text)
+        event.accept()
+        self.key_captured.emit(key_string)
+
+    def focusOutEvent(self, event: QFocusEvent) -> None:
+        if self._capturing:
+            self._capturing = False
+            self.setText(self._display_text)
+        super().focusOutEvent(event)
 
 
 class PreferencesDialog(QDialog):
@@ -46,14 +139,16 @@ class PreferencesDialog(QDialog):
         super().__init__(parent)
         self.context = context
         self._check_updates = check_updates
+        self._shortcuts = merge_with_defaults(context.config.shortcuts)
         self.setWindowTitle(t("preferences.title"))
-        self.setMinimumSize(480, 420)
+        self.setMinimumSize(560, 480)
 
         tabs = QTabWidget()
         tabs.addTab(self._build_general_tab(), t("preferences.tab_general"))
         tabs.addTab(self._build_processing_tab(), t("preferences.tab_processing"))
         tabs.addTab(self._build_thresholds_tab(), t("preferences.tab_thresholds"))
         tabs.addTab(self._build_updates_tab(), t("preferences.tab_updates"))
+        tabs.addTab(self._build_shortcuts_tab(), t("preferences.tab_shortcuts"))
 
         export_button = QPushButton(t("preferences.export_settings"))
         export_button.clicked.connect(self._on_export_settings)
@@ -220,6 +315,85 @@ class PreferencesDialog(QDialog):
         if self._check_updates is not None:
             self._check_updates()
 
+    # --- Shortcuts -----------------------------------------------------------
+
+    def _build_shortcuts_tab(self) -> QWidget:
+        self._shortcut_buttons: dict[tuple[str, str], _KeyCaptureButton] = {}
+        self._shortcuts_status = QLabel()
+        self._shortcuts_status.setWordWrap(True)
+
+        layout = QVBoxLayout()
+        for context in CONTEXTS:
+            section = QLabel(f"<b>{t(_CONTEXT_LABEL_KEYS[context])}</b>")
+            layout.addWidget(section)
+            form = QFormLayout()
+            for action in DEFAULT_SHORTCUTS[context]:
+                row = QHBoxLayout()
+                button = _KeyCaptureButton(self._shortcuts[context][action])
+                button.key_captured.connect(
+                    lambda key_string, c=context, a=action: self._on_shortcut_captured(
+                        c, a, key_string
+                    )
+                )
+                reset_button = QPushButton(t("preferences.shortcuts_reset"))
+                reset_button.clicked.connect(
+                    lambda _checked=False, c=context, a=action: self._on_reset_shortcut(c, a)
+                )
+                row.addWidget(button, 1)
+                row.addWidget(reset_button)
+                form.addRow(t(_ACTION_LABEL_KEYS[context][action]), row)
+                self._shortcut_buttons[(context, action)] = button
+            layout.addLayout(form)
+
+        reset_all_button = QPushButton(t("preferences.shortcuts_reset_all"))
+        reset_all_button.clicked.connect(self._on_reset_all_shortcuts)
+
+        layout.addWidget(self._shortcuts_status)
+        layout.addWidget(reset_all_button)
+        layout.addStretch(1)
+
+        widget = QWidget()
+        widget.setLayout(layout)
+        return widget
+
+    def _on_shortcut_captured(self, context: str, action: str, key_string: str) -> None:
+        if not is_allowed_key(key_string, context=context):
+            self._shortcuts_status.setText(
+                t("preferences.shortcuts_invalid_key", shortcut=key_string)
+            )
+            return
+        conflict = conflicting_action(self._shortcuts[context], key_string, exclude_action=action)
+        if conflict is not None:
+            self._shortcuts_status.setText(
+                t(
+                    "preferences.shortcuts_conflict",
+                    shortcut=key_string,
+                    action=t(_ACTION_LABEL_KEYS[context][conflict]),
+                )
+            )
+            return
+        self._shortcuts_status.setText("")
+        self._shortcuts[context][action] = key_string
+        self._shortcut_buttons[(context, action)].set_key_string(key_string)
+        self._save_shortcuts()
+
+    def _on_reset_shortcut(self, context: str, action: str) -> None:
+        default = DEFAULT_SHORTCUTS[context][action]
+        self._shortcuts[context][action] = default
+        self._shortcut_buttons[(context, action)].set_key_string(default)
+        self._save_shortcuts()
+
+    def _on_reset_all_shortcuts(self) -> None:
+        self._shortcuts = merge_with_defaults({})
+        for (context, action), button in self._shortcut_buttons.items():
+            button.set_key_string(self._shortcuts[context][action])
+        self._shortcuts_status.setText("")
+        self._save_shortcuts()
+
+    def _save_shortcuts(self) -> None:
+        self.context.config.shortcuts = self._shortcuts
+        self._save()
+
     # --- export / import of the whole file --------------------------------
 
     def _on_export_settings(self) -> None:
@@ -269,6 +443,13 @@ class PreferencesDialog(QDialog):
         self.max_name_length_spin.setValue(c.csv.max_name_length)
         self._refresh_thresholds()
         self.check_enabled_check.setChecked(c.updates.check_enabled)
+        self._refresh_shortcuts()
+
+    def _refresh_shortcuts(self) -> None:
+        self._shortcuts = merge_with_defaults(self.context.config.shortcuts)
+        for (context, action), button in self._shortcut_buttons.items():
+            button.set_key_string(self._shortcuts[context][action])
+        self._shortcuts_status.setText("")
 
     def _refresh_thresholds(self) -> None:
         c = self.context.config

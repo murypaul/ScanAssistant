@@ -51,6 +51,13 @@ from scanassistant.core.queue import ExportExecutor, ExportRunner, InlineExportE
 from scanassistant.core.session import CaptureSession, SessionHistoryEntry
 from scanassistant.gui.errors import format_critical, format_warning
 from scanassistant.gui.preview_worker import PreviewResult, PreviewWorker
+from scanassistant.gui.shortcuts import (
+    CAPTURE,
+    FRAME_EDIT,
+    NAME_CONFLICT,
+    matches,
+    merge_with_defaults,
+)
 from scanassistant.gui.widgets.preview_area import PreviewArea
 from scanassistant.i18n import t
 from scanassistant.imaging.framing import (
@@ -123,9 +130,11 @@ class CaptureScreen(QWidget):
         decoder: RawDecoder | None = None,
         export_runner: ExportRunner | None = None,
         export_executor: ExportExecutor | None = None,
+        shortcuts: dict[str, dict[str, str]] | None = None,
     ) -> None:
         super().__init__(parent)
         self.session: CaptureSession | None = None
+        self._shortcuts = merge_with_defaults(shortcuts or {})
         self._decoder = decoder or RawpyDecoder()
         self._export_runner_override = export_runner
         # Default stays `InlineExportExecutor` (synchronous, deterministic —
@@ -258,6 +267,10 @@ class CaptureScreen(QWidget):
         self._pump_timer.timeout.connect(self._pump)
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def set_shortcuts(self, shortcuts: dict[str, dict[str, str]]) -> None:
+        """Applies a new shortcut map (Preferences ▸ Shortcuts) without restarting capture."""
+        self._shortcuts = merge_with_defaults(shortcuts)
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -772,30 +785,30 @@ class CaptureScreen(QWidget):
             self._handle_edit_mode_key(event)
             return
 
-        key = event.key()
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        actions = self._shortcuts[CAPTURE]
+        if matches(event, actions["finalize"]):
             self.finalize_current()
-        elif key == Qt.Key.Key_R:
+        elif matches(event, actions["reject"]):
             self.reject_current_image()
-        elif key == Qt.Key.Key_V:
+        elif matches(event, actions["rotate"]):
             self.rotate_image_action()
-        elif key == Qt.Key.Key_C:
+        elif matches(event, actions["recompute_frame"]):
             self.recompute_frame()
-        elif key == Qt.Key.Key_M:
+        elif matches(event, actions["edit_frame"]):
             self.enter_edit_mode()
-        elif key == Qt.Key.Key_P:
+        elif matches(event, actions["positive_preview"]):
             self.toggle_positive_preview()
-        elif key == Qt.Key.Key_T:
+        elif matches(event, actions["master_preview"]):
             self.toggle_master_preview()
-        elif key == Qt.Key.Key_Left:
+        elif matches(event, actions["navigate_previous"]):
             self.navigate(-1)
-        elif key == Qt.Key.Key_Right:
+        elif matches(event, actions["navigate_next"]):
             self.navigate(1)
-        elif key == Qt.Key.Key_G:
+        elif matches(event, actions["go_to_name"]):
             self.open_go_to_name()
-        elif key == Qt.Key.Key_Space:
+        elif matches(event, actions["pause_resume"]):
             self.toggle_pause()
-        elif key == Qt.Key.Key_Escape:
+        elif matches(event, actions["stop_capture"]):
             self.stop_capture()
         else:
             super().keyPressEvent(event)
@@ -832,12 +845,12 @@ class CaptureScreen(QWidget):
             super().keyPressEvent(event)
             return
 
-        key = event.key()
-        if key == Qt.Key.Key_1:
+        actions = self._shortcuts[NAME_CONFLICT]
+        if matches(event, actions["option_1"]):
             self._select_conflict_option(1)
-        elif key == Qt.Key.Key_2:
+        elif matches(event, actions["option_2"]):
             self._select_conflict_option(2)
-        elif key == Qt.Key.Key_3:
+        elif matches(event, actions["option_3"]):
             self._select_conflict_option(3)
         else:
             super().keyPressEvent(event)
@@ -865,14 +878,16 @@ class CaptureScreen(QWidget):
             self._edit_resize(1 + (0.05 if shift else 0.01))
         elif key == Qt.Key.Key_Minus:
             self._edit_resize(1 - (0.05 if shift else 0.01))
-        elif key == Qt.Key.Key_C:
-            self._edit_recompute()
-        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self._confirm_edit()
-        elif key == Qt.Key.Key_Escape:
-            self._cancel_edit()
         else:
-            return
+            actions = self._shortcuts[FRAME_EDIT]
+            if matches(event, actions["recompute"]):
+                self._edit_recompute()
+            elif matches(event, actions["confirm"]):
+                self._confirm_edit()
+            elif matches(event, actions["cancel"]):
+                self._cancel_edit()
+            else:
+                return
         event.accept()
 
     def _edit_move(self, *, dx: int, dy: int) -> None:
