@@ -106,14 +106,14 @@ même que les rôles de Tab et Échap dans le panneau de conflit de nom.
 | ------ | ------ |
 | Entrée | Valider l'image courante (équivaut à l'arrivée de la suivante) |
 | R | Rejeter l'image courante |
-| V | Rotation 90° (cycle 0°→90°→180°→270°) |
+| V | Rotation 90° (cycle 0°→90°→180°→270°) — Maj+V tourne dans l'autre sens |
 | ← / → | Nom précédent / suivant (déplace le curseur parmi les entrées en attente) |
 | G | Aller à un nom déjà en attente (autocomplétion à la saisie) |
 | C | Recalculer le cadre (relance la détection automatique) |
 | M | Éditer le cadre manuellement |
 | P | Basculer l'aperçu positif |
 | T | Basculer l'aperçu maître (cadre appliqué) |
-| K | Cycler l'aperçu (négatif → positif → maître), indépendant de P/T |
+| K | Cycler l'aperçu (négatif → positif → maître), indépendant de P/T — Maj+K cycle dans l'autre sens |
 | Espace | Pause / reprendre |
 | F11 | Plein écran |
 | Échap | Arrêter la capture (retour à la préparation ; les exports continuent) |

@@ -17,10 +17,11 @@ from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QDoubleValidator, QMouseEvent, QPainter, QPaintEvent
 from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QWidget
 
-from scanassistant.gui.theme import ACCENT, BORDER, BORDER_STRONG
+from scanassistant.gui.theme import ACCENT, BORDER, BORDER_STRONG, TEXT_SECONDARY
 
 _TRACK_HEIGHT = 4
 _HANDLE_DIAMETER = 10
+_HANDLE_MARGIN = _HANDLE_DIAMETER / 2  # room for the handle at both ends of the track
 
 
 class _SliderTrack(QWidget):
@@ -47,11 +48,22 @@ class _SliderTrack(QWidget):
     def _fraction(self, value: float) -> float:
         return (value - self._minimum) / (self._maximum - self._minimum)
 
+    def _usable_width(self) -> float:
+        return max(1.0, self.width() - 2 * _HANDLE_MARGIN)
+
+    def _handle_x(self, value: float) -> float:
+        """Pixel x for `value`'s handle centre — inset by `_HANDLE_MARGIN` on
+        both ends so the handle circle is never clipped by the widget edge."""
+        return _HANDLE_MARGIN + self._fraction(value) * self._usable_width()
+
     def _value_from_x(self, x: float) -> float:
-        fraction = max(0.0, min(1.0, x / max(1, self.width())))
+        fraction = max(0.0, min(1.0, (x - _HANDLE_MARGIN) / self._usable_width()))
         return self._minimum + fraction * (self._maximum - self._minimum)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        if not self.isEnabled():
+            super().mousePressEvent(event)
+            return
         if event.button() == Qt.MouseButton.RightButton:
             self.reset_requested.emit()
             event.accept()
@@ -64,7 +76,7 @@ class _SliderTrack(QWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if event.buttons() & Qt.MouseButton.LeftButton:
+        if self.isEnabled() and event.buttons() & Qt.MouseButton.LeftButton:
             self.set_value(self._value_from_x(event.position().x()))
             self.dragged.emit(self._value)
 
@@ -78,25 +90,30 @@ class _SliderTrack(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         mid = self.height() / 2
-        track_rect = QRectF(0, mid - _TRACK_HEIGHT / 2, self.width(), _TRACK_HEIGHT)
+        track_rect = QRectF(
+            _HANDLE_MARGIN, mid - _TRACK_HEIGHT / 2, self._usable_width(), _TRACK_HEIGHT
+        )
+        fill_color = QColor(ACCENT) if self.isEnabled() else QColor(TEXT_SECONDARY)
 
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(BORDER))
         painter.drawRoundedRect(track_rect, _TRACK_HEIGHT / 2, _TRACK_HEIGHT / 2)
 
-        fraction = self._fraction(self._value)
-        handle_x = fraction * self.width()
+        handle_x = self._handle_x(self._value)
         if self._bipolar:
-            zero_x = self._fraction(0) * self.width()
+            zero_x = self._handle_x(0)
             fill_rect = QRectF(
                 min(zero_x, handle_x), track_rect.top(), abs(handle_x - zero_x), _TRACK_HEIGHT
             )
-            painter.setPen(QColor(BORDER_STRONG))
-            painter.drawLine(int(zero_x), 0, int(zero_x), self.height())
-            painter.setPen(Qt.PenStyle.NoPen)
+            if self.isEnabled():
+                painter.setPen(QColor(BORDER_STRONG))
+                painter.drawLine(int(zero_x), 0, int(zero_x), self.height())
+                painter.setPen(Qt.PenStyle.NoPen)
         else:
-            fill_rect = QRectF(0, track_rect.top(), handle_x, _TRACK_HEIGHT)
-        painter.setBrush(QColor(ACCENT))
+            fill_rect = QRectF(
+                track_rect.left(), track_rect.top(), handle_x - track_rect.left(), _TRACK_HEIGHT
+            )
+        painter.setBrush(fill_color)
         painter.drawRoundedRect(fill_rect, _TRACK_HEIGHT / 2, _TRACK_HEIGHT / 2)
 
         painter.drawEllipse(

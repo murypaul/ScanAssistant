@@ -16,6 +16,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
+import cv2
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent
@@ -56,6 +57,7 @@ from scanassistant.gui.shortcuts import (
     FRAME_EDIT,
     NAME_CONFLICT,
     matches,
+    matches_shifted,
     merge_with_defaults,
 )
 from scanassistant.gui.widgets.preview_area import PreviewArea
@@ -81,6 +83,7 @@ from scanassistant.watcher.stability import poll_interval_s
 
 _STATUS_MESSAGE_DURATION_MS = 5000
 _MIN_PUMP_INTERVAL_MS = 100
+_ROTATION_COMMIT_DELAY_MS = 1500
 
 _LEVEL_LABELS = {
     "reliable": ("capture.confidence_reliable", "ok"),
@@ -145,6 +148,37 @@ def _rotated_for_display(
                 height=rotated_frame.width,
             )
     return rotated_pixels, rotated_frame
+
+
+_FAST_PREVIEW_MAX_DIM = 480
+
+
+def _downscaled_for_fast_preview(
+    pixels: np.ndarray, frame: FrameResult | None
+) -> tuple[np.ndarray, FrameResult | None]:
+    """A much smaller copy of `pixels` (long edge ~480px) for the positive/
+    master preview while a Positive-settings slider is being dragged: the
+    tone-curve math (`imaging.positive.render_positive`) runs on every
+    mouse-move and is expensive enough at full preview resolution to
+    visibly stutter. `frame`'s coordinates are scaled down to match — it
+    must stay in the same space as the pixels it's cropping."""
+    height, width = pixels.shape[:2]
+    scale = _FAST_PREVIEW_MAX_DIM / max(height, width)
+    if scale >= 1.0:
+        return pixels, frame
+    resized = cv2.resize(
+        pixels, (round(width * scale), round(height * scale)), interpolation=cv2.INTER_AREA
+    )
+    if frame is None:
+        return resized, None
+    scaled_frame = replace(
+        frame,
+        x=frame.x * scale,
+        y=frame.y * scale,
+        width=frame.width * scale,
+        height=frame.height * scale,
+    )
+    return resized, scaled_frame
 
 
 class CaptureScreen(QWidget):
@@ -315,6 +349,15 @@ class CaptureScreen(QWidget):
         self._pump_timer = QTimer(self)
         self._pump_timer.timeout.connect(self._pump)
 
+        # V/Shift+V only updates the display immediately; the actual
+        # cancel-and-re-export (`session.set_rotation`) is debounced so that
+        # rotating several times in a row doesn't re-decode the RAW and
+        # re-export once per intermediate press.
+        self._pending_rotation_deg: int | None = None
+        self._rotation_commit_timer = QTimer(self)
+        self._rotation_commit_timer.setSingleShot(True)
+        self._rotation_commit_timer.timeout.connect(self._commit_pending_rotation)
+
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def set_shortcuts(self, shortcuts: dict[str, dict[str, str]]) -> None:
@@ -390,6 +433,7 @@ class CaptureScreen(QWidget):
 
     def stop(self, *, wait_for_exports: bool = True) -> None:
         self._pump_timer.stop()
+        self._commit_pending_rotation()  # never leave a rotation un-exported
         if self.session is not None:
             self._dispatch(self.session.stop(wait_for_exports=wait_for_exports))
             if wait_for_exports:
@@ -413,6 +457,7 @@ class CaptureScreen(QWidget):
         Returns the number of exports still pending right after submission.
         """
         self._pump_timer.stop()
+        self._commit_pending_rotation()  # never leave a rotation un-exported
         if self.session is None:
             return 0
         self._dispatch(self.session.stop(wait_for_exports=False))
@@ -442,6 +487,11 @@ class CaptureScreen(QWidget):
     def _pump(self) -> None:
         if self.session is None:
             return
+        # A newly-arrived, stabilized file implicitly validates whatever is
+        # still `current` (`core.session._finalize_current_as_validated`) —
+        # inside this very `pump()` call. A rotation debounced past this
+        # point would export with the stale, pre-rotation value.
+        self._commit_pending_rotation()
         self._dispatch(self.session.pump(time.monotonic()))
         self._refresh_banner()
         self._refresh_preview_state()
@@ -578,6 +628,14 @@ class CaptureScreen(QWidget):
 
     def _load_preview(self, name: str, extension: str, *, journal_action: str = "auto") -> None:
         assert self.session is not None
+        # Defense in depth: finalize/reject already flush a pending rotation
+        # before the cursor moves on, but never let one linger onto a
+        # different image's export regardless of how we got here.
+        self._commit_pending_rotation()
+        # Each new image starts back in plain negative view — positive/master
+        # is a per-image check, not a standing preference to carry forward.
+        self._positive_preview_active = False
+        self._master_preview_active = False
         self._loaded_preview_for = name
         self._current_frame_result = None
         self._update_confidence_label()
@@ -684,49 +742,82 @@ class CaptureScreen(QWidget):
 
     # --- cycle preview (K key) ---------------------------------------------------
 
-    def cycle_preview_action(self) -> None:
-        """K key: negative → positive → master → negative, independent of P/T."""
+    def cycle_preview_action(self, *, direction: int = 1) -> None:
+        """K key: negative → positive → master → negative (Shift+K: the other
+        way around), independent of P/T."""
         if self._current_preview_pixels is None:
             return
-        if not self._positive_preview_active and not self._master_preview_active:
-            self._positive_preview_active = True
-        elif self._positive_preview_active:
-            self._positive_preview_active = False
-            self._master_preview_active = True
+        if direction >= 0:
+            if not self._positive_preview_active and not self._master_preview_active:
+                self._positive_preview_active = True
+            elif self._positive_preview_active:
+                self._positive_preview_active = False
+                self._master_preview_active = True
+            else:
+                self._master_preview_active = False
         else:
-            self._master_preview_active = False
+            if not self._positive_preview_active and not self._master_preview_active:
+                self._master_preview_active = True
+            elif self._master_preview_active:
+                self._master_preview_active = False
+                self._positive_preview_active = True
+            else:
+                self._positive_preview_active = False
         self._display_current_preview()
 
-    def refresh_active_preview(self) -> None:
+    def refresh_active_preview(self, *, fast: bool = False) -> None:
         """Re-renders the positive/master preview from what's already in memory —
-        no RAW redecode. Called whenever Positive settings changes, including
-        mid-drag on a slider, so the visible preview follows it live."""
+        no RAW redecode. Called whenever Positive settings changes; `fast`
+        (mid-drag on a slider) trades resolution for speed so the preview
+        keeps up with the mouse instead of stuttering."""
         if self._positive_preview_active or self._master_preview_active:
-            self._display_current_preview()
+            self._display_current_preview(fast=fast)
 
-    def _display_current_preview(self) -> None:
+    def _display_current_preview(self, *, fast: bool = False) -> None:
         """Switches between negative / positive (P) / master (T) preview in the same area."""
         pixels = self._current_preview_pixels
         if pixels is None:
             return
         if self._positive_preview_active:
-            self.preview_area.show_image(self._render_positive_preview(pixels))
+            if fast:
+                small_pixels, small_frame = _downscaled_for_fast_preview(
+                    pixels, self._current_frame_result
+                )
+                image = self._render_positive_preview(small_pixels, frame_override=small_frame)
+            else:
+                image = self._render_positive_preview(pixels)
+            self.preview_area.show_image(image)
             self.preview_area.set_frame_overlay(None)  # not relevant to the inverted positive
         elif self._master_preview_active:
-            self.preview_area.show_image(self._render_master_preview(pixels))
+            if fast:
+                small_pixels, small_frame = _downscaled_for_fast_preview(
+                    pixels, self._current_frame_result
+                )
+                image = self._render_master_preview(small_pixels, frame_override=small_frame)
+            else:
+                image = self._render_master_preview(pixels)
+            self.preview_area.show_image(image)
             self.preview_area.set_frame_overlay(None)  # frame is already applied, no need to repeat
         else:
             current = self.session.state.current_image if self.session is not None else None
-            rotation_deg = current.rotation_deg if current is not None else 0
+            if self._pending_rotation_deg is not None:
+                rotation_deg = self._pending_rotation_deg
+            else:
+                rotation_deg = current.rotation_deg if current is not None else 0
             rotated_pixels, rotated_frame = _rotated_for_display(
                 pixels, self._current_frame_result, rotation_deg
             )
             self.preview_area.show_image(rotated_pixels)
             self.preview_area.set_frame_overlay(rotated_frame)
 
-    def _render_master_preview(self, preview_pixels: np.ndarray) -> np.ndarray:
+    def _render_master_preview(
+        self, preview_pixels: np.ndarray, *, frame_override: FrameResult | None = None
+    ) -> np.ndarray:
         """Preview with the frame *and rotation* applied, on the preview already in
-        memory — no RAW redecode.
+        memory — no RAW redecode. `frame_override` (already in `preview_pixels`'s
+        own coordinate space) is used instead of `self._current_frame_result`
+        when set — the fast/downscaled preview path needs this, since the
+        real frame's coordinates wouldn't match a shrunk pixel array.
 
         Same geometry logic as the real export (`imaging.geometry.apply_geometry`,
         reused as-is), but always in `native` mode: this toggle shows the
@@ -744,7 +835,7 @@ class CaptureScreen(QWidget):
         current = self.session.state.current_image if self.session is not None else None
         if current is None:
             return preview_pixels
-        frame = self._current_frame_result
+        frame = frame_override if frame_override is not None else self._current_frame_result
         geometry = apply_geometry(
             preview_pixels,
             FrameGeometry(
@@ -759,7 +850,9 @@ class CaptureScreen(QWidget):
         )
         return geometry.pixels
 
-    def _render_positive_preview(self, preview_pixels: np.ndarray) -> np.ndarray:
+    def _render_positive_preview(
+        self, preview_pixels: np.ndarray, *, frame_override: FrameResult | None = None
+    ) -> np.ndarray:
         """Positive rendered from the preview already in memory, using campaign settings.
 
         Crop/deskew/rotation applied first (same geometry as the master
@@ -769,7 +862,7 @@ class CaptureScreen(QWidget):
         assert self.session is not None
         config = self.session.campaign.exports.jpeg_positive
         manual = config.manual_settings
-        framed_pixels = self._render_master_preview(preview_pixels)
+        framed_pixels = self._render_master_preview(preview_pixels, frame_override=frame_override)
         # `imaging.positive.render_positive` expects 16-bit input; the preview
         # is 8-bit (`imaging.preview.Preview.pixels`) — exact rescale
         # (255 * 257 = 65535), no extra library needed.
@@ -868,6 +961,8 @@ class CaptureScreen(QWidget):
             self.reject_current_image()
         elif matches(event, actions["rotate"]):
             self.rotate_image_action()
+        elif matches_shifted(event, actions["rotate"]):
+            self.rotate_image_action(direction=-1)
         elif matches(event, actions["recompute_frame"]):
             self.recompute_frame()
         elif matches(event, actions["edit_frame"]):
@@ -878,6 +973,8 @@ class CaptureScreen(QWidget):
             self.toggle_master_preview()
         elif matches(event, actions["cycle_preview"]):
             self.cycle_preview_action()
+        elif matches_shifted(event, actions["cycle_preview"]):
+            self.cycle_preview_action(direction=-1)
         elif matches(event, actions["navigate_previous"]):
             self.navigate(-1)
         elif matches(event, actions["navigate_next"]):
@@ -1090,6 +1187,7 @@ class CaptureScreen(QWidget):
     def finalize_current(self) -> None:
         if self.session is None:
             return
+        self._commit_pending_rotation()  # the export must reflect the final rotation
         try:
             events = self.session.validate_current()
         except IllegalTransitionError:
@@ -1101,6 +1199,7 @@ class CaptureScreen(QWidget):
     def reject_current_image(self) -> None:
         if self.session is None:
             return
+        self._commit_pending_rotation()
         try:
             events = self.session.reject_current()
         except IllegalTransitionError:
@@ -1115,24 +1214,50 @@ class CaptureScreen(QWidget):
         self._refresh_banner()
         self._refresh_preview_state()
 
-    def rotate_image_action(self) -> None:
-        """V key: rotates the current image 90° clockwise, live preview updated immediately.
+    def rotate_image_action(self, *, direction: int = 1) -> None:
+        """V key (clockwise) / Shift+V (counter-clockwise): rotates the
+        current image 90°, live preview updated immediately.
 
         Rotates the plain negative view itself (pixels and frame overlay
         both), rather than switching to the master preview — the operator
         stays on whichever view they were on, and the crop rectangle never
         disappears.
+
+        Only the display updates right away: the actual re-export
+        (`session.set_rotation`, cancel-and-re-queue) is debounced —
+        rotating several times in a row shouldn't re-decode the RAW and
+        produce a new TIFF/JPEG set after every intermediate press, only
+        once the operator settles on a value.
         """
-        if self.session is None or self.session.state.current_image is None:
+        session = self.session
+        if session is None or session.state.current_image is None:
+            return
+        current = session.state.current_image
+        if current.state != "IN_REVIEW":
+            return  # matches the IllegalTransitionError set_rotation would raise
+        base = (
+            self._pending_rotation_deg
+            if self._pending_rotation_deg is not None
+            else current.rotation_deg
+        )
+        self._pending_rotation_deg = (base + 90 * direction) % 360
+        self._display_current_preview()
+        self._rotation_commit_timer.start(_ROTATION_COMMIT_DELAY_MS)
+        self._set_status(t("capture.status_rotation", rotation_deg=self._pending_rotation_deg))
+
+    def _commit_pending_rotation(self) -> None:
+        """Debounced: applies whatever rotation the operator settled on, in
+        one `set_rotation` call regardless of how many presses it took."""
+        self._rotation_commit_timer.stop()
+        pending = self._pending_rotation_deg
+        self._pending_rotation_deg = None
+        if self.session is None or pending is None:
             return
         try:
-            events = self.session.rotate_current()
+            events = self.session.set_rotation(pending)
         except IllegalTransitionError:
             return
         self._dispatch(events)
-        self._display_current_preview()
-        rotation_deg = self.session.state.current_image.rotation_deg
-        self._set_status(t("capture.status_rotation", rotation_deg=rotation_deg))
 
     def navigate(self, direction: int) -> None:
         if self.session is None:

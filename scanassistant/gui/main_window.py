@@ -93,14 +93,15 @@ def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
         "Capture mode:",
         f"  {c['finalize']}  Finalize the current image",
         f"  {c['reject']}  Reject the current image",
-        f"  {c['rotate']}  Rotate 90°",
+        f"  {c['rotate']}  Rotate 90° (Shift+{c['rotate']}: the other way)",
         f"  {c['go_to_name']}  Go to name",
         f"  {c['navigate_previous']} / {c['navigate_next']}  Previous / next name",
         f"  {c['recompute_frame']}  Recompute frame",
         f"  {c['edit_frame']}  Edit frame",
         f"  {c['positive_preview']}  Positive preview",
         f"  {c['master_preview']}  Master preview",
-        f"  {c['cycle_preview']}  Cycle preview (negative / positive / master)",
+        f"  {c['cycle_preview']}  Cycle preview (negative / positive / master,"
+        f" Shift+{c['cycle_preview']}: the other way)",
         f"  {c['pause_resume']}  Pause / Resume",
         f"  {c['stop_capture']}  Stop capture",
         "",
@@ -191,6 +192,9 @@ class MainWindow(QMainWindow):
         self.positive_settings_panel = PositiveSettingsPanel()
         self.positive_settings_panel.setting_changed.connect(self._on_positive_setting_changed)
         self.positive_settings_panel.live_changed.connect(
+            lambda: self.capture_screen.refresh_active_preview(fast=True)
+        )
+        self.positive_settings_panel.settled_changed.connect(
             self.capture_screen.refresh_active_preview
         )
         self.positive_settings_dock = QDockWidget(t("positive_settings.title"), self)

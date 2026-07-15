@@ -25,7 +25,8 @@ _OVERLAY_COLORS = {
     IMPOSSIBLE: ACCENT_CRITICAL,
 }
 _HALO_COLOR = QColor(0, 0, 0, 217)
-_GUIDE_COLOR = QColor(255, 255, 255, 110)
+_GUIDE_COLOR = QColor(255, 255, 255, 215)
+_GUIDE_HALO_COLOR = QColor(0, 0, 0, 160)
 
 
 class PreviewArea(QWidget):
@@ -158,17 +159,30 @@ def _draw_overlay(pixmap: QPixmap, frame: FrameResult, *, guides_visible: bool =
 
 def _draw_thirds_guides(painter: QPainter, rect: QRectF) -> None:
     """Two evenly-spaced vertical and horizontal lines within the frame —
-    a compositional aid for manual cropping, not a confidence signal: kept
-    unsaturated and dotted so it never competes with the frame overlay."""
-    pen = QPen(_GUIDE_COLOR)
-    pen.setWidth(1)
-    pen.setStyle(Qt.PenStyle.DotLine)
-    painter.setPen(pen)
+    a compositional aid for manual cropping, not a confidence signal. A dark
+    halo under the dotted white line keeps it readable against any part of
+    the negative, the same reasoning as the frame overlay's own keyline —
+    a plain low-alpha line was reported nearly invisible in real use."""
     x1 = rect.left() + rect.width() / 3
     x2 = rect.left() + 2 * rect.width() / 3
     y1 = rect.top() + rect.height() / 3
     y2 = rect.top() + 2 * rect.height() / 3
-    painter.drawLine(QPointF(x1, rect.top()), QPointF(x1, rect.bottom()))
-    painter.drawLine(QPointF(x2, rect.top()), QPointF(x2, rect.bottom()))
-    painter.drawLine(QPointF(rect.left(), y1), QPointF(rect.right(), y1))
-    painter.drawLine(QPointF(rect.left(), y2), QPointF(rect.right(), y2))
+    lines = (
+        (QPointF(x1, rect.top()), QPointF(x1, rect.bottom())),
+        (QPointF(x2, rect.top()), QPointF(x2, rect.bottom())),
+        (QPointF(rect.left(), y1), QPointF(rect.right(), y1)),
+        (QPointF(rect.left(), y2), QPointF(rect.right(), y2)),
+    )
+
+    halo_pen = QPen(_GUIDE_HALO_COLOR)
+    halo_pen.setWidthF(2.4)
+    painter.setPen(halo_pen)
+    for start, end in lines:
+        painter.drawLine(start, end)
+
+    guide_pen = QPen(_GUIDE_COLOR)
+    guide_pen.setWidthF(1.2)
+    guide_pen.setStyle(Qt.PenStyle.DotLine)
+    painter.setPen(guide_pen)
+    for start, end in lines:
+        painter.drawLine(start, end)

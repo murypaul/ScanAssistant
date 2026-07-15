@@ -40,10 +40,12 @@ from scanassistant.project.campaign import JpegPositiveExportConfig
 
 class PositiveSettingsPanel(QWidget):
     """`setting_changed(key, before, after)`: the caller persists + journals it.
-    `live_changed()`: the caller refreshes whatever preview is on screen."""
+    `live_changed()`: mid-drag — refresh cheaply (e.g. a downsampled preview).
+    `settled_changed()`: a value just became final — refresh at full quality."""
 
     setting_changed = Signal(str, object, object)
     live_changed = Signal()
+    settled_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -134,7 +136,7 @@ class PositiveSettingsPanel(QWidget):
         if after == before:
             return
         self._config.mode = after
-        self.live_changed.emit()
+        self.settled_changed.emit()
         self.setting_changed.emit("exports.jpeg_positive.mode", before, after)
 
     def _on_flip_changed(self, checked: bool) -> None:
@@ -144,7 +146,7 @@ class PositiveSettingsPanel(QWidget):
         if checked == before:
             return
         self._config.horizontal_flip = checked
-        self.live_changed.emit()
+        self.settled_changed.emit()
         self.setting_changed.emit("exports.jpeg_positive.horizontal_flip", before, checked)
 
     # --- manual settings: live (mid-drag, preview only) + committed (persisted) ---
@@ -159,7 +161,7 @@ class PositiveSettingsPanel(QWidget):
         if self._loading or self._config is None:
             return
         self._config.manual_settings.exposure_ev = value
-        self.live_changed.emit()
+        self.settled_changed.emit()
         before = self._committed_exposure_ev
         if value == before:
             return
@@ -179,7 +181,7 @@ class PositiveSettingsPanel(QWidget):
             return
         value = int(value)
         self._config.manual_settings.contrast = value
-        self.live_changed.emit()
+        self.settled_changed.emit()
         before = self._committed_contrast
         if value == before:
             return
@@ -197,7 +199,7 @@ class PositiveSettingsPanel(QWidget):
             return
         value = int(value)
         self._config.manual_settings.shadows = value
-        self.live_changed.emit()
+        self.settled_changed.emit()
         before = self._committed_shadows
         if value == before:
             return
@@ -215,7 +217,7 @@ class PositiveSettingsPanel(QWidget):
             return
         value = int(value)
         self._config.manual_settings.highlights = value
-        self.live_changed.emit()
+        self.settled_changed.emit()
         before = self._committed_highlights
         if value == before:
             return

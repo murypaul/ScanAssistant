@@ -17,7 +17,7 @@ add a lot of surface for very little real benefit.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QKeyCombination, Qt
 from PySide6.QtGui import QKeyEvent, QKeySequence
 
 CAPTURE = "capture"
@@ -137,6 +137,29 @@ def matches(event: QKeyEvent, key_string: str) -> bool:
             and event.modifiers() == combination.keyboardModifiers()
         )
     return QKeySequence(event.keyCombination()) == configured
+
+
+def matches_shifted(event: QKeyEvent, key_string: str) -> bool:
+    """True if `event` is `key_string` plus Shift — e.g. configured "V", event
+    Shift+V. For the small set of actions with a "the other way round"
+    variant (rotate, cycle preview): that variant isn't itself a separate
+    remappable action, it's always whatever's configured plus Shift.
+    """
+    if not key_string:
+        return False
+    configured = QKeySequence(key_string)
+    if configured.isEmpty():
+        return False
+    combination = configured[0]
+    if combination.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
+        return False  # the configured shortcut already includes Shift itself
+    shifted = QKeySequence(
+        QKeyCombination(
+            combination.keyboardModifiers() | Qt.KeyboardModifier.ShiftModifier,
+            Qt.Key(combination.key()),
+        )
+    )
+    return QKeySequence(event.keyCombination()) == shifted
 
 
 def default_shortcuts() -> dict[str, dict[str, str]]:

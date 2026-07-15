@@ -778,8 +778,9 @@ class CaptureSession:
 
     # --- rotation (V key) --------------------------------------------------
 
-    def rotate_current(self) -> list[SessionEvent]:
-        """Rotates the current image 90° clockwise, cycling 0→90→180→270→0 (V key).
+    def rotate_current(self, *, direction: int = 1) -> list[SessionEvent]:
+        """Rotates the current image 90° (`direction=1` clockwise, `-1`
+        counter-clockwise), cycling through 0/90/180/270 (V key / Shift+V).
 
         Any export tasks already queued are cancelled and re-queued with the
         new rotation.
@@ -787,10 +788,24 @@ class CaptureSession:
         current = self.state.current_image
         if current is None or current.state != "IN_REVIEW":
             raise IllegalTransitionError(current.state if current else "NONE", "rotation")
+        return self.set_rotation((current.rotation_deg + 90 * direction) % 360)
+
+    def set_rotation(self, rotation_deg: int) -> list[SessionEvent]:
+        """Sets the current image's rotation to an absolute value in one shot
+        — re-queuing exports and journaling exactly once, regardless of how
+        many V/Shift+V presses it took to get there (the GUI debounces
+        `rotate_current` and calls this once the operator settles on a
+        value, rather than re-exporting after every intermediate press).
+        """
+        current = self.state.current_image
+        if current is None or current.state != "IN_REVIEW":
+            raise IllegalTransitionError(current.state if current else "NONE", "rotation")
 
         name = current.assigned_name
         before = current.rotation_deg
-        after = (before + 90) % 360
+        after = rotation_deg % 360
+        if after == before:
+            return []
         current.rotation_deg = after
         self.journal.log(
             "FRAMING",

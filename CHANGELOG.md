@@ -24,16 +24,23 @@
   default, instead of plain spin boxes; horizontal flip is now an
   animated switch. Any change — including mid-drag — is reflected in an
   open positive/master preview immediately instead of only on the next
-  image.
+  image, at a reduced resolution while actually dragging so it doesn't
+  stutter. The manual sliders now grey out visibly when Positive mode
+  isn't Manual, matching the rest of the app's disabled controls.
 - Pressing `V` to rotate the current image now rotates the plain
   negative view itself, crop rectangle included, instead of switching
-  away to the master preview.
+  away to the master preview. `Shift+V` rotates the other way. Rotating
+  several times in a row now re-exports once, after you settle on a
+  value, instead of once per press.
 - Added `K`, a dedicated key that cycles the preview through negative →
-  positive → master, independently of the existing `P`/`T` toggles.
+  positive → master, independently of the existing `P`/`T` toggles;
+  `Shift+K` cycles the other way.
 - The Export queue, Session history, and Positive settings panels no
   longer follow you to the Home or Project screen — they're confined to
   the capture screen, remembering what was open so it comes back the
   same way next time you start capturing.
+- Positive/master preview now resets to the plain negative view on the
+  next image, rather than carrying over from the previous one.
 
 **Framing**
 - Added optional rule-of-thirds guide lines while editing the crop (`G`
@@ -41,6 +48,12 @@
   and cleared automatically when you leave edit mode.
 
 ### Bug Fixes
+
+**Interface**
+- The frame-edit rule-of-thirds guides (`G`) are now a clearly visible
+  dotted line instead of nearly disappearing against the negative.
+- The Positive settings sliders' handles are no longer clipped at either
+  end of the track.
 
 **Preferences & Shortcuts**
 - Every Preferences tab is now scrollable — the Shortcuts tab in

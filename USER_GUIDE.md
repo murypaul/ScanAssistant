@@ -101,14 +101,14 @@ navigation/cancel in the name conflict panel.
 | --- | --- |
 | Enter | Accept the current image (same as the next one arriving) |
 | R | Reject the current image |
-| V | Rotate 90° (cycles 0°→90°→180°→270°) |
+| V | Rotate 90° (cycles 0°→90°→180°→270°) — Shift+V rotates the other way |
 | ← / → | Previous / next name (moves the cursor among pending entries) |
 | G | Go to an existing pending name (autocompletes as you type) |
 | C | Recompute the frame (rerun automatic detection) |
 | M | Edit the frame manually |
 | P | Toggle positive preview |
 | T | Toggle master (applied-crop) preview |
-| K | Cycle preview (negative → positive → master), independent of P/T |
+| K | Cycle preview (negative → positive → master), independent of P/T — Shift+K cycles the other way |
 | Space | Pause / resume |
 | F11 | Full screen |
 | Esc | Stop capture (returns to preparation; exports keep processing) |
