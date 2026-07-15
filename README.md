@@ -108,12 +108,9 @@ opt-in, neither automatic in the background:
   install scripts use, then reinstalls dependencies, right where the app
   already lives — no re-download, no new folder. Restart afterwards to use
   the new version.
-- An opt-in check once at startup, off by default. There's no settings
-  screen for it yet, so it's a manual edit: set `"check_enabled": true`
-  under `"updates"` in `config.json` (the app's config directory, found by
-  `platformdirs.user_config_dir("scanassistant")` — e.g.
-  `~/.config/scanassistant/config.json` on Linux). If an update is found,
-  a quiet note appears on the home screen — never a popup.
+- An opt-in check once at startup, off by default. Turn it on in **File ▸
+  Preferences ▸ Updates**. If an update is found, a quiet note appears on
+  the home screen — never a popup.
 
 Both need `git` and a checkout with a remote configured (exactly what the
 install scripts set up). If you installed from a source archive instead
@@ -254,11 +251,7 @@ automatiques en tâche de fond :
   téléchargement, pas de nouveau dossier. Redémarrez ensuite pour utiliser
   la nouvelle version.
 - Une vérification automatique unique au démarrage, désactivée par défaut.
-  Pas encore d'écran de réglages pour ça : ça se fait en éditant
-  `config.json` à la main, en passant `"check_enabled": true` sous
-  `"updates"` (dossier de configuration de l'app, donné par
-  `platformdirs.user_config_dir("scanassistant")` — par exemple
-  `~/.config/scanassistant/config.json` sous Linux). Si une mise à jour est
+  À activer dans **File ▸ Preferences ▸ Updates**. Si une mise à jour est
   trouvée, une note discrète apparaît sur l'écran d'accueil — jamais de
   popup.
 

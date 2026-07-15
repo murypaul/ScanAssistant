@@ -85,7 +85,11 @@ overlay; press `P` to preview the positive rendering instead.
 
 Everything below works without touching the mouse; the mouse remains
 available everywhere too. Shortcuts are letter-based (not tied to a
-keyboard layout) and aren't remappable yet.
+keyboard layout). These are the defaults — remap any of them from
+**File ▸ Preferences ▸ Shortcuts** (click the current key, then press the
+new one). The frame-editing arrow/+/− moves stay fixed — they're a spatial
+gesture, not a pick-a-key shortcut — and so do Tab and Esc's roles as
+navigation/cancel in the name conflict panel.
 
 ### Capture
 
@@ -93,9 +97,9 @@ keyboard layout) and aren't remappable yet.
 | --- | --- |
 | Enter | Accept the current image (same as the next one arriving) |
 | R | Reject the current image |
-| V | Toggle orientation (portrait/landscape) |
+| V | Rotate 90° (cycles 0°→90°→180°→270°) |
 | ← / → | Previous / next name (moves the cursor among pending entries) |
-| G | Go to a name, or type a name not in the list (Ctrl+Enter to confirm one outside the list) |
+| G | Go to an existing pending name (autocompletes as you type) |
 | C | Recompute the frame (rerun automatic detection) |
 | M | Edit the frame manually |
 | P | Toggle positive preview |
@@ -201,6 +205,13 @@ gets finalized, orphaned temporary files are cleaned up, and any export
 that didn't finish is queued again — automatically, nothing to redo by
 hand.
 
+Closing normally while exports are still processing shows a small
+"Finalizing: N export(s) pending" panel instead of freezing the window —
+wait it out, or click **Quit without waiting** to close immediately (those
+exports pick up automatically next time the campaign opens, same as after
+a crash). Whether to wait at all is set in File ▸ Preferences ▸
+Processing.
+
 ## Statistics & completeness
 
 **Project ▸ Statistics** (also available outside capture, once a campaign
@@ -212,9 +223,25 @@ missing, and can regenerate the selection in one action.
 ## Configuration
 
 Campaign settings live in `campaign.json` inside the campaign folder and
-are edited from the project screen — no manual editing needed. A small set
-of machine-wide preferences (worker count, disk-space thresholds, the
-exiftool path, interface brightness) live in a user config file managed by
+are edited from the project screen — no manual editing needed.
+
+Machine-wide preferences live in **File ▸ Preferences** (disabled during
+capture, like most menus), applied and saved as soon as you change them:
+
+- **General** — reopen the last project on startup.
+- **Processing** — the exiftool path (with a browse/test button), whether
+  closing waits for exports still in progress, and the maximum negative
+  name length accepted when importing a new CSV.
+- **Thresholds** — the disk-space warning/critical levels and the export
+  queue's early-warning size.
+- **Updates** — the opt-in startup check (see [Updating](README.md#updating)
+  in the README) and a manual check button.
+- **Shortcuts** — every remappable key (see above), with per-key and
+  global reset.
+
+**Export settings…**/**Import settings…**, at the bottom of that dialog,
+save or load the whole file (including your shortcut remaps) as JSON — a
+quick way to move your setup to another machine or keep a backup before
+experimenting. Everything here also lives in a plain JSON file managed by
 the OS (`platformdirs` — e.g. `~/.config/scanassistant/config.json` on
-Linux); interface brightness is the only one with a menu (**View ▸
-Interface brightness**), the rest can be edited directly in that file.
+Linux), for anyone who prefers editing it directly.

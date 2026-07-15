@@ -90,7 +90,11 @@ cadre réellement appliqué (plutôt que le cadre brut avec surimpression) ;
 
 Tout ce qui suit se fait sans toucher la souris, qui reste disponible à
 tout moment. Les raccourcis reposent sur des lettres (indépendants de la
-disposition du clavier) et ne sont pas encore reconfigurables.
+disposition du clavier). Ce sont les valeurs par défaut — modifiez-les
+depuis **File ▸ Preferences ▸ Shortcuts** (cliquez sur la touche actuelle,
+puis appuyez sur la nouvelle). Les déplacements du cadre (flèches, +/−)
+restent fixes — c'est un geste spatial, pas un raccourci à choisir — de
+même que les rôles de Tab et Échap dans le panneau de conflit de nom.
 
 ### Capture
 
@@ -98,9 +102,9 @@ disposition du clavier) et ne sont pas encore reconfigurables.
 | ------ | ------ |
 | Entrée | Valider l'image courante (équivaut à l'arrivée de la suivante) |
 | R | Rejeter l'image courante |
-| V | Basculer l'orientation (portrait/paysage) |
+| V | Rotation 90° (cycle 0°→90°→180°→270°) |
 | ← / → | Nom précédent / suivant (déplace le curseur parmi les entrées en attente) |
-| G | Aller à un nom, ou saisir un nom hors liste (Ctrl+Entrée pour le valider) |
+| G | Aller à un nom déjà en attente (autocomplétion à la saisie) |
 | C | Recalculer le cadre (relance la détection automatique) |
 | M | Éditer le cadre manuellement |
 | P | Basculer l'aperçu positif |
@@ -214,6 +218,13 @@ de la campagne affiche un court rapport de reprise : l'image en cours est
 finalisée, les fichiers temporaires orphelins sont nettoyés, et tout export
 inachevé est remis en file — automatiquement, rien à refaire à la main.
 
+Une fermeture normale pendant que des exports sont encore en cours affiche
+un petit panneau « Finalizing: N export(s) pending » plutôt que de geler la
+fenêtre — patientez, ou cliquez sur **Quit without waiting** pour fermer
+immédiatement (ces exports reprennent automatiquement à la prochaine
+ouverture de la campagne, comme après un crash). Ce comportement se règle
+dans File ▸ Preferences ▸ Processing.
+
 ## Statistiques et complétude
 
 **Project ▸ Statistics** (aussi disponible hors capture, dès qu'une
@@ -227,10 +238,28 @@ peut régénérer la sélection en une action.
 
 Les réglages de campagne sont stockés dans `campaign.json`, à l'intérieur
 du dossier de campagne, et se modifient depuis l'écran projet — aucune
-édition manuelle n'est nécessaire. Un petit nombre de préférences propres
-à la machine (nombre de traitements en parallèle, seuils d'espace disque,
-chemin d'exiftool, luminosité de l'interface) sont stockées dans un
-fichier de configuration utilisateur géré par l'OS (`platformdirs` — par
-exemple `~/.config/scanassistant/config.json` sous Linux) ; la luminosité
-de l'interface est le seul réglage accessible par menu (**View ▸ Interface
-brightness**), les autres s'éditent directement dans ce fichier.
+édition manuelle n'est nécessaire.
+
+Les préférences propres à la machine se règlent depuis **File ▸
+Preferences** (désactivé pendant la capture, comme la plupart des menus),
+appliquées et enregistrées dès le changement :
+
+- **General** — rouvrir la dernière campagne au démarrage.
+- **Processing** — le chemin d'exiftool (avec un bouton parcourir/tester),
+  si la fermeture attend les exports en cours, et la longueur maximale
+  d'un nom de négatif acceptée à l'import d'un nouveau CSV.
+- **Thresholds** — les seuils d'espace disque (avertissement/critique) et
+  le seuil d'alerte précoce de la file d'export.
+- **Updates** — la vérification automatique au démarrage, volontaire (voir
+  [Mise à jour](README.md#mise-à-jour) dans le README), et un bouton de
+  vérification manuelle.
+- **Shortcuts** — tous les raccourcis reconfigurables (voir plus haut),
+  avec réinitialisation individuelle ou globale.
+
+**Export settings…**/**Import settings…**, en bas de cette fenêtre,
+sauvegardent ou rechargent l'ensemble du fichier (raccourcis reconfigurés
+compris) en JSON — pratique pour reporter ses réglages sur une autre
+machine ou garder une sauvegarde avant d'expérimenter. Tout ceci vit aussi
+dans un simple fichier JSON géré par l'OS (`platformdirs` — par exemple
+`~/.config/scanassistant/config.json` sous Linux), pour qui préfère
+l'éditer directement.
