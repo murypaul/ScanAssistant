@@ -47,7 +47,6 @@ from scanassistant.gui.screens.project import ProjectScreen
 from scanassistant.gui.screens.statistics import StatisticsScreen
 from scanassistant.gui.shortcuts import (
     CAPTURE,
-    FRAME_EDIT,
     GLOBAL,
     NAME_CONFLICT,
     merge_with_defaults,
@@ -74,10 +73,9 @@ from scanassistant.watcher.monitor import FolderMonitor
 
 
 def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
-    g, c, fe, nc = (
+    g, c, nc = (
         shortcuts[GLOBAL],
         shortcuts[CAPTURE],
-        shortcuts[FRAME_EDIT],
         shortcuts[NAME_CONFLICT],
     )
     lines = [
@@ -95,9 +93,7 @@ def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
         f"  {c['reject']}  Reject the current image",
         f"  {c['rotate']}  Rotate 90° (Shift+{c['rotate']}: the other way)",
         f"  {c['go_to_name']}  Go to name",
-        f"  {c['navigate_previous']} / {c['navigate_next']}  Previous / next name",
         f"  {c['recompute_frame']}  Recompute frame",
-        f"  {c['edit_frame']}  Edit frame",
         f"  {c['positive_preview']}  Positive preview",
         f"  {c['master_preview']}  Master preview",
         f"  {c['cycle_preview']}  Cycle preview (negative / positive / master,"
@@ -105,14 +101,12 @@ def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
         f"  {c['pause_resume']}  Pause / Resume",
         f"  {c['stop_capture']}  Stop capture",
         "",
-        "Frame edit mode (after Edit frame):",
+        "Crop, always available in capture mode:",
         "  Arrows  Move the frame (Shift: x10)",
         "  +/-  Resize (Shift: larger step)",
         "  Ctrl+Arrows  Rotate (Shift: x10)",
-        f"  {fe['recompute']}  Recompute automatically",
-        f"  {fe['toggle_guides']}  Toggle rule-of-thirds guides",
-        f"  {fe['confirm']}  Confirm",
-        f"  {fe['cancel']}  Cancel",
+        f"  {c['toggle_guides']}  Toggle rule-of-thirds guides",
+        "  Drag the frame's border or interior with the mouse to resize or move it",
         "",
         "Name conflict:",
         f"  {nc['option_1']} / {nc['option_2']} / {nc['option_3']}  Pick an option",
@@ -302,14 +296,11 @@ class MainWindow(QMainWindow):
             action.setEnabled(False)
 
         # As with the Capture menu above, no shortcut is attached here:
-        # C/M/V/P/T are already handled by `CaptureScreen.keyPressEvent`, a
+        # C/V/P/T are already handled by `CaptureScreen.keyPressEvent`, a
         # `QAction.setShortcut` would double-trigger on every keypress.
         self.processing_menu = menu_bar.addMenu(t("menu.processing"))
         self.action_recompute_frame = self._add_action(
             self.processing_menu, t("menu.processing_recompute_frame"), None, None
-        )
-        self.action_edit_frame = self._add_action(
-            self.processing_menu, t("menu.processing_edit_frame"), None, None
         )
         self.action_rotate_image = self._add_action(
             self.processing_menu, t("menu.processing_rotate"), None, None
@@ -325,7 +316,6 @@ class MainWindow(QMainWindow):
         )
         for action in (
             self.action_recompute_frame,
-            self.action_edit_frame,
             self.action_rotate_image,
             self.action_positive_preview,
             self.action_master_preview,
@@ -752,11 +742,10 @@ class MainWindow(QMainWindow):
     )
 
     # Regenerate stays disabled permanently: it would duplicate Statistics ▸
-    # Regenerate selection. C/M/V/P/T are already functional via keyboard
-    # and wired here to the Processing menu.
+    # Regenerate selection. C/V/P/T are already functional via keyboard and
+    # wired here to the Processing menu.
     _PROCESSING_ACTION_SLOTS = (
         "action_recompute_frame",
-        "action_edit_frame",
         "action_rotate_image",
         "action_positive_preview",
         "action_master_preview",
@@ -847,7 +836,6 @@ class MainWindow(QMainWindow):
             self._PROCESSING_ACTION_SLOTS,
             (
                 self.capture_screen.recompute_frame,
-                self.capture_screen.enter_edit_mode,
                 self.capture_screen.rotate_image_action,
                 self.capture_screen.toggle_positive_preview,
                 self.capture_screen.toggle_master_preview,
@@ -879,7 +867,6 @@ class MainWindow(QMainWindow):
             self._PROCESSING_ACTION_SLOTS,
             (
                 self.capture_screen.recompute_frame,
-                self.capture_screen.enter_edit_mode,
                 self.capture_screen.rotate_image_action,
                 self.capture_screen.toggle_positive_preview,
                 self.capture_screen.toggle_master_preview,

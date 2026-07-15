@@ -91,9 +91,9 @@ Everything below works without touching the mouse; the mouse remains
 available everywhere too. Shortcuts are letter-based (not tied to a
 keyboard layout). These are the defaults — remap any of them from
 **File ▸ Preferences ▸ Shortcuts** (click the current key, then press the
-new one). The frame-editing arrow/+/− moves stay fixed — they're a spatial
-gesture, not a pick-a-key shortcut — and so do Tab and Esc's roles as
-navigation/cancel in the name conflict panel.
+new one). The crop's arrow/+/− moves and Ctrl+arrow rotation stay fixed —
+they're a spatial gesture, not a pick-a-key shortcut — and so does Tab and
+Esc's role as navigation/cancel in the name conflict panel.
 
 ### Capture
 
@@ -102,10 +102,8 @@ navigation/cancel in the name conflict panel.
 | Enter | Accept the current image (same as the next one arriving) |
 | R | Reject the current image |
 | V | Rotate 90° (cycles 0°→90°→180°→270°) — Shift+V rotates the other way |
-| ← / → | Previous / next name (moves the cursor among pending entries) |
-| G | Go to an existing pending name (autocompletes as you type) |
+| Ctrl+G | Go to an existing pending name (autocompletes as you type) |
 | C | Recompute the frame (rerun automatic detection) |
-| M | Edit the frame manually |
 | P | Toggle positive preview |
 | T | Toggle master (applied-crop) preview |
 | K | Cycle preview (negative → positive → master), independent of P/T — Shift+K cycles the other way |
@@ -113,17 +111,24 @@ navigation/cancel in the name conflict panel.
 | F11 | Full screen |
 | Esc | Stop capture (returns to preparation; exports keep processing) |
 
-### Frame editing (after `M`)
+### Adjusting the crop
 
-| Key | Action |
+No mode to enter — always available on the plain negative view (switches
+you back to it automatically if a positive/master preview was open):
+
+| Input | Action |
 | --- | --- |
 | Arrows | Move the frame by 1 preview pixel (Shift: ×10) |
 | + / − | Grow / shrink by 1% (Shift: 5%), centered |
 | Ctrl+← / Ctrl+→ | Rotate ∓0.1° (Shift: ×10), clamped to ±45° |
-| C | Rerun automatic detection |
-| G | Toggle rule-of-thirds guide lines (off again once you confirm or cancel) |
-| Enter | Confirm (marks the frame as manual, regenerates exports) |
-| Esc | Cancel, back to the previous frame |
+| G | Toggle rule-of-thirds guide lines |
+| Drag a border or corner (mouse) | Resize from that side/corner |
+| Drag the interior (mouse) | Move the whole frame |
+
+Every edit settles into a single export after you pause for a moment (or
+immediately, on mouse release) — no need to confirm or cancel anything. If
+an edit goes wrong, drag it back or press `C` to fall back to the
+automatic detection.
 
 ### Name conflict panel
 
@@ -158,7 +163,7 @@ plausible size, whether it touches the image border, and its solidity.
 - **Reliable** (green) — used as-is.
 - **Needs review** (orange) — worth a glance before moving on.
 - **Impossible** (red) — falls back to the full, uncropped frame; fix it
-  manually (`M`) if needed.
+  manually if needed (see *Adjusting the crop* above).
 
 Manual edits and re-detections regenerate the exports for that image only;
 already-finalized images are untouched (use completeness check +

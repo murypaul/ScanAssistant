@@ -54,7 +54,6 @@ from scanassistant.gui.errors import format_critical, format_warning
 from scanassistant.gui.preview_worker import PreviewResult, PreviewWorker
 from scanassistant.gui.shortcuts import (
     CAPTURE,
-    FRAME_EDIT,
     NAME_CONFLICT,
     matches,
     matches_shifted,
@@ -66,7 +65,6 @@ from scanassistant.imaging.framing import (
     IMPOSSIBLE,
     ConfidenceComponents,
     FrameResult,
-    detect_frame,
 )
 from scanassistant.imaging.geometry import FrameGeometry, apply_geometry
 from scanassistant.imaging.positive import ManualSettings, render_positive
@@ -84,13 +82,14 @@ from scanassistant.watcher.stability import poll_interval_s
 _STATUS_MESSAGE_DURATION_MS = 5000
 _MIN_PUMP_INTERVAL_MS = 100
 _ROTATION_COMMIT_DELAY_MS = 1500
+_FRAME_COMMIT_DELAY_MS = 1500
 
 _LEVEL_LABELS = {
     "reliable": ("capture.confidence_reliable", "ok"),
     "review": ("capture.confidence_review", "warning"),
     "impossible": ("capture.confidence_impossible", "critical"),
-    # "manual": GUI-only sentinel (frame edit mode, M key), not a possible
-    # output of `imaging.framing.classify()`.
+    # "manual": GUI-only sentinel (a nudge, resize, rotate, or drag on the
+    # crop), not a possible output of `imaging.framing.classify()`.
     "manual": ("capture.confidence_manual", "ok"),
 }
 
@@ -210,14 +209,13 @@ class CaptureScreen(QWidget):
         self._current_frame_result: FrameResult | None = None
         self._current_preview_pixels: np.ndarray | None = None
         self._current_preview_scale_factor: float = 1.0
-        self._editing_frame = False
-        self._edit_frame: FrameResult | None = None
-        self._edit_original_frame: FrameResult | None = None
         self._positive_preview_active = False
         self._master_preview_active = False
         self._pending_conflict: NameConflictDetected | None = None
 
         self.preview_area = PreviewArea()
+        self.preview_area.frame_dragged.connect(self._on_frame_dragged)
+        self.preview_area.frame_drag_finished.connect(self._on_frame_drag_finished)
 
         # Stage header: name + confidence, in a bar of its own directly
         # above the preview — never drawn on top of the image itself, only
@@ -358,6 +356,15 @@ class CaptureScreen(QWidget):
         self._rotation_commit_timer.setSingleShot(True)
         self._rotation_commit_timer.timeout.connect(self._commit_pending_rotation)
 
+        # Crop nudge/resize/rotate (keyboard) and drag (mouse) only update
+        # the display immediately; the actual `session.apply_frame()` call
+        # is debounced the same way — see `_commit_pending_frame`. A mouse
+        # release commits immediately instead of waiting for the timer.
+        self._frame_commit_pending = False
+        self._frame_commit_timer = QTimer(self)
+        self._frame_commit_timer.setSingleShot(True)
+        self._frame_commit_timer.timeout.connect(self._commit_pending_frame)
+
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def set_shortcuts(self, shortcuts: dict[str, dict[str, str]]) -> None:
@@ -434,6 +441,7 @@ class CaptureScreen(QWidget):
     def stop(self, *, wait_for_exports: bool = True) -> None:
         self._pump_timer.stop()
         self._commit_pending_rotation()  # never leave a rotation un-exported
+        self._commit_pending_frame()  # never leave a crop edit un-exported
         if self.session is not None:
             self._dispatch(self.session.stop(wait_for_exports=wait_for_exports))
             if wait_for_exports:
@@ -458,6 +466,7 @@ class CaptureScreen(QWidget):
         """
         self._pump_timer.stop()
         self._commit_pending_rotation()  # never leave a rotation un-exported
+        self._commit_pending_frame()  # never leave a crop edit un-exported
         if self.session is None:
             return 0
         self._dispatch(self.session.stop(wait_for_exports=False))
@@ -489,9 +498,10 @@ class CaptureScreen(QWidget):
             return
         # A newly-arrived, stabilized file implicitly validates whatever is
         # still `current` (`core.session._finalize_current_as_validated`) —
-        # inside this very `pump()` call. A rotation debounced past this
-        # point would export with the stale, pre-rotation value.
+        # inside this very `pump()` call. A rotation or crop edit debounced
+        # past this point would export with the stale, pre-edit value.
         self._commit_pending_rotation()
+        self._commit_pending_frame()
         self._dispatch(self.session.pump(time.monotonic()))
         self._refresh_banner()
         self._refresh_preview_state()
@@ -629,9 +639,10 @@ class CaptureScreen(QWidget):
     def _load_preview(self, name: str, extension: str, *, journal_action: str = "auto") -> None:
         assert self.session is not None
         # Defense in depth: finalize/reject already flush a pending rotation
-        # before the cursor moves on, but never let one linger onto a
-        # different image's export regardless of how we got here.
+        # or crop edit before the cursor moves on, but never let one linger
+        # onto a different image's export regardless of how we got here.
         self._commit_pending_rotation()
+        self._commit_pending_frame()
         # Each new image starts back in plain negative view — positive/master
         # is a per-image check, not a standing preference to carry forward.
         self._positive_preview_active = False
@@ -936,8 +947,8 @@ class CaptureScreen(QWidget):
     # --- keyboard shortcuts, CAPTURE context ------------------------------------
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        # Context priority order: text field > conflict > frame edit >
-        # capture. Single handler, no scattered `QShortcut` instances.
+        # Context priority order: text field > conflict > capture. Single
+        # handler, no scattered `QShortcut` instances.
         if self.go_to_name_edit.isVisible() and self.go_to_name_edit.hasFocus():
             if event.key() == Qt.Key.Key_Escape:
                 self._close_go_to_name()
@@ -950,66 +961,60 @@ class CaptureScreen(QWidget):
             self._handle_conflict_key(event)
             return
 
-        if self._editing_frame:
-            self._handle_edit_mode_key(event)
-            return
-
-        actions = self._shortcuts[CAPTURE]
-        if matches(event, actions["finalize"]):
-            self.finalize_current()
-        elif matches(event, actions["reject"]):
-            self.reject_current_image()
-        elif matches(event, actions["rotate"]):
-            self.rotate_image_action()
-        elif matches_shifted(event, actions["rotate"]):
-            self.rotate_image_action(direction=-1)
-        elif matches(event, actions["recompute_frame"]):
-            self.recompute_frame()
-        elif matches(event, actions["edit_frame"]):
-            self.enter_edit_mode()
-        elif matches(event, actions["positive_preview"]):
-            self.toggle_positive_preview()
-        elif matches(event, actions["master_preview"]):
-            self.toggle_master_preview()
-        elif matches(event, actions["cycle_preview"]):
-            self.cycle_preview_action()
-        elif matches_shifted(event, actions["cycle_preview"]):
-            self.cycle_preview_action(direction=-1)
-        elif matches(event, actions["navigate_previous"]):
-            self.navigate(-1)
-        elif matches(event, actions["navigate_next"]):
-            self.navigate(1)
-        elif matches(event, actions["go_to_name"]):
-            self.open_go_to_name()
-        elif matches(event, actions["pause_resume"]):
-            self.toggle_pause()
-        elif matches(event, actions["stop_capture"]):
-            self.stop_capture()
+        # Plain arrows, +/-/=, and Ctrl+arrows are reserved (shortcuts.py:
+        # `_CAPTURE_RESERVED`) and always active — the crop's move/resize/
+        # deskew, not a remappable pick-a-letter shortcut.
+        key = event.key()
+        modifiers = event.modifiers()
+        shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        ctrl = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+        if ctrl and key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+            step_deg = (10 if shift else 1) * 0.1
+            self._rotate_frame(step_deg if key == Qt.Key.Key_Right else -step_deg)
+        elif key == Qt.Key.Key_Left:
+            self._nudge_frame(dx=-(10 if shift else 1))
+        elif key == Qt.Key.Key_Right:
+            self._nudge_frame(dx=(10 if shift else 1))
+        elif key == Qt.Key.Key_Up:
+            self._nudge_frame(dy=-(10 if shift else 1))
+        elif key == Qt.Key.Key_Down:
+            self._nudge_frame(dy=(10 if shift else 1))
+        elif key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
+            self._resize_frame(1 + (0.05 if shift else 0.01))
+        elif key == Qt.Key.Key_Minus:
+            self._resize_frame(1 - (0.05 if shift else 0.01))
         else:
-            super().keyPressEvent(event)
-            return
+            actions = self._shortcuts[CAPTURE]
+            if matches(event, actions["finalize"]):
+                self.finalize_current()
+            elif matches(event, actions["reject"]):
+                self.reject_current_image()
+            elif matches(event, actions["rotate"]):
+                self.rotate_image_action()
+            elif matches_shifted(event, actions["rotate"]):
+                self.rotate_image_action(direction=-1)
+            elif matches(event, actions["recompute_frame"]):
+                self.recompute_frame()
+            elif matches(event, actions["toggle_guides"]):
+                self._toggle_guides()
+            elif matches(event, actions["positive_preview"]):
+                self.toggle_positive_preview()
+            elif matches(event, actions["master_preview"]):
+                self.toggle_master_preview()
+            elif matches(event, actions["cycle_preview"]):
+                self.cycle_preview_action()
+            elif matches_shifted(event, actions["cycle_preview"]):
+                self.cycle_preview_action(direction=-1)
+            elif matches(event, actions["go_to_name"]):
+                self.open_go_to_name()
+            elif matches(event, actions["pause_resume"]):
+                self.toggle_pause()
+            elif matches(event, actions["stop_capture"]):
+                self.stop_capture()
+            else:
+                super().keyPressEvent(event)
+                return
         event.accept()
-
-    # --- frame edit mode (M key) ------------------------------------------------
-
-    def enter_edit_mode(self) -> None:
-        if self.session is None or self.session.state.current_image is None:
-            return
-        if self._current_frame_result is None:
-            return  # detection not available yet for the current image
-        # Editing always happens in the canonical (unrotated) reference
-        # space — show that directly, regardless of whether the plain
-        # negative view currently displays the V-key rotation, or the
-        # positive/master render was on instead (framing is judged on the
-        # raw negative, not on its inverted positive or an already-applied crop).
-        self._positive_preview_active = False
-        self._master_preview_active = False
-        self.preview_area.show_image(self._current_preview_pixels)
-        self.preview_area.set_frame_overlay(self._current_frame_result)
-        self._editing_frame = True
-        self._edit_original_frame = self._current_frame_result
-        self._edit_frame = self._current_frame_result
-        self._update_edit_status()
 
     def _handle_conflict_key(self, event: QKeyEvent) -> None:
         """CONFLICT context: Escape always resolves as option 1 with an empty field."""
@@ -1035,159 +1040,110 @@ class CaptureScreen(QWidget):
             return
         event.accept()
 
-    def _handle_edit_mode_key(self, event: QKeyEvent) -> None:
-        key = event.key()
-        modifiers = event.modifiers()
-        shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
-        ctrl = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+    # --- crop editing: keyboard nudge/resize/rotate, always active in
+    # capture, plus mouse drag on the frame overlay (`PreviewArea`) ------------
 
-        if ctrl and key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
-            step_deg = (10 if shift else 1) * 0.1
-            self._edit_rotate(step_deg if key == Qt.Key.Key_Right else -step_deg)
-        elif key == Qt.Key.Key_Left:
-            self._edit_move(dx=-(10 if shift else 1), dy=0)
-        elif key == Qt.Key.Key_Right:
-            self._edit_move(dx=(10 if shift else 1), dy=0)
-        elif key == Qt.Key.Key_Up:
-            self._edit_move(dx=0, dy=-(10 if shift else 1))
-        elif key == Qt.Key.Key_Down:
-            self._edit_move(dx=0, dy=(10 if shift else 1))
-        elif key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
-            self._edit_resize(1 + (0.05 if shift else 0.01))
-        elif key == Qt.Key.Key_Minus:
-            self._edit_resize(1 - (0.05 if shift else 0.01))
-        else:
-            actions = self._shortcuts[FRAME_EDIT]
-            if matches(event, actions["recompute"]):
-                self._edit_recompute()
-            elif matches(event, actions["toggle_guides"]):
-                self._toggle_guides()
-            elif matches(event, actions["confirm"]):
-                self._confirm_edit()
-            elif matches(event, actions["cancel"]):
-                self._cancel_edit()
-            else:
-                return
-        event.accept()
+    def _ensure_negative_view_for_editing(self) -> None:
+        """Framing is judged on the raw negative, not its inverted positive
+        or an already-applied crop — switch back to it before editing."""
+        if self._positive_preview_active or self._master_preview_active:
+            self._positive_preview_active = False
+            self._master_preview_active = False
+            self._display_current_preview()
 
-    def _edit_move(self, *, dx: int, dy: int) -> None:
-        if self._edit_frame is None:
+    def _nudge_frame(self, *, dx: int = 0, dy: int = 0) -> None:
+        if self._current_frame_result is None:
             return
+        self._ensure_negative_view_for_editing()
+        frame = self._current_frame_result
         scale = self._current_preview_scale_factor
-        self._edit_frame = replace(
-            self._edit_frame,
-            x=round(self._edit_frame.x + dx * scale),
-            y=round(self._edit_frame.y + dy * scale),
-        )
-        self._show_edit_overlay()
+        new_frame = replace(frame, x=round(frame.x + dx * scale), y=round(frame.y + dy * scale))
+        self._start_frame_edit(new_frame)
 
-    def _edit_resize(self, factor: float) -> None:
-        if self._edit_frame is None:
+    def _resize_frame(self, factor: float) -> None:
+        if self._current_frame_result is None:
             return
-        frame = self._edit_frame
+        self._ensure_negative_view_for_editing()
+        frame = self._current_frame_result
         new_width = max(1, round(frame.width * factor))
         new_height = max(1, round(frame.height * factor))
         center_x = frame.x + frame.width / 2
         center_y = frame.y + frame.height / 2
-        self._edit_frame = replace(
+        new_frame = replace(
             frame,
             x=round(center_x - new_width / 2),
             y=round(center_y - new_height / 2),
             width=new_width,
             height=new_height,
         )
-        self._show_edit_overlay()
+        self._start_frame_edit(new_frame)
 
-    def _edit_rotate(self, delta_deg: float) -> None:
-        if self._edit_frame is None:
+    def _rotate_frame(self, delta_deg: float) -> None:
+        if self._current_frame_result is None:
             return
-        new_angle = max(-45.0, min(45.0, self._edit_frame.angle_deg + delta_deg))
-        self._edit_frame = replace(self._edit_frame, angle_deg=new_angle)
-        self._show_edit_overlay()
-
-    def _edit_recompute(self) -> None:
-        """C key in edit mode: reruns detection, replaces the frame being edited."""
-        if self._current_preview_pixels is None or self.session is None:
-            return
-        config = self.session.campaign.framing
-        self._edit_frame = detect_frame(
-            self._current_preview_pixels,
-            margin_pct=config.margin_pct,
-            max_deskew_deg=config.max_deskew_deg,
-            reliable_threshold=config.reliable_threshold,
-            review_threshold=config.review_threshold,
-            threshold_bias=config.threshold_bias,
-        )
-        self._show_edit_overlay()
-
-    def _show_edit_overlay(self) -> None:
-        self.preview_area.set_frame_overlay(self._edit_frame)
-        self._update_edit_status()
-
-    def _update_edit_status(self) -> None:
-        frame = self._edit_frame
-        if frame is None:
-            return
-        self.status_label.setText(
-            t(
-                "capture.edit_status",
-                width=frame.width,
-                height=frame.height,
-                angle=f"{frame.angle_deg:.1f}",
-            )
-        )
+        self._ensure_negative_view_for_editing()
+        frame = self._current_frame_result
+        new_angle = max(-45.0, min(45.0, frame.angle_deg + delta_deg))
+        self._start_frame_edit(replace(frame, angle_deg=new_angle))
 
     def _toggle_guides(self) -> None:
-        """G key in edit mode: rule-of-thirds guide lines within the frame."""
+        """G key: rule-of-thirds guide lines within the frame."""
         self.preview_area.toggle_guides()
 
-    def _confirm_edit(self) -> None:
+    def _start_frame_edit(self, new_frame: FrameResult) -> None:
+        self._current_frame_result = new_frame
+        self.preview_area.set_frame_overlay(new_frame)
+        self._frame_commit_pending = True
+        self._frame_commit_timer.start(_FRAME_COMMIT_DELAY_MS)
+
+    def _commit_pending_frame(self) -> None:
+        """Debounced, same pattern as rotation: a nudge/resize/rotate key
+        only calls `session.apply_frame()` once the operator settles on a
+        value (mouse release commits immediately instead, see
+        `_on_frame_drag_finished`)."""
+        self._frame_commit_timer.stop()
+        if not self._frame_commit_pending:
+            return
+        self._frame_commit_pending = False
         session = self.session
         current = session.state.current_image if session is not None else None
-        frame = self._edit_frame
-        if session is not None and current is not None and frame is not None:
-            reference = _to_reference_space(frame, self._current_preview_scale_factor)
-            events: list[SessionEvent] = []
-            with contextlib.suppress(IllegalTransitionError):
-                events = session.apply_frame(
-                    current.assigned_name,
-                    x=reference.x,
-                    y=reference.y,
-                    width=reference.width,
-                    height=reference.height,
-                    angle_deg=frame.angle_deg,
-                    confidence=frame.confidence,
-                    source="manual",
-                    journal_action="manual",
-                    level=None,
-                )
-            self._dispatch(events)
-            manual_frame = replace(frame, level="manual")
-            self._current_frame_result = manual_frame
-            self.preview_area.set_frame_overlay(manual_frame)
-            self._update_confidence_label()
-        self._exit_edit_mode()
+        frame = self._current_frame_result
+        if session is None or current is None or frame is None:
+            return
+        reference = _to_reference_space(frame, self._current_preview_scale_factor)
+        events: list[SessionEvent] = []
+        with contextlib.suppress(IllegalTransitionError):
+            events = session.apply_frame(
+                current.assigned_name,
+                x=reference.x,
+                y=reference.y,
+                width=reference.width,
+                height=reference.height,
+                angle_deg=frame.angle_deg,
+                confidence=frame.confidence,
+                source="manual",
+                journal_action="manual",
+                level=None,
+            )
+        self._dispatch(events)
+        manual_frame = replace(frame, level="manual")
+        self._current_frame_result = manual_frame
+        self.preview_area.set_frame_overlay(manual_frame)
+        self._update_confidence_label()
 
-    def _cancel_edit(self) -> None:
-        self.preview_area.set_frame_overlay(self._edit_original_frame)
-        self._exit_edit_mode()
+    def _on_frame_dragged(self, frame: FrameResult) -> None:
+        self._current_frame_result = frame
+        self._frame_commit_pending = True
+        # The overlay is already redrawn by `PreviewArea` itself during the drag.
 
-    def _exit_edit_mode(self) -> None:
-        self._editing_frame = False
-        self._edit_frame = None
-        self._edit_original_frame = None
-        self.status_label.setText("")
-        # Guides are a cropping aid, not a general preview setting — they
-        # don't carry over to the next image.
-        self.preview_area.set_guides_visible(False)
-        # Re-applies the V-key rotation to the plain view, which editing
-        # (canonical, unrotated space) temporarily set aside.
-        self._display_current_preview()
+    def _on_frame_drag_finished(self) -> None:
+        self._commit_pending_frame()  # commits immediately, no timer wait
 
     def finalize_current(self) -> None:
         if self.session is None:
             return
         self._commit_pending_rotation()  # the export must reflect the final rotation
+        self._commit_pending_frame()  # and the final crop
         try:
             events = self.session.validate_current()
         except IllegalTransitionError:
@@ -1200,6 +1156,7 @@ class CaptureScreen(QWidget):
         if self.session is None:
             return
         self._commit_pending_rotation()
+        self._commit_pending_frame()
         try:
             events = self.session.reject_current()
         except IllegalTransitionError:
@@ -1258,15 +1215,6 @@ class CaptureScreen(QWidget):
         except IllegalTransitionError:
             return
         self._dispatch(events)
-
-    def navigate(self, direction: int) -> None:
-        if self.session is None:
-            return
-        moved = (
-            self.session.go_to_next_name() if direction > 0 else self.session.go_to_previous_name()
-        )
-        if moved:
-            self._refresh_banner()
 
     def toggle_pause(self) -> None:
         if self.session is None:

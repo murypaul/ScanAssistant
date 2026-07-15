@@ -134,24 +134,18 @@ STRINGS: dict[str, str] = {
     ),
     "preferences.shortcuts_conflict": "{shortcut} is already used by “{action}” in this context.",
     "preferences.shortcuts_context_capture": "Capture",
-    "preferences.shortcuts_context_frame_edit": "Frame edit (after Edit frame)",
     "preferences.shortcuts_context_name_conflict": "Name conflict",
     "preferences.shortcuts_context_global": "Global",
     "preferences.shortcut_finalize": "Finalize the current image",
     "preferences.shortcut_reject": "Reject the current image",
     "preferences.shortcut_rotate": "Rotate 90°",
     "preferences.shortcut_recompute_frame": "Recompute frame",
-    "preferences.shortcut_edit_frame": "Edit frame",
     "preferences.shortcut_positive_preview": "Positive preview",
     "preferences.shortcut_master_preview": "Master preview",
     "preferences.shortcut_cycle_preview": "Cycle preview (negative → positive → master)",
     "preferences.shortcut_go_to_name": "Go to name",
     "preferences.shortcut_pause_resume": "Pause / Resume",
     "preferences.shortcut_stop_capture": "Stop capture",
-    "preferences.shortcut_navigate_previous": "Previous name",
-    "preferences.shortcut_navigate_next": "Next name",
-    "preferences.shortcut_confirm": "Confirm the frame",
-    "preferences.shortcut_cancel": "Cancel the edit",
     "preferences.shortcut_toggle_guides": "Toggle rule-of-thirds guides",
     "preferences.shortcut_option_1": "Rename current image",
     "preferences.shortcut_option_2": "Replace existing",
@@ -177,7 +171,6 @@ STRINGS: dict[str, str] = {
     "menu.capture_go_to_name": "Go to name…",
     "menu.processing": "Processing",
     "menu.processing_recompute_frame": "Recompute frame",
-    "menu.processing_edit_frame": "Edit frame",
     "menu.processing_rotate": "Rotate 90°",
     "menu.processing_positive_preview": "Positive preview",
     "menu.processing_master_preview": "Master preview",
@@ -245,11 +238,6 @@ STRINGS: dict[str, str] = {
     "capture.confidence_review": "● TO CHECK {score}",
     "capture.confidence_impossible": "● IMPOSSIBLE {score}",
     "capture.confidence_manual": "● MANUAL",
-    "capture.edit_status": (
-        "Edit frame: {width}×{height}px, angle {angle}° — "
-        "arrows move, +/- resize, Ctrl+arrows rotate, C recompute, "
-        "G guides, Enter confirm, Esc cancel"
-    ),
     "capture.cannot_start_title": "Cannot start capture",
     "capture.error_csv_exhausted": (
         "No name left in the inventory. Add rows to the CSV or finish the campaign."

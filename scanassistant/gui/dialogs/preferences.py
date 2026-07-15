@@ -52,21 +52,13 @@ _ACTION_LABEL_KEYS: dict[str, dict[str, str]] = {
         "reject": "preferences.shortcut_reject",
         "rotate": "preferences.shortcut_rotate",
         "recompute_frame": "preferences.shortcut_recompute_frame",
-        "edit_frame": "preferences.shortcut_edit_frame",
+        "toggle_guides": "preferences.shortcut_toggle_guides",
         "positive_preview": "preferences.shortcut_positive_preview",
         "master_preview": "preferences.shortcut_master_preview",
         "cycle_preview": "preferences.shortcut_cycle_preview",
         "go_to_name": "preferences.shortcut_go_to_name",
         "pause_resume": "preferences.shortcut_pause_resume",
         "stop_capture": "preferences.shortcut_stop_capture",
-        "navigate_previous": "preferences.shortcut_navigate_previous",
-        "navigate_next": "preferences.shortcut_navigate_next",
-    },
-    "frame_edit": {
-        "confirm": "preferences.shortcut_confirm",
-        "cancel": "preferences.shortcut_cancel",
-        "recompute": "preferences.shortcut_recompute_frame",
-        "toggle_guides": "preferences.shortcut_toggle_guides",
     },
     "name_conflict": {
         "option_1": "preferences.shortcut_option_1",
@@ -86,7 +78,6 @@ _ACTION_LABEL_KEYS: dict[str, dict[str, str]] = {
 
 _CONTEXT_LABEL_KEYS = {
     "capture": "preferences.shortcuts_context_capture",
-    "frame_edit": "preferences.shortcuts_context_frame_edit",
     "name_conflict": "preferences.shortcuts_context_name_conflict",
     "global": "preferences.shortcuts_context_global",
 }

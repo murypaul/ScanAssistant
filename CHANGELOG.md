@@ -41,17 +41,28 @@
   same way next time you start capturing.
 - Positive/master preview now resets to the plain negative view on the
   next image, rather than carrying over from the previous one.
+- Adjusting the crop no longer needs a dedicated edit mode: arrows move
+  it, `+`/`-` resize it, `Ctrl+arrows` deskew it, and it can now also be
+  dragged directly by its border, corner, or interior with the mouse —
+  all available at any time on the negative view, switching back to it
+  automatically if a positive or master preview was open. As with
+  rotation, an edit only re-exports once you settle on a value (or
+  immediately on mouse release), not on every intermediate nudge or
+  drag step.
+- `Left`/`Right` no longer move between pending names (only Session
+  history and Go to name do that now) — they move the crop instead.
+- Go to name is now `Ctrl+G` instead of plain `G`, which now toggles the
+  rule-of-thirds guides at any time.
 
 **Framing**
-- Added optional rule-of-thirds guide lines while editing the crop (`G`
-  in frame-edit mode) — a compositional aid for cropping, off by default
-  and cleared automatically when you leave edit mode.
+- Added optional rule-of-thirds guide lines for the crop (`G`) — a
+  compositional aid for cropping, off by default.
 
 ### Bug Fixes
 
 **Interface**
-- The frame-edit rule-of-thirds guides (`G`) are now a clearly visible
-  dotted line instead of nearly disappearing against the negative.
+- The rule-of-thirds guides (`G`) are now a clearly visible dotted line
+  instead of nearly disappearing against the negative.
 - The Positive settings sliders' handles are no longer clipped at either
   end of the track.
 
