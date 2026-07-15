@@ -64,22 +64,26 @@ Full-screen-capable, one image at a time:
 ┌──────────────────────────────────────────────────────────────────┐
 │ File  Project  Capture  Processing  Metadata  View  Help          │
 ├──────────────────────────────────────────────────────────────────┤
+│  NEG_00125            ● RELIABLE 0.94                              │
+├──────────────────────────────────────────────────────────────────┤
 │                                                                    │
 │                  [ current image preview ]                        │
 │              detected crop overlaid, color-coded                  │
 │                                                                    │
 ├──────────────────────────────────────────────────────────────────┤
-│  NEG_00125            ● RELIABLE 0.94            127/842 · 15%    │
-│  next: NEG_00126                              export queue: 2     │
-├──────────────────────────────────────────────────────────────────┤
+│  next: NEG_00126   export queue: 2   127/842 · 15%                │
 │  TIFF written (NEG_00124)                            ● CAPTURE    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The crop overlay is green (reliable), orange (needs a look), or red
-(couldn't be determined — falls back to the full frame). Press `T` to
-preview the crop actually applied instead of the raw frame with an
-overlay; press `P` to preview the positive rendering instead.
+Nothing is ever drawn on top of the image itself except the crop overlay
+— name, confidence, and progress live in bars above and below the
+preview. The crop overlay is green (reliable), orange (needs a look), or
+red (couldn't be determined — falls back to the full frame); it carries
+a dark keyline on both sides of its color so it stays visible whatever
+the negative's own cast happens to be. Press `T` to preview the crop
+actually applied instead of the raw frame with an overlay; press `P` to
+preview the positive rendering instead.
 
 ## Keyboard shortcuts
 
@@ -87,9 +91,9 @@ Everything below works without touching the mouse; the mouse remains
 available everywhere too. Shortcuts are letter-based (not tied to a
 keyboard layout). These are the defaults — remap any of them from
 **File ▸ Preferences ▸ Shortcuts** (click the current key, then press the
-new one). The frame-editing arrow/+/− moves stay fixed — they're a spatial
-gesture, not a pick-a-key shortcut — and so do Tab and Esc's roles as
-navigation/cancel in the name conflict panel.
+new one). The crop's arrow/+/− moves and Ctrl+arrow rotation stay fixed —
+they're a spatial gesture, not a pick-a-key shortcut — and so does Tab and
+Esc's role as navigation/cancel in the name conflict panel.
 
 ### Capture
 
@@ -97,27 +101,34 @@ navigation/cancel in the name conflict panel.
 | --- | --- |
 | Enter | Accept the current image (same as the next one arriving) |
 | R | Reject the current image |
-| V | Rotate 90° (cycles 0°→90°→180°→270°) |
-| ← / → | Previous / next name (moves the cursor among pending entries) |
-| G | Go to an existing pending name (autocompletes as you type) |
+| V | Rotate 90° (cycles 0°→90°→180°→270°) — Shift+V rotates the other way |
+| Ctrl+G | Go to an existing pending name (autocompletes as you type) |
 | C | Recompute the frame (rerun automatic detection) |
-| M | Edit the frame manually |
 | P | Toggle positive preview |
 | T | Toggle master (applied-crop) preview |
+| K | Cycle preview (negative → positive → master), independent of P/T — Shift+K cycles the other way |
 | Space | Pause / resume |
 | F11 | Full screen |
 | Esc | Stop capture (returns to preparation; exports keep processing) |
 
-### Frame editing (after `M`)
+### Adjusting the crop
 
-| Key | Action |
+No mode to enter — always available on the plain negative view (switches
+you back to it automatically if a positive/master preview was open):
+
+| Input | Action |
 | --- | --- |
 | Arrows | Move the frame by 1 preview pixel (Shift: ×10) |
 | + / − | Grow / shrink by 1% (Shift: 5%), centered |
 | Ctrl+← / Ctrl+→ | Rotate ∓0.1° (Shift: ×10), clamped to ±45° |
-| C | Rerun automatic detection |
-| Enter | Confirm (marks the frame as manual, regenerates exports) |
-| Esc | Cancel, back to the previous frame |
+| G | Toggle rule-of-thirds guide lines |
+| Drag a border or corner (mouse) | Resize from that side/corner |
+| Drag the interior (mouse) | Move the whole frame |
+
+Every edit settles into a single export after you pause for a moment (or
+immediately, on mouse release) — no need to confirm or cancel anything. If
+an edit goes wrong, drag it back or press `C` to fall back to the
+automatic detection.
 
 ### Name conflict panel
 
@@ -152,7 +163,7 @@ plausible size, whether it touches the image border, and its solidity.
 - **Reliable** (green) — used as-is.
 - **Needs review** (orange) — worth a glance before moving on.
 - **Impossible** (red) — falls back to the full, uncropped frame; fix it
-  manually (`M`) if needed.
+  manually if needed (see *Adjusting the crop* above).
 
 Manual edits and re-detections regenerate the exports for that image only;
 already-finalized images are untouched (use completeness check +

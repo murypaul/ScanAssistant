@@ -2,30 +2,29 @@
 
 A shortcut is stored as a plain `QKeySequence`-parseable string ("R",
 "Ctrl+N", "F11"...). Contexts mirror the collision-priority stack already
-used by `CaptureScreen.keyPressEvent` (text field > conflict > frame edit
-> capture > global): the same physical key can be assigned in two
-different contexts without that counting as a duplicate, since only one
-context is ever active at a time.
+used by `CaptureScreen.keyPressEvent` (text field > conflict > capture >
+global): the same physical key can be assigned in two different contexts
+without that counting as a duplicate, since only one context is ever
+active at a time.
 
 Scope: only the single named-key actions (letters, function keys, arrows
 used as plain navigation, Enter/Escape/Space, and the digit options in a
-name conflict) are remappable here. Frame-edit move/resize/rotate (arrow
-keys combined with Shift/Ctrl for magnitude) stay fixed — those are
-spatial gestures, not a pick-a-letter shortcut, and remapping them would
-add a lot of surface for very little real benefit.
+name conflict) are remappable here. Crop move/resize/rotate (arrow keys
+combined with Shift/Ctrl for magnitude) stay fixed and always active in
+capture — those are spatial gestures, not a pick-a-letter shortcut, and
+remapping them would add a lot of surface for very little real benefit.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QKeyCombination, Qt
 from PySide6.QtGui import QKeyEvent, QKeySequence
 
 CAPTURE = "capture"
-FRAME_EDIT = "frame_edit"
 NAME_CONFLICT = "name_conflict"
 GLOBAL = "global"
 
-CONTEXTS = (CAPTURE, FRAME_EDIT, NAME_CONFLICT, GLOBAL)
+CONTEXTS = (CAPTURE, NAME_CONFLICT, GLOBAL)
 
 DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
     CAPTURE: {
@@ -33,19 +32,13 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "reject": "R",
         "rotate": "V",
         "recompute_frame": "C",
-        "edit_frame": "M",
+        "toggle_guides": "G",
         "positive_preview": "P",
         "master_preview": "T",
-        "go_to_name": "G",
+        "cycle_preview": "K",
+        "go_to_name": "Ctrl+G",
         "pause_resume": "Space",
         "stop_capture": "Escape",
-        "navigate_previous": "Left",
-        "navigate_next": "Right",
-    },
-    FRAME_EDIT: {
-        "confirm": "Return",
-        "cancel": "Escape",
-        "recompute": "C",
     },
     NAME_CONFLICT: {
         "option_1": "1",
@@ -83,11 +76,11 @@ _ALLOWED_BASE_KEYS = (
 
 _FORBIDDEN = QKeySequence("Ctrl+S")
 
-# Frame-edit reserves plain and Shift/Ctrl-modified arrows plus +/-/= for
-# move/resize/rotate (analog gestures, not remappable, see the module
-# docstring): a remapped action bound to one of these would silently never
-# fire, since those keys are consumed first.
-_FRAME_EDIT_RESERVED = {
+# Capture always reserves plain arrows plus +/-/= for the crop's move/
+# resize (and Ctrl+arrows for its deskew rotation) — analog gestures, not
+# remappable, see the module docstring: a remapped action bound to one of
+# these would silently never fire, since those keys are consumed first.
+_CAPTURE_RESERVED = {
     Qt.Key.Key_Left,
     Qt.Key.Key_Right,
     Qt.Key.Key_Up,
@@ -111,7 +104,7 @@ def is_allowed_key(key_string: str, *, context: str | None = None) -> bool:
     key = Qt.Key(combination.key())
     if key not in _ALLOWED_BASE_KEYS:
         return False
-    return not (context == FRAME_EDIT and key in _FRAME_EDIT_RESERVED)
+    return not (context == CAPTURE and key in _CAPTURE_RESERVED)
 
 
 # The main-keyboard Return and the numpad Enter are two distinct `Qt.Key`
@@ -135,6 +128,29 @@ def matches(event: QKeyEvent, key_string: str) -> bool:
             and event.modifiers() == combination.keyboardModifiers()
         )
     return QKeySequence(event.keyCombination()) == configured
+
+
+def matches_shifted(event: QKeyEvent, key_string: str) -> bool:
+    """True if `event` is `key_string` plus Shift — e.g. configured "V", event
+    Shift+V. For the small set of actions with a "the other way round"
+    variant (rotate, cycle preview): that variant isn't itself a separate
+    remappable action, it's always whatever's configured plus Shift.
+    """
+    if not key_string:
+        return False
+    configured = QKeySequence(key_string)
+    if configured.isEmpty():
+        return False
+    combination = configured[0]
+    if combination.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
+        return False  # the configured shortcut already includes Shift itself
+    shifted = QKeySequence(
+        QKeyCombination(
+            combination.keyboardModifiers() | Qt.KeyboardModifier.ShiftModifier,
+            Qt.Key(combination.key()),
+        )
+    )
+    return QKeySequence(event.keyCombination()) == shifted
 
 
 def default_shortcuts() -> dict[str, dict[str, str]]:

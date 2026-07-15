@@ -69,22 +69,26 @@ Utilisable en plein écran, une image à la fois :
 ┌──────────────────────────────────────────────────────────────────┐
 │ File  Project  Capture  Processing  Metadata  View  Help          │
 ├──────────────────────────────────────────────────────────────────┤
+│  NEG_00125            ● RELIABLE 0.94                              │
+├──────────────────────────────────────────────────────────────────┤
 │                                                                    │
 │                  [ aperçu de l'image courante ]                   │
 │              cadre détecté en surimpression, coloré               │
 │                                                                    │
 ├──────────────────────────────────────────────────────────────────┤
-│  NEG_00125            ● RELIABLE 0.94            127/842 · 15%    │
-│  next: NEG_00126                              export queue: 2     │
-├──────────────────────────────────────────────────────────────────┤
+│  next: NEG_00126   export queue: 2   127/842 · 15%                │
 │  TIFF written (NEG_00124)                            ● CAPTURE    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-Le cadre superposé est vert (fiable), orange (à vérifier), ou rouge
-(indéterminé — repli sur l'image entière). `T` bascule vers l'aperçu du
-cadre réellement appliqué (plutôt que le cadre brut avec surimpression) ;
-`P` bascule vers l'aperçu positif.
+Rien n'est jamais dessiné par-dessus l'image elle-même à part le cadre
+détecté — nom, confiance et progression vivent dans des bandeaux
+au-dessus et en dessous de l'aperçu. Le cadre superposé est vert
+(fiable), orange (à vérifier), ou rouge (indéterminé — repli sur l'image
+entière) ; il porte un liseré sombre des deux côtés de sa couleur pour
+rester visible quelle que soit la teinte propre du négatif. `T` bascule
+vers l'aperçu du cadre réellement appliqué (plutôt que le cadre brut
+avec surimpression) ; `P` bascule vers l'aperçu positif.
 
 ## Raccourcis clavier
 
@@ -92,9 +96,10 @@ Tout ce qui suit se fait sans toucher la souris, qui reste disponible à
 tout moment. Les raccourcis reposent sur des lettres (indépendants de la
 disposition du clavier). Ce sont les valeurs par défaut — modifiez-les
 depuis **File ▸ Preferences ▸ Shortcuts** (cliquez sur la touche actuelle,
-puis appuyez sur la nouvelle). Les déplacements du cadre (flèches, +/−)
-restent fixes — c'est un geste spatial, pas un raccourci à choisir — de
-même que les rôles de Tab et Échap dans le panneau de conflit de nom.
+puis appuyez sur la nouvelle). Les déplacements et la rotation du cadre
+(flèches, +/−, Ctrl+flèches) restent fixes — c'est un geste spatial, pas un
+raccourci à choisir — de même que les rôles de Tab et Échap dans le
+panneau de conflit de nom.
 
 ### Capture
 
@@ -102,27 +107,34 @@ même que les rôles de Tab et Échap dans le panneau de conflit de nom.
 | ------ | ------ |
 | Entrée | Valider l'image courante (équivaut à l'arrivée de la suivante) |
 | R | Rejeter l'image courante |
-| V | Rotation 90° (cycle 0°→90°→180°→270°) |
-| ← / → | Nom précédent / suivant (déplace le curseur parmi les entrées en attente) |
-| G | Aller à un nom déjà en attente (autocomplétion à la saisie) |
+| V | Rotation 90° (cycle 0°→90°→180°→270°) — Maj+V tourne dans l'autre sens |
+| Ctrl+G | Aller à un nom déjà en attente (autocomplétion à la saisie) |
 | C | Recalculer le cadre (relance la détection automatique) |
-| M | Éditer le cadre manuellement |
 | P | Basculer l'aperçu positif |
 | T | Basculer l'aperçu maître (cadre appliqué) |
+| K | Cycler l'aperçu (négatif → positif → maître), indépendant de P/T — Maj+K cycle dans l'autre sens |
 | Espace | Pause / reprendre |
 | F11 | Plein écran |
 | Échap | Arrêter la capture (retour à la préparation ; les exports continuent) |
 
-### Édition du cadre (après `M`)
+### Ajuster le cadre
 
-| Touche | Action |
+Aucun mode à activer — toujours disponible sur l'aperçu négatif brut
+(y ramène automatiquement si un aperçu positif/maître était affiché) :
+
+| Entrée | Action |
 | ------ | ------ |
 | Flèches | Déplacer le cadre d'1 pixel d'aperçu (Maj : ×10) |
 | + / − | Agrandir / réduire de 1 % (Maj : 5 %), centre conservé |
 | Ctrl+← / Ctrl+→ | Rotation ∓0,1° (Maj : ×10), bornée à ±45° |
-| C | Relancer la détection automatique |
-| Entrée | Valider (marque le cadre comme manuel, régénère les exports) |
-| Échap | Annuler, retour au cadre précédent |
+| G | Afficher/masquer les guides règle des tiers |
+| Glisser un bord ou un coin (souris) | Redimensionner depuis ce côté/coin |
+| Glisser l'intérieur (souris) | Déplacer tout le cadre |
+
+Chaque modification se stabilise en un seul export après une courte pause
+(ou immédiatement, au relâchement de la souris) — rien à valider ni à
+annuler. En cas d'erreur, glissez le cadre en arrière ou appuyez sur `C`
+pour revenir à la détection automatique.
 
 ### Panneau de conflit de nom
 
@@ -159,7 +171,7 @@ bord de l'image, et sa solidité.
 - **À vérifier** (orange) — mérite un coup d'œil avant de passer à la
   suite.
 - **Impossible** (rouge) — repli sur l'image entière non recadrée ; à
-  corriger manuellement (`M`) si besoin.
+  corriger manuellement si besoin (voir *Ajuster le cadre* ci-dessus).
 
 Les corrections manuelles et les nouvelles détections ne régénèrent les
 exports que de l'image concernée ; les images déjà finalisées restent

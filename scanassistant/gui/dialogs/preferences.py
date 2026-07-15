@@ -21,11 +21,13 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -50,19 +52,13 @@ _ACTION_LABEL_KEYS: dict[str, dict[str, str]] = {
         "reject": "preferences.shortcut_reject",
         "rotate": "preferences.shortcut_rotate",
         "recompute_frame": "preferences.shortcut_recompute_frame",
-        "edit_frame": "preferences.shortcut_edit_frame",
+        "toggle_guides": "preferences.shortcut_toggle_guides",
         "positive_preview": "preferences.shortcut_positive_preview",
         "master_preview": "preferences.shortcut_master_preview",
+        "cycle_preview": "preferences.shortcut_cycle_preview",
         "go_to_name": "preferences.shortcut_go_to_name",
         "pause_resume": "preferences.shortcut_pause_resume",
         "stop_capture": "preferences.shortcut_stop_capture",
-        "navigate_previous": "preferences.shortcut_navigate_previous",
-        "navigate_next": "preferences.shortcut_navigate_next",
-    },
-    "frame_edit": {
-        "confirm": "preferences.shortcut_confirm",
-        "cancel": "preferences.shortcut_cancel",
-        "recompute": "preferences.shortcut_recompute_frame",
     },
     "name_conflict": {
         "option_1": "preferences.shortcut_option_1",
@@ -82,7 +78,6 @@ _ACTION_LABEL_KEYS: dict[str, dict[str, str]] = {
 
 _CONTEXT_LABEL_KEYS = {
     "capture": "preferences.shortcuts_context_capture",
-    "frame_edit": "preferences.shortcuts_context_frame_edit",
     "name_conflict": "preferences.shortcuts_context_name_conflict",
     "global": "preferences.shortcuts_context_global",
 }
@@ -141,14 +136,18 @@ class PreferencesDialog(QDialog):
         self._check_updates = check_updates
         self._shortcuts = merge_with_defaults(context.config.shortcuts)
         self.setWindowTitle(t("preferences.title"))
-        self.setMinimumSize(560, 480)
+        self.setMinimumSize(560, 560)
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_general_tab(), t("preferences.tab_general"))
-        tabs.addTab(self._build_processing_tab(), t("preferences.tab_processing"))
-        tabs.addTab(self._build_thresholds_tab(), t("preferences.tab_thresholds"))
-        tabs.addTab(self._build_updates_tab(), t("preferences.tab_updates"))
-        tabs.addTab(self._build_shortcuts_tab(), t("preferences.tab_shortcuts"))
+        self._add_scrollable_tab(tabs, self._build_general_tab(), t("preferences.tab_general"))
+        self._add_scrollable_tab(
+            tabs, self._build_processing_tab(), t("preferences.tab_processing")
+        )
+        self._add_scrollable_tab(
+            tabs, self._build_thresholds_tab(), t("preferences.tab_thresholds")
+        )
+        self._add_scrollable_tab(tabs, self._build_updates_tab(), t("preferences.tab_updates"))
+        self._add_scrollable_tab(tabs, self._build_shortcuts_tab(), t("preferences.tab_shortcuts"))
 
         export_button = QPushButton(t("preferences.export_settings"))
         export_button.clicked.connect(self._on_export_settings)
@@ -169,6 +168,18 @@ class PreferencesDialog(QDialog):
         layout.addWidget(buttons)
 
         self._refresh_all()
+
+    @staticmethod
+    def _add_scrollable_tab(tabs: QTabWidget, content: QWidget, label: str) -> None:
+        """Every tab's content can outgrow the dialog (Shortcuts especially,
+        four contexts' worth of rows) — a `QTabWidget` doesn't scroll its
+        pages on its own, so each one gets wrapped here rather than getting
+        clipped or forcing the whole dialog to grow past the screen."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(content)
+        tabs.addTab(scroll, label)
 
     # --- General -------------------------------------------------------------
 
