@@ -108,6 +108,7 @@ navigation/cancel in the name conflict panel.
 | M | Edit the frame manually |
 | P | Toggle positive preview |
 | T | Toggle master (applied-crop) preview |
+| K | Cycle preview (negative → positive → master), independent of P/T |
 | Space | Pause / resume |
 | F11 | Full screen |
 | Esc | Stop capture (returns to preparation; exports keep processing) |

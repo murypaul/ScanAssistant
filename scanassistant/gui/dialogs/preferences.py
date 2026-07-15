@@ -53,6 +53,7 @@ _ACTION_LABEL_KEYS: dict[str, dict[str, str]] = {
         "edit_frame": "preferences.shortcut_edit_frame",
         "positive_preview": "preferences.shortcut_positive_preview",
         "master_preview": "preferences.shortcut_master_preview",
+        "cycle_preview": "preferences.shortcut_cycle_preview",
         "go_to_name": "preferences.shortcut_go_to_name",
         "pause_resume": "preferences.shortcut_pause_resume",
         "stop_capture": "preferences.shortcut_stop_capture",

@@ -36,6 +36,7 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "edit_frame": "M",
         "positive_preview": "P",
         "master_preview": "T",
+        "cycle_preview": "K",
         "go_to_name": "G",
         "pause_resume": "Space",
         "stop_capture": "Escape",

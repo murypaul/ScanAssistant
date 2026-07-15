@@ -15,6 +15,21 @@
   color, so it stays visible against any negative — including an
   orange-based colour negative, where a plain colored line nearly
   disappeared into the film's own cast.
+- The Session history and Export queue panels no longer show a bright
+  border around the whole list — that border is now reserved for actual
+  editable fields, so it stops competing for attention with the rows
+  inside.
+- Positive settings' exposure, contrast, shadows, and highlights are now
+  draggable sliders with a value field and a right-click reset to
+  default, instead of plain spin boxes; horizontal flip is now an
+  animated switch. Any change — including mid-drag — is reflected in an
+  open positive/master preview immediately instead of only on the next
+  image.
+- Pressing `V` to rotate the current image now rotates the plain
+  negative view itself, crop rectangle included, instead of switching
+  away to the master preview.
+- Added `K`, a dedicated key that cycles the preview through negative →
+  positive → master, independently of the existing `P`/`T` toggles.
 
 **Framing**
 - Added optional rule-of-thirds guide lines while editing the crop (`G`

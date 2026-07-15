@@ -113,6 +113,7 @@ même que les rôles de Tab et Échap dans le panneau de conflit de nom.
 | M | Éditer le cadre manuellement |
 | P | Basculer l'aperçu positif |
 | T | Basculer l'aperçu maître (cadre appliqué) |
+| K | Cycler l'aperçu (négatif → positif → maître), indépendant de P/T |
 | Espace | Pause / reprendre |
 | F11 | Plein écran |
 | Échap | Arrêter la capture (retour à la préparation ; les exports continuent) |

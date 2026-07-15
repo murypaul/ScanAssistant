@@ -144,6 +144,7 @@ STRINGS: dict[str, str] = {
     "preferences.shortcut_edit_frame": "Edit frame",
     "preferences.shortcut_positive_preview": "Positive preview",
     "preferences.shortcut_master_preview": "Master preview",
+    "preferences.shortcut_cycle_preview": "Cycle preview (negative → positive → master)",
     "preferences.shortcut_go_to_name": "Go to name",
     "preferences.shortcut_pause_resume": "Pause / Resume",
     "preferences.shortcut_stop_capture": "Stop capture",

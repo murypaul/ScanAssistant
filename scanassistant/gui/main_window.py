@@ -99,6 +99,7 @@ def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
         f"  {c['edit_frame']}  Edit frame",
         f"  {c['positive_preview']}  Positive preview",
         f"  {c['master_preview']}  Master preview",
+        f"  {c['cycle_preview']}  Cycle preview (negative / positive / master)",
         f"  {c['pause_resume']}  Pause / Resume",
         f"  {c['stop_capture']}  Stop capture",
         "",

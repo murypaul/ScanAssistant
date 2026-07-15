@@ -119,6 +119,34 @@ def _to_reference_space(frame: FrameResult, scale_factor: float) -> FrameResult:
     )
 
 
+def _rotated_for_display(
+    pixels: np.ndarray, frame: FrameResult | None, rotation_deg: int
+) -> tuple[np.ndarray, FrameResult | None]:
+    """Applies the image's stored `rotation_deg` (V key, cycles 0/90/180/270°)
+    to the plain negative view — display only, `pixels`/`frame` themselves
+    (canonical, reference-space) are untouched. `angle_deg` (deskew) is left
+    as-is: it describes a tilt relative to whatever's currently "up", which a
+    90°-multiple rotation doesn't change.
+    """
+    times = (rotation_deg // 90) % 4
+    if times == 0:
+        return pixels, frame
+    rotated_pixels = pixels
+    rotated_frame = frame
+    for _ in range(times):
+        image_height = rotated_pixels.shape[0]
+        rotated_pixels = np.ascontiguousarray(np.rot90(rotated_pixels, k=-1))
+        if rotated_frame is not None:
+            rotated_frame = replace(
+                rotated_frame,
+                x=image_height - rotated_frame.y - rotated_frame.height,
+                y=rotated_frame.x,
+                width=rotated_frame.height,
+                height=rotated_frame.width,
+            )
+    return rotated_pixels, rotated_frame
+
+
 class CaptureScreen(QWidget):
     stopped = Signal()
     queue_changed = Signal()
@@ -654,6 +682,21 @@ class CaptureScreen(QWidget):
             self._positive_preview_active = False  # only one toggle active at a time
         self._display_current_preview()
 
+    # --- cycle preview (K key) ---------------------------------------------------
+
+    def cycle_preview_action(self) -> None:
+        """K key: negative → positive → master → negative, independent of P/T."""
+        if self._current_preview_pixels is None:
+            return
+        if not self._positive_preview_active and not self._master_preview_active:
+            self._positive_preview_active = True
+        elif self._positive_preview_active:
+            self._positive_preview_active = False
+            self._master_preview_active = True
+        else:
+            self._master_preview_active = False
+        self._display_current_preview()
+
     def refresh_active_preview(self) -> None:
         """Re-renders the positive/master preview from what's already in memory —
         no RAW redecode. Called whenever Positive settings changes, including
@@ -673,8 +716,13 @@ class CaptureScreen(QWidget):
             self.preview_area.show_image(self._render_master_preview(pixels))
             self.preview_area.set_frame_overlay(None)  # frame is already applied, no need to repeat
         else:
-            self.preview_area.show_image(pixels)
-            self.preview_area.set_frame_overlay(self._current_frame_result)
+            current = self.session.state.current_image if self.session is not None else None
+            rotation_deg = current.rotation_deg if current is not None else 0
+            rotated_pixels, rotated_frame = _rotated_for_display(
+                pixels, self._current_frame_result, rotation_deg
+            )
+            self.preview_area.show_image(rotated_pixels)
+            self.preview_area.set_frame_overlay(rotated_frame)
 
     def _render_master_preview(self, preview_pixels: np.ndarray) -> np.ndarray:
         """Preview with the frame *and rotation* applied, on the preview already in
@@ -828,6 +876,8 @@ class CaptureScreen(QWidget):
             self.toggle_positive_preview()
         elif matches(event, actions["master_preview"]):
             self.toggle_master_preview()
+        elif matches(event, actions["cycle_preview"]):
+            self.cycle_preview_action()
         elif matches(event, actions["navigate_previous"]):
             self.navigate(-1)
         elif matches(event, actions["navigate_next"]):
@@ -850,12 +900,15 @@ class CaptureScreen(QWidget):
             return
         if self._current_frame_result is None:
             return  # detection not available yet for the current image
-        if self._positive_preview_active or self._master_preview_active:
-            # Framing is judged on the raw negative, not on its inverted
-            # positive or on a render where the frame is already applied.
-            self._positive_preview_active = False
-            self._master_preview_active = False
-            self._display_current_preview()
+        # Editing always happens in the canonical (unrotated) reference
+        # space — show that directly, regardless of whether the plain
+        # negative view currently displays the V-key rotation, or the
+        # positive/master render was on instead (framing is judged on the
+        # raw negative, not on its inverted positive or an already-applied crop).
+        self._positive_preview_active = False
+        self._master_preview_active = False
+        self.preview_area.show_image(self._current_preview_pixels)
+        self.preview_area.set_frame_overlay(self._current_frame_result)
         self._editing_frame = True
         self._edit_original_frame = self._current_frame_result
         self._edit_frame = self._current_frame_result
@@ -1030,6 +1083,9 @@ class CaptureScreen(QWidget):
         # Guides are a cropping aid, not a general preview setting — they
         # don't carry over to the next image.
         self.preview_area.set_guides_visible(False)
+        # Re-applies the V-key rotation to the plain view, which editing
+        # (canonical, unrotated space) temporarily set aside.
+        self._display_current_preview()
 
     def finalize_current(self) -> None:
         if self.session is None:
@@ -1062,10 +1118,10 @@ class CaptureScreen(QWidget):
     def rotate_image_action(self) -> None:
         """V key: rotates the current image 90° clockwise, live preview updated immediately.
 
-        The plain negative view never rotates (it mirrors the raw scan, so
-        the frame overlay stays meaningful); switches to the master preview
-        (T) instead, which is the only rendering that actually applies
-        rotation — that's what makes the effect visible right away.
+        Rotates the plain negative view itself (pixels and frame overlay
+        both), rather than switching to the master preview — the operator
+        stays on whichever view they were on, and the crop rectangle never
+        disappears.
         """
         if self.session is None or self.session.state.current_image is None:
             return
@@ -1074,9 +1130,6 @@ class CaptureScreen(QWidget):
         except IllegalTransitionError:
             return
         self._dispatch(events)
-        if not self._master_preview_active:
-            self._master_preview_active = True
-            self._positive_preview_active = False
         self._display_current_preview()
         rotation_deg = self.session.state.current_image.rotation_deg
         self._set_status(t("capture.status_rotation", rotation_deg=rotation_deg))
