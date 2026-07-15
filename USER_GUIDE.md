@@ -64,22 +64,26 @@ Full-screen-capable, one image at a time:
 ┌──────────────────────────────────────────────────────────────────┐
 │ File  Project  Capture  Processing  Metadata  View  Help          │
 ├──────────────────────────────────────────────────────────────────┤
+│  NEG_00125            ● RELIABLE 0.94                              │
+├──────────────────────────────────────────────────────────────────┤
 │                                                                    │
 │                  [ current image preview ]                        │
 │              detected crop overlaid, color-coded                  │
 │                                                                    │
 ├──────────────────────────────────────────────────────────────────┤
-│  NEG_00125            ● RELIABLE 0.94            127/842 · 15%    │
-│  next: NEG_00126                              export queue: 2     │
-├──────────────────────────────────────────────────────────────────┤
+│  next: NEG_00126   export queue: 2   127/842 · 15%                │
 │  TIFF written (NEG_00124)                            ● CAPTURE    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The crop overlay is green (reliable), orange (needs a look), or red
-(couldn't be determined — falls back to the full frame). Press `T` to
-preview the crop actually applied instead of the raw frame with an
-overlay; press `P` to preview the positive rendering instead.
+Nothing is ever drawn on top of the image itself except the crop overlay
+— name, confidence, and progress live in bars above and below the
+preview. The crop overlay is green (reliable), orange (needs a look), or
+red (couldn't be determined — falls back to the full frame); it carries
+a dark keyline on both sides of its color so it stays visible whatever
+the negative's own cast happens to be. Press `T` to preview the crop
+actually applied instead of the raw frame with an overlay; press `P` to
+preview the positive rendering instead.
 
 ## Keyboard shortcuts
 
@@ -116,6 +120,7 @@ navigation/cancel in the name conflict panel.
 | + / − | Grow / shrink by 1% (Shift: 5%), centered |
 | Ctrl+← / Ctrl+→ | Rotate ∓0.1° (Shift: ×10), clamped to ±45° |
 | C | Rerun automatic detection |
+| G | Toggle rule-of-thirds guide lines (off again once you confirm or cancel) |
 | Enter | Confirm (marks the frame as manual, regenerates exports) |
 | Esc | Cancel, back to the previous frame |
 

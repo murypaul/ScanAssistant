@@ -46,6 +46,7 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "confirm": "Return",
         "cancel": "Escape",
         "recompute": "C",
+        "toggle_guides": "G",
     },
     NAME_CONFLICT: {
         "option_1": "1",

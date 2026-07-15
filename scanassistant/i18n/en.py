@@ -151,6 +151,7 @@ STRINGS: dict[str, str] = {
     "preferences.shortcut_navigate_next": "Next name",
     "preferences.shortcut_confirm": "Confirm the frame",
     "preferences.shortcut_cancel": "Cancel the edit",
+    "preferences.shortcut_toggle_guides": "Toggle rule-of-thirds guides",
     "preferences.shortcut_option_1": "Rename current image",
     "preferences.shortcut_option_2": "Replace existing",
     "preferences.shortcut_option_3": "Rename existing",
@@ -246,7 +247,7 @@ STRINGS: dict[str, str] = {
     "capture.edit_status": (
         "Edit frame: {width}×{height}px, angle {angle}° — "
         "arrows move, +/- resize, Ctrl+arrows rotate, C recompute, "
-        "Enter confirm, Esc cancel"
+        "G guides, Enter confirm, Esc cancel"
     ),
     "capture.cannot_start_title": "Cannot start capture",
     "capture.error_csv_exhausted": (

@@ -107,6 +107,7 @@ def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
         "  +/-  Resize (Shift: larger step)",
         "  Ctrl+Arrows  Rotate (Shift: x10)",
         f"  {fe['recompute']}  Recompute automatically",
+        f"  {fe['toggle_guides']}  Toggle rule-of-thirds guides",
         f"  {fe['confirm']}  Confirm",
         f"  {fe['cancel']}  Cancel",
         "",

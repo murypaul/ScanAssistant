@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.4.0 — 2026-07-15
+
+### New / Changed
+
+**Interface**
+- Reworked the capture screen's colors, spacing, and layout for use in a
+  fully dark room: a warmer, less harsh background, and nothing ever
+  drawn on top of the negative itself except the crop rectangle — the
+  image name and confidence now live in a header of their own directly
+  above the preview, with the export queue and progress moved to a
+  status strip below it.
+- The crop rectangle now carries a dark keyline on both sides of its
+  color, so it stays visible against any negative — including an
+  orange-based colour negative, where a plain colored line nearly
+  disappeared into the film's own cast.
+
+**Framing**
+- Added optional rule-of-thirds guide lines while editing the crop (`G`
+  in frame-edit mode) — a compositional aid for cropping, off by default
+  and cleared automatically when you leave edit mode.
+
 ## 1.3.0 — 2026-07-15
 
 ### New / Changed

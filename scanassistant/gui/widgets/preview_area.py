@@ -1,6 +1,6 @@
 """Preview area for the current image.
 
-Background `#16181b` (never pure black); states: waiting, copy in
+Background `#171310` (never pure black); states: waiting, copy in
 progress, image displayed (with a frame overlay colored by confidence
 level), message (preview unavailable). The image is scaled to fit the
 area, aspect ratio preserved; the frame is composed into the
@@ -11,7 +11,7 @@ correct regardless of window size.
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
@@ -24,6 +24,8 @@ _OVERLAY_COLORS = {
     "review": ACCENT_WARNING,
     IMPOSSIBLE: ACCENT_CRITICAL,
 }
+_HALO_COLOR = QColor(0, 0, 0, 217)
+_GUIDE_COLOR = QColor(255, 255, 255, 110)
 
 
 class PreviewArea(QWidget):
@@ -44,6 +46,7 @@ class PreviewArea(QWidget):
         self._base_pixmap: QPixmap | None = None
         self._frame: FrameResult | None = None
         self._pixmap: QPixmap | None = None
+        self._guides_visible = False
         self.show_waiting("")
 
     # --- states --------------------------------------------------------------
@@ -82,6 +85,16 @@ class PreviewArea(QWidget):
         self._frame = frame
         self._compose()
 
+    def set_guides_visible(self, visible: bool) -> None:
+        """Rule-of-thirds guide lines within the frame (edit mode, `G` key)."""
+        self._guides_visible = visible
+        self._compose()
+
+    def toggle_guides(self) -> bool:
+        """Flips the guides on/off, returns the new state."""
+        self.set_guides_visible(not self._guides_visible)
+        return self._guides_visible
+
     # --- internals -----------------------------------------------------------
 
     def _set_text(self, text: str) -> None:
@@ -95,7 +108,7 @@ class PreviewArea(QWidget):
         pixmap = self._base_pixmap
         # IMPOSSIBLE: no frame applied — nothing drawn.
         if self._frame is not None and self._frame.level != IMPOSSIBLE:
-            pixmap = _draw_overlay(pixmap, self._frame)
+            pixmap = _draw_overlay(pixmap, self._frame, guides_visible=self._guides_visible)
         self._pixmap = pixmap
         self._rescale()
 
@@ -114,15 +127,48 @@ class PreviewArea(QWidget):
         self._rescale()
 
 
-def _draw_overlay(pixmap: QPixmap, frame: FrameResult) -> QPixmap:
+def _draw_overlay(pixmap: QPixmap, frame: FrameResult, *, guides_visible: bool = False) -> QPixmap:
     result = QPixmap(pixmap)
     painter = QPainter(result)
-    color = QColor(_OVERLAY_COLORS.get(frame.level, ACCENT_CRITICAL))
-    pen = QPen(color)
-    pen.setWidth(max(2, round(pixmap.width() * 0.003)))
-    painter.setPen(pen)
+    width = max(2, round(pixmap.width() * 0.003))
+    rect = QRectF(-frame.width / 2, -frame.height / 2, frame.width, frame.height)
+
     painter.translate(frame.x + frame.width / 2, frame.y + frame.height / 2)
     painter.rotate(frame.angle_deg)
-    painter.drawRect(QRectF(-frame.width / 2, -frame.height / 2, frame.width, frame.height))
+
+    # Dark keyline on both sides of the colored line: a plain amber line
+    # nearly disappears against an orange-based colour negative's own
+    # cast, so legibility can't rely on hue alone.
+    halo_pen = QPen(_HALO_COLOR)
+    halo_pen.setWidth(width + 2)
+    painter.setPen(halo_pen)
+    painter.drawRect(rect)
+
+    pen = QPen(QColor(_OVERLAY_COLORS.get(frame.level, ACCENT_CRITICAL)))
+    pen.setWidth(width)
+    painter.setPen(pen)
+    painter.drawRect(rect)
+
+    if guides_visible:
+        _draw_thirds_guides(painter, rect)
+
     painter.end()
     return result
+
+
+def _draw_thirds_guides(painter: QPainter, rect: QRectF) -> None:
+    """Two evenly-spaced vertical and horizontal lines within the frame —
+    a compositional aid for manual cropping, not a confidence signal: kept
+    unsaturated and dotted so it never competes with the frame overlay."""
+    pen = QPen(_GUIDE_COLOR)
+    pen.setWidth(1)
+    pen.setStyle(Qt.PenStyle.DotLine)
+    painter.setPen(pen)
+    x1 = rect.left() + rect.width() / 3
+    x2 = rect.left() + 2 * rect.width() / 3
+    y1 = rect.top() + rect.height() / 3
+    y2 = rect.top() + 2 * rect.height() / 3
+    painter.drawLine(QPointF(x1, rect.top()), QPointF(x1, rect.bottom()))
+    painter.drawLine(QPointF(x2, rect.top()), QPointF(x2, rect.bottom()))
+    painter.drawLine(QPointF(rect.left(), y1), QPointF(rect.right(), y1))
+    painter.drawLine(QPointF(rect.left(), y2), QPointF(rect.right(), y2))

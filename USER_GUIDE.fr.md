@@ -69,22 +69,26 @@ Utilisable en plein écran, une image à la fois :
 ┌──────────────────────────────────────────────────────────────────┐
 │ File  Project  Capture  Processing  Metadata  View  Help          │
 ├──────────────────────────────────────────────────────────────────┤
+│  NEG_00125            ● RELIABLE 0.94                              │
+├──────────────────────────────────────────────────────────────────┤
 │                                                                    │
 │                  [ aperçu de l'image courante ]                   │
 │              cadre détecté en surimpression, coloré               │
 │                                                                    │
 ├──────────────────────────────────────────────────────────────────┤
-│  NEG_00125            ● RELIABLE 0.94            127/842 · 15%    │
-│  next: NEG_00126                              export queue: 2     │
-├──────────────────────────────────────────────────────────────────┤
+│  next: NEG_00126   export queue: 2   127/842 · 15%                │
 │  TIFF written (NEG_00124)                            ● CAPTURE    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-Le cadre superposé est vert (fiable), orange (à vérifier), ou rouge
-(indéterminé — repli sur l'image entière). `T` bascule vers l'aperçu du
-cadre réellement appliqué (plutôt que le cadre brut avec surimpression) ;
-`P` bascule vers l'aperçu positif.
+Rien n'est jamais dessiné par-dessus l'image elle-même à part le cadre
+détecté — nom, confiance et progression vivent dans des bandeaux
+au-dessus et en dessous de l'aperçu. Le cadre superposé est vert
+(fiable), orange (à vérifier), ou rouge (indéterminé — repli sur l'image
+entière) ; il porte un liseré sombre des deux côtés de sa couleur pour
+rester visible quelle que soit la teinte propre du négatif. `T` bascule
+vers l'aperçu du cadre réellement appliqué (plutôt que le cadre brut
+avec surimpression) ; `P` bascule vers l'aperçu positif.
 
 ## Raccourcis clavier
 
@@ -121,6 +125,7 @@ même que les rôles de Tab et Échap dans le panneau de conflit de nom.
 | + / − | Agrandir / réduire de 1 % (Maj : 5 %), centre conservé |
 | Ctrl+← / Ctrl+→ | Rotation ∓0,1° (Maj : ×10), bornée à ±45° |
 | C | Relancer la détection automatique |
+| G | Afficher/masquer les guides règle des tiers (masqués à nouveau après validation ou annulation) |
 | Entrée | Valider (marque le cadre comme manuel, régénère les exports) |
 | Échap | Annuler, retour au cadre précédent |
 

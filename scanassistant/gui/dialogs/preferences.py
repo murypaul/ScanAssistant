@@ -63,6 +63,7 @@ _ACTION_LABEL_KEYS: dict[str, dict[str, str]] = {
         "confirm": "preferences.shortcut_confirm",
         "cancel": "preferences.shortcut_cancel",
         "recompute": "preferences.shortcut_recompute_frame",
+        "toggle_guides": "preferences.shortcut_toggle_guides",
     },
     "name_conflict": {
         "option_1": "preferences.shortcut_option_1",

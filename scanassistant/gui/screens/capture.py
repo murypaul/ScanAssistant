@@ -157,25 +157,30 @@ class CaptureScreen(QWidget):
 
         self.preview_area = PreviewArea()
 
+        # Stage header: name + confidence, in a bar of its own directly
+        # above the preview — never drawn on top of the image itself, only
+        # the frame overlay is (it has to be, it shows where the crop is).
         self.name_label = QLabel()
         self.name_label.setStyleSheet("font-size: 28pt; font-weight: bold;")
         self.confidence_label = QLabel()
+        stage_header = QHBoxLayout()
+        stage_header.addWidget(self.name_label)
+        stage_header.addSpacing(16)
+        stage_header.addWidget(self.confidence_label)
+        stage_header.addStretch(1)
+        self.stage_header_widget = QWidget()
+        self.stage_header_widget.setProperty("role", "stage-header")
+        self.stage_header_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.stage_header_widget.setLayout(stage_header)
+
+        # Console: status message, then next/queue/progress, then mode —
+        # everything that isn't about the current image specifically.
         self.progress_label = QLabel()
+        self.progress_label.setProperty("role", "secondary")
         self.next_label = QLabel()
         self.next_label.setProperty("role", "secondary")
         self.queue_label = QLabel()
         self.queue_label.setProperty("role", "secondary")
-
-        banner_top = QHBoxLayout()
-        banner_top.addWidget(self.name_label)
-        banner_top.addSpacing(16)
-        banner_top.addWidget(self.confidence_label)
-        banner_top.addStretch(1)
-        banner_top.addWidget(self.progress_label)
-        banner_bottom = QHBoxLayout()
-        banner_bottom.addWidget(self.next_label)
-        banner_bottom.addStretch(1)
-        banner_bottom.addWidget(self.queue_label)
 
         self.go_to_name_edit = QLineEdit()
         self.go_to_name_edit.setVisible(False)
@@ -245,19 +250,35 @@ class CaptureScreen(QWidget):
         self.status_label = QLabel()
         self.status_label.setProperty("role", "secondary")
         self.mode_label = QLabel()
-        status_row = QHBoxLayout()
-        status_row.addWidget(self.status_label, 1)
-        status_row.addWidget(self.mode_label)
+        # Two rows: the status message gets the full width to itself — the
+        # instructional text shown during frame edit is long enough that it
+        # would otherwise crowd into next/queue/progress on the same line.
+        console_status_row = QHBoxLayout()
+        console_status_row.addWidget(self.status_label, 1)
+        console_info_row = QHBoxLayout()
+        console_info_row.addWidget(self.next_label)
+        console_info_row.addSpacing(16)
+        console_info_row.addWidget(self.queue_label)
+        console_info_row.addSpacing(16)
+        console_info_row.addWidget(self.progress_label)
+        console_info_row.addStretch(1)
+        console_info_row.addWidget(self.mode_label)
+        console_layout = QVBoxLayout()
+        console_layout.addLayout(console_status_row)
+        console_layout.addLayout(console_info_row)
+        self.console_widget = QWidget()
+        self.console_widget.setProperty("role", "console")
+        self.console_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.console_widget.setLayout(console_layout)
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self.stage_header_widget)
         layout.addWidget(self.preview_area, 1)
-        layout.addLayout(banner_top)
-        layout.addLayout(banner_bottom)
         layout.addWidget(self.go_to_name_edit)
         layout.addWidget(self.conflict_panel)
         layout.addWidget(self.warning_banner)
         layout.addWidget(self.critical_banner)
-        layout.addLayout(status_row)
+        layout.addWidget(self.console_widget)
 
         self._status_timer = QTimer(self)
         self._status_timer.setSingleShot(True)
@@ -882,6 +903,8 @@ class CaptureScreen(QWidget):
             actions = self._shortcuts[FRAME_EDIT]
             if matches(event, actions["recompute"]):
                 self._edit_recompute()
+            elif matches(event, actions["toggle_guides"]):
+                self._toggle_guides()
             elif matches(event, actions["confirm"]):
                 self._confirm_edit()
             elif matches(event, actions["cancel"]):
@@ -957,6 +980,10 @@ class CaptureScreen(QWidget):
             )
         )
 
+    def _toggle_guides(self) -> None:
+        """G key in edit mode: rule-of-thirds guide lines within the frame."""
+        self.preview_area.toggle_guides()
+
     def _confirm_edit(self) -> None:
         session = self.session
         current = session.state.current_image if session is not None else None
@@ -993,6 +1020,9 @@ class CaptureScreen(QWidget):
         self._edit_frame = None
         self._edit_original_frame = None
         self.status_label.setText("")
+        # Guides are a cropping aid, not a general preview setting — they
+        # don't carry over to the next image.
+        self.preview_area.set_guides_visible(False)
 
     def finalize_current(self) -> None:
         if self.session is None:

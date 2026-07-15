@@ -7,17 +7,25 @@ from typing import cast
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
-BACKGROUND = "#22252a"
-SURFACE = "#2b2f36"
-BORDER = "#3a3f47"
-TEXT_PRIMARY = "#d5d7da"
-TEXT_SECONDARY = "#969ba3"
-ACCENT_OK = "#4caf50"
-ACCENT_WARNING = "#ff9800"
-ACCENT_CRITICAL = "#f44336"
-PREVIEW_BACKGROUND = "#16181b"
-ACCENT_WARNING_BG = "#4d3b13"  # dark yellow banner
-ACCENT_CRITICAL_BG = "#4d1f1b"  # dark red banner
+# Warm neutral base (not cool blue-grey): the app runs in a fully dark room
+# with the screen as the only light source, where a warm base is easier on
+# the eyes over a long session than a blue-tinted one.
+BACKGROUND = "#211f1d"
+SURFACE = "#2a2724"
+BORDER = "#3a352e"  # decorative dividers only (panes, menu separators) — no
+# contrast requirement, not the boundary of an interactive control.
+BORDER_STRONG = "#8f8168"  # QLineEdit/QComboBox/QSpinBox/QPushButton borders:
+# checked at 3.5:1+ against SURFACE, BORDER alone measures under 2:1 there.
+TEXT_PRIMARY = "#ece7df"
+TEXT_SECONDARY = "#998d7d"  # checked at 4.5:1+ against BACKGROUND and SURFACE
+ACCENT = "#5f9bd6"  # focus/selection/primary actions — deliberately not a
+# status color: ACCENT_OK must mean "reliable framing", nothing else.
+ACCENT_OK = "#7cc47f"
+ACCENT_WARNING = "#e0a458"
+ACCENT_CRITICAL = "#e2685c"
+PREVIEW_BACKGROUND = "#171310"
+ACCENT_WARNING_BG = "#3a2f1f"  # dark amber banner
+ACCENT_CRITICAL_BG = "#3a231f"  # dark red banner
 
 _MIN_TARGET_PX = 32
 
@@ -61,8 +69,8 @@ def _build_palette(brightness: str) -> QPalette:
     palette.setColor(QPalette.ColorRole.Button, surface)
     palette.setColor(QPalette.ColorRole.ButtonText, text)
     palette.setColor(QPalette.ColorRole.BrightText, QColor(ACCENT_CRITICAL))
-    palette.setColor(QPalette.ColorRole.Link, QColor(ACCENT_OK))
-    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT_OK))
+    palette.setColor(QPalette.ColorRole.Link, QColor(ACCENT))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
     palette.setColor(QPalette.ColorRole.HighlightedText, background)
 
     palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, disabled_text)
@@ -75,6 +83,7 @@ def _build_qss(brightness: str) -> str:
     background = _scaled(BACKGROUND, brightness)
     surface = _scaled(SURFACE, brightness)
     border = _scaled(BORDER, brightness)
+    border_strong = _scaled(BORDER_STRONG, brightness)
     text_primary = _scaled(TEXT_PRIMARY, brightness)
     text_secondary = _scaled(TEXT_SECONDARY, brightness)
     warning_bg = _scaled(ACCENT_WARNING_BG, brightness)
@@ -91,10 +100,10 @@ def _build_qss(brightness: str) -> str:
     QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox,
     QListView, QTreeView, QTableView {{
         background-color: {surface};
-        border: 1px solid {border};
+        border: 1px solid {border_strong};
         border-radius: 3px;
         padding: 4px;
-        selection-background-color: {ACCENT_OK};
+        selection-background-color: {ACCENT};
         selection-color: {background};
     }}
     QTableView, QTreeView, QListView {{
@@ -110,19 +119,19 @@ def _build_qss(brightness: str) -> str:
     }}
     QPushButton {{
         background-color: {surface};
-        border: 1px solid {border};
+        border: 1px solid {border_strong};
         border-radius: 3px;
         padding: 6px 14px;
         min-height: {_MIN_TARGET_PX}px;
     }}
     QPushButton:hover {{
-        border-color: {ACCENT_OK};
+        border-color: {ACCENT};
     }}
     QPushButton:pressed {{
         background-color: {border};
     }}
     QPushButton:default {{
-        border-color: {ACCENT_OK};
+        border-color: {ACCENT};
     }}
     QTabWidget::pane {{
         border: 1px solid {border};
@@ -136,7 +145,7 @@ def _build_qss(brightness: str) -> str:
     QTabBar::tab:selected {{
         background-color: {surface};
         color: {text_primary};
-        border-bottom: 2px solid {ACCENT_OK};
+        border-bottom: 2px solid {ACCENT};
     }}
     QMenuBar {{
         background-color: {background};
@@ -166,6 +175,14 @@ def _build_qss(brightness: str) -> str:
     }}
     QFrame#previewArea {{
         background-color: {PREVIEW_BACKGROUND};
+    }}
+    QWidget[role="stage-header"] {{
+        background-color: {background};
+        border-bottom: 1px solid {border};
+    }}
+    QWidget[role="console"] {{
+        background-color: {background};
+        border-top: 1px solid {border};
     }}
     QPushButton[role="warning-banner"] {{
         background-color: {warning_bg};
