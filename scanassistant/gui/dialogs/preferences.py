@@ -21,11 +21,13 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -143,14 +145,18 @@ class PreferencesDialog(QDialog):
         self._check_updates = check_updates
         self._shortcuts = merge_with_defaults(context.config.shortcuts)
         self.setWindowTitle(t("preferences.title"))
-        self.setMinimumSize(560, 480)
+        self.setMinimumSize(560, 560)
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_general_tab(), t("preferences.tab_general"))
-        tabs.addTab(self._build_processing_tab(), t("preferences.tab_processing"))
-        tabs.addTab(self._build_thresholds_tab(), t("preferences.tab_thresholds"))
-        tabs.addTab(self._build_updates_tab(), t("preferences.tab_updates"))
-        tabs.addTab(self._build_shortcuts_tab(), t("preferences.tab_shortcuts"))
+        self._add_scrollable_tab(tabs, self._build_general_tab(), t("preferences.tab_general"))
+        self._add_scrollable_tab(
+            tabs, self._build_processing_tab(), t("preferences.tab_processing")
+        )
+        self._add_scrollable_tab(
+            tabs, self._build_thresholds_tab(), t("preferences.tab_thresholds")
+        )
+        self._add_scrollable_tab(tabs, self._build_updates_tab(), t("preferences.tab_updates"))
+        self._add_scrollable_tab(tabs, self._build_shortcuts_tab(), t("preferences.tab_shortcuts"))
 
         export_button = QPushButton(t("preferences.export_settings"))
         export_button.clicked.connect(self._on_export_settings)
@@ -171,6 +177,18 @@ class PreferencesDialog(QDialog):
         layout.addWidget(buttons)
 
         self._refresh_all()
+
+    @staticmethod
+    def _add_scrollable_tab(tabs: QTabWidget, content: QWidget, label: str) -> None:
+        """Every tab's content can outgrow the dialog (Shortcuts especially,
+        four contexts' worth of rows) — a `QTabWidget` doesn't scroll its
+        pages on its own, so each one gets wrapped here rather than getting
+        clipped or forcing the whole dialog to grow past the screen."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(content)
+        tabs.addTab(scroll, label)
 
     # --- General -------------------------------------------------------------
 

@@ -67,6 +67,7 @@ from scanassistant.metadata.writer import is_available as is_exiftool_available
 from scanassistant.project.campaign import Campaign, open_campaign, save_campaign
 from scanassistant.project.errors import InvalidCampaignError, ScanAssistantError
 from scanassistant.project.inventory import Inventory
+from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.lock import ProjectLock, acquire_lock
 from scanassistant.updater import UpdateApplyResult, UpdateCheckResult
 from scanassistant.watcher.monitor import FolderMonitor
@@ -138,6 +139,9 @@ class MainWindow(QMainWindow):
         # during capture — remembers what was open so leaving and returning
         # to the capture screen restores it exactly (`_set_capture_docks_available`).
         self._capture_docks_were_visible: dict[QDockWidget, bool] = {}
+        self._capture_docks_available = True  # sentinel: forces the first
+        # `_set_capture_docks_available(False)` call to actually run instead
+        # of no-op'ing as "already false"
 
         self.setWindowTitle(t("home.title"))
         self.setMinimumSize(1280, 720)
@@ -198,6 +202,7 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._restore_dock_layout()
         self._show_home()
+        self._reopen_last_project_if_enabled()
 
         if self.context.config.updates.check_enabled:
             self._start_update_check(manual=False)
@@ -440,7 +445,17 @@ class MainWindow(QMainWindow):
         the capture screen. Elsewhere they're hidden and their View menu
         entries disabled (shown-disabled, not omitted — same convention as
         every other mode-specific menu item), remembering whatever was open
-        so it comes back exactly as left."""
+        so it comes back exactly as left.
+
+        No-ops if already in the requested state: `_show_home()` then
+        `_show_project()` both run back-to-back at startup when reopening
+        the last project, and a second "not available" call would otherwise
+        re-capture the docks' (already hidden) visibility, overwriting the
+        real value the first call had just saved.
+        """
+        if available == self._capture_docks_available:
+            return
+        self._capture_docks_available = available
         docks = (self.export_queue_dock, self.history_dock, self.positive_settings_dock)
         actions = (self.action_export_queue, self.action_history, self.action_positive_settings)
         if available:
@@ -448,10 +463,29 @@ class MainWindow(QMainWindow):
                 dock.setVisible(self._capture_docks_were_visible.get(dock, False))
         else:
             for dock in docks:
-                self._capture_docks_were_visible[dock] = dock.isVisible()
+                # Not `dock.isVisible()`: before the main window's first
+                # `show()` (startup, right after `_restore_dock_layout()`),
+                # every widget reports not-visible regardless of its own
+                # explicit state, since `isVisible()` also depends on its
+                # ancestors actually being shown — which would silently
+                # discard whatever was just restored from the last session.
+                self._capture_docks_were_visible[dock] = not dock.testAttribute(
+                    Qt.WidgetAttribute.WA_WState_Hidden
+                )
                 dock.setVisible(False)
         for action in actions:
             action.setEnabled(available)
+
+    # --- reopen last project on startup -----------------------------------
+
+    def _reopen_last_project_if_enabled(self) -> None:
+        general = self.context.config.general
+        if not general.reopen_last or not general.recent_projects:
+            return
+        root = Path(general.recent_projects[0])
+        if not CampaignPaths(root).campaign_json.exists():
+            return  # gone/moved since last time — not an error worth a startup dialog
+        self._open_project(root)
 
     # --- preferences -------------------------------------------------------
 

@@ -40,6 +40,15 @@
   in frame-edit mode) — a compositional aid for cropping, off by default
   and cleared automatically when you leave edit mode.
 
+### Bug Fixes
+
+**Preferences & Shortcuts**
+- Every Preferences tab is now scrollable — the Shortcuts tab in
+  particular no longer gets cut off with no way to reach the entries
+  past the bottom of the window.
+- "Reopen last project on startup" now actually reopens it — the
+  setting existed and could be toggled, but had no effect.
+
 ## 1.3.0 — 2026-07-15
 
 ### New / Changed
