@@ -654,6 +654,13 @@ class CaptureScreen(QWidget):
             self._positive_preview_active = False  # only one toggle active at a time
         self._display_current_preview()
 
+    def refresh_active_preview(self) -> None:
+        """Re-renders the positive/master preview from what's already in memory —
+        no RAW redecode. Called whenever Positive settings changes, including
+        mid-drag on a slider, so the visible preview follows it live."""
+        if self._positive_preview_active or self._master_preview_active:
+            self._display_current_preview()
+
     def _display_current_preview(self) -> None:
         """Switches between negative / positive (P) / master (T) preview in the same area."""
         pixels = self._current_preview_pixels

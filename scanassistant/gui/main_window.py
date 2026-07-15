@@ -181,6 +181,9 @@ class MainWindow(QMainWindow):
 
         self.positive_settings_panel = PositiveSettingsPanel()
         self.positive_settings_panel.setting_changed.connect(self._on_positive_setting_changed)
+        self.positive_settings_panel.live_changed.connect(
+            self.capture_screen.refresh_active_preview
+        )
         self.positive_settings_dock = QDockWidget(t("positive_settings.title"), self)
         self.positive_settings_dock.setObjectName("positiveSettingsDock")
         self.positive_settings_dock.setWidget(self.positive_settings_panel)

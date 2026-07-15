@@ -12,35 +12,50 @@ task not yet drained (including the current image's, once validated) picks
 them up automatically (`core.export_runner.MasterExportRunner` reads
 `campaign.exports.jpeg_positive` at task-execution time, not from a frozen
 snapshot) — already-written positives are not regenerated retroactively.
+
+`live_changed` fires on every in-memory update, including mid-drag on a
+slider, so the caller can refresh an on-screen preview immediately;
+`setting_changed` only fires once a value is final, and is what should
+actually be persisted and journaled.
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
-    QSpinBox,
+    QHBoxLayout,
+    QLabel,
     QVBoxLayout,
     QWidget,
 )
 
+from scanassistant.gui.widgets.slider_field import SliderField
+from scanassistant.gui.widgets.toggle_switch import ToggleSwitch
 from scanassistant.i18n import t
 from scanassistant.project.campaign import JpegPositiveExportConfig
 
 
 class PositiveSettingsPanel(QWidget):
-    """`setting_changed(key, before, after)`: the caller persists + journals it."""
+    """`setting_changed(key, before, after)`: the caller persists + journals it.
+    `live_changed()`: the caller refreshes whatever preview is on screen."""
 
     setting_changed = Signal(str, object, object)
+    live_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._config: JpegPositiveExportConfig | None = None
         self._loading = False
+        # Last value actually persisted — the "before" side of a commit's
+        # diff. Distinct from `self._config`, which a live (mid-drag) update
+        # already mutated by the time the commit arrives.
+        self._committed_exposure_ev = 0.0
+        self._committed_contrast = 0
+        self._committed_shadows = 0
+        self._committed_highlights = 0
 
         self.mode_combo = QComboBox()
         self.mode_combo.addItem(t("wizard.step5.mode_simple"), "simple")
@@ -48,37 +63,41 @@ class PositiveSettingsPanel(QWidget):
         self.mode_combo.addItem(t("wizard.step5.mode_manual"), "manual")
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
 
-        self.flip_check = QCheckBox(t("wizard.step5.horizontal_flip"))
-        self.flip_check.toggled.connect(self._on_flip_changed)
+        self.flip_switch = ToggleSwitch()
+        self.flip_switch.toggled.connect(self._on_flip_changed)
+        flip_row = QHBoxLayout()
+        flip_row.addWidget(self.flip_switch)
+        flip_row.addSpacing(8)
+        flip_row.addWidget(QLabel(t("wizard.step5.horizontal_flip")))
+        flip_row.addStretch(1)
 
-        self.exposure_spin = QDoubleSpinBox()
-        self.exposure_spin.setRange(-3.0, 3.0)
-        self.exposure_spin.setSingleStep(0.1)
-        self.exposure_spin.editingFinished.connect(self._on_exposure_changed)
+        self.exposure_slider = SliderField(-3.0, 3.0, decimals=1, default=0.0, bipolar=True)
+        self.exposure_slider.live_value_changed.connect(self._on_exposure_live)
+        self.exposure_slider.committed.connect(self._on_exposure_committed)
 
-        self.contrast_spin = QSpinBox()
-        self.contrast_spin.setRange(-100, 100)
-        self.contrast_spin.editingFinished.connect(self._on_contrast_changed)
+        self.contrast_slider = SliderField(-100, 100, decimals=0, default=0, bipolar=True)
+        self.contrast_slider.live_value_changed.connect(self._on_contrast_live)
+        self.contrast_slider.committed.connect(self._on_contrast_committed)
 
-        self.shadows_spin = QSpinBox()
-        self.shadows_spin.setRange(0, 100)
-        self.shadows_spin.editingFinished.connect(self._on_shadows_changed)
+        self.shadows_slider = SliderField(0, 100, decimals=0, default=0, bipolar=False)
+        self.shadows_slider.live_value_changed.connect(self._on_shadows_live)
+        self.shadows_slider.committed.connect(self._on_shadows_committed)
 
-        self.highlights_spin = QSpinBox()
-        self.highlights_spin.setRange(0, 100)
-        self.highlights_spin.editingFinished.connect(self._on_highlights_changed)
+        self.highlights_slider = SliderField(0, 100, decimals=0, default=0, bipolar=False)
+        self.highlights_slider.live_value_changed.connect(self._on_highlights_live)
+        self.highlights_slider.committed.connect(self._on_highlights_committed)
 
         manual_form = QFormLayout()
-        manual_form.addRow(t("wizard.step5.exposure_ev"), self.exposure_spin)
-        manual_form.addRow(t("wizard.step5.contrast"), self.contrast_spin)
-        manual_form.addRow(t("wizard.step5.shadows"), self.shadows_spin)
-        manual_form.addRow(t("wizard.step5.highlights"), self.highlights_spin)
+        manual_form.addRow(t("wizard.step5.exposure_ev"), self.exposure_slider)
+        manual_form.addRow(t("wizard.step5.contrast"), self.contrast_slider)
+        manual_form.addRow(t("wizard.step5.shadows"), self.shadows_slider)
+        manual_form.addRow(t("wizard.step5.highlights"), self.highlights_slider)
         self.manual_group = QGroupBox(t("wizard.step5.manual_group"))
         self.manual_group.setLayout(manual_form)
 
         form = QFormLayout()
         form.addRow(t("wizard.step5.mode"), self.mode_combo)
-        form.addRow(self.flip_check)
+        form.addRow(flip_row)
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
@@ -90,11 +109,16 @@ class PositiveSettingsPanel(QWidget):
         self._config = config
         self._loading = True
         self.mode_combo.setCurrentIndex(self.mode_combo.findData(config.mode))
-        self.flip_check.setChecked(config.horizontal_flip)
-        self.exposure_spin.setValue(config.manual_settings.exposure_ev)
-        self.contrast_spin.setValue(config.manual_settings.contrast)
-        self.shadows_spin.setValue(config.manual_settings.shadows)
-        self.highlights_spin.setValue(config.manual_settings.highlights)
+        self.flip_switch.setChecked(config.horizontal_flip)
+        manual = config.manual_settings
+        self.exposure_slider.setValue(manual.exposure_ev)
+        self.contrast_slider.setValue(manual.contrast)
+        self.shadows_slider.setValue(manual.shadows)
+        self.highlights_slider.setValue(manual.highlights)
+        self._committed_exposure_ev = manual.exposure_ev
+        self._committed_contrast = manual.contrast
+        self._committed_shadows = manual.shadows
+        self._committed_highlights = manual.highlights
         self.manual_group.setEnabled(config.mode == "manual")
         self._loading = False
 
@@ -110,6 +134,7 @@ class PositiveSettingsPanel(QWidget):
         if after == before:
             return
         self._config.mode = after
+        self.live_changed.emit()
         self.setting_changed.emit("exports.jpeg_positive.mode", before, after)
 
     def _on_flip_changed(self, checked: bool) -> None:
@@ -119,46 +144,80 @@ class PositiveSettingsPanel(QWidget):
         if checked == before:
             return
         self._config.horizontal_flip = checked
+        self.live_changed.emit()
         self.setting_changed.emit("exports.jpeg_positive.horizontal_flip", before, checked)
 
-    def _on_exposure_changed(self) -> None:
+    # --- manual settings: live (mid-drag, preview only) + committed (persisted) ---
+
+    def _on_exposure_live(self, value: float) -> None:
         if self._loading or self._config is None:
             return
-        before = self._config.manual_settings.exposure_ev
-        after = self.exposure_spin.value()
-        if after == before:
+        self._config.manual_settings.exposure_ev = value
+        self.live_changed.emit()
+
+    def _on_exposure_committed(self, value: float) -> None:
+        if self._loading or self._config is None:
             return
-        self._config.manual_settings.exposure_ev = after
+        self._config.manual_settings.exposure_ev = value
+        self.live_changed.emit()
+        before = self._committed_exposure_ev
+        if value == before:
+            return
+        self._committed_exposure_ev = value
         self.setting_changed.emit(
-            "exports.jpeg_positive.manual_settings.exposure_ev", before, after
+            "exports.jpeg_positive.manual_settings.exposure_ev", before, value
         )
 
-    def _on_contrast_changed(self) -> None:
+    def _on_contrast_live(self, value: float) -> None:
         if self._loading or self._config is None:
             return
-        before = self._config.manual_settings.contrast
-        after = self.contrast_spin.value()
-        if after == before:
-            return
-        self._config.manual_settings.contrast = after
-        self.setting_changed.emit("exports.jpeg_positive.manual_settings.contrast", before, after)
+        self._config.manual_settings.contrast = int(value)
+        self.live_changed.emit()
 
-    def _on_shadows_changed(self) -> None:
+    def _on_contrast_committed(self, value: float) -> None:
         if self._loading or self._config is None:
             return
-        before = self._config.manual_settings.shadows
-        after = self.shadows_spin.value()
-        if after == before:
+        value = int(value)
+        self._config.manual_settings.contrast = value
+        self.live_changed.emit()
+        before = self._committed_contrast
+        if value == before:
             return
-        self._config.manual_settings.shadows = after
-        self.setting_changed.emit("exports.jpeg_positive.manual_settings.shadows", before, after)
+        self._committed_contrast = value
+        self.setting_changed.emit("exports.jpeg_positive.manual_settings.contrast", before, value)
 
-    def _on_highlights_changed(self) -> None:
+    def _on_shadows_live(self, value: float) -> None:
         if self._loading or self._config is None:
             return
-        before = self._config.manual_settings.highlights
-        after = self.highlights_spin.value()
-        if after == before:
+        self._config.manual_settings.shadows = int(value)
+        self.live_changed.emit()
+
+    def _on_shadows_committed(self, value: float) -> None:
+        if self._loading or self._config is None:
             return
-        self._config.manual_settings.highlights = after
-        self.setting_changed.emit("exports.jpeg_positive.manual_settings.highlights", before, after)
+        value = int(value)
+        self._config.manual_settings.shadows = value
+        self.live_changed.emit()
+        before = self._committed_shadows
+        if value == before:
+            return
+        self._committed_shadows = value
+        self.setting_changed.emit("exports.jpeg_positive.manual_settings.shadows", before, value)
+
+    def _on_highlights_live(self, value: float) -> None:
+        if self._loading or self._config is None:
+            return
+        self._config.manual_settings.highlights = int(value)
+        self.live_changed.emit()
+
+    def _on_highlights_committed(self, value: float) -> None:
+        if self._loading or self._config is None:
+            return
+        value = int(value)
+        self._config.manual_settings.highlights = value
+        self.live_changed.emit()
+        before = self._committed_highlights
+        if value == before:
+            return
+        self._committed_highlights = value
+        self.setting_changed.emit("exports.jpeg_positive.manual_settings.highlights", before, value)

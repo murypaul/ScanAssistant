@@ -97,8 +97,7 @@ def _build_qss(brightness: str) -> str:
     QMainWindow, QDialog {{
         background-color: {background};
     }}
-    QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox,
-    QListView, QTreeView, QTableView {{
+    QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
         background-color: {surface};
         border: 1px solid {border_strong};
         border-radius: 3px;
@@ -106,9 +105,20 @@ def _build_qss(brightness: str) -> str:
         selection-background-color: {ACCENT};
         selection-color: {background};
     }}
-    QTableView, QTreeView, QListView {{
+    QListView, QTreeView, QTableView {{
+        background-color: {surface};
+        /* Softer than an editable field's border: these are read-only
+        display panels (history, export queue, CSV/log viewers), not
+        controls the operator types into — the strong tan boundary made
+        them read as a big editable box and drew the eye more than the
+        rows inside it. */
+        border: 1px solid {border};
+        border-radius: 3px;
+        padding: 4px;
         gridline-color: {border};
         alternate-background-color: {background};
+        selection-background-color: {ACCENT};
+        selection-color: {background};
     }}
     QHeaderView::section {{
         background-color: {surface};
