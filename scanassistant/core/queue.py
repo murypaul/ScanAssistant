@@ -58,11 +58,30 @@ class ExportContext:
 
 
 @dataclass(frozen=True)
+class ContentFrameOutcome:
+    """`jpeg_positive`-only: the content-frame crop actually applied to the
+    rendered positive (`imaging.content_framing`) — never the TIFF/JPEG
+    master. Primitive fields only, not the `imaging` result type itself:
+    this module must not import anything from `imaging` (see module
+    docstring)."""
+
+    x: int
+    y: int
+    width: int
+    height: int
+    fill: float
+    area_ratio: float
+
+
+@dataclass(frozen=True)
 class ExportResult:
     """Effective details of a successful export, for the `EXPORT` journal entry."""
 
     scale_factor: float = 1.0
     bounds_adjusted: bool = False
+    # `jpeg_positive` only; `None` means no confident crop was applied
+    # (deferred) — logged either way (`POSITIVE_FRAMING`, `core.session`).
+    content_frame: ContentFrameOutcome | None = None
 
 
 @dataclass(frozen=True)

@@ -13,9 +13,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scanassistant.core.queue import ExportContext, ExportFailure, ExportResult, ExportTask
+from scanassistant.core.queue import (
+    ContentFrameOutcome,
+    ExportContext,
+    ExportFailure,
+    ExportResult,
+    ExportTask,
+)
 from scanassistant.imaging import master as master_pipeline
 from scanassistant.imaging import positive as positive_pipeline
+from scanassistant.imaging.content_framing import detect_content_frame
 from scanassistant.imaging.geometry import FrameGeometry
 from scanassistant.imaging.raw import RawDecoder
 from scanassistant.journal.journal import Journal
@@ -83,7 +90,7 @@ class MasterExportRunner:
             return ExportFailure(code="E-05", message=message)
 
         try:
-            path = self._write_kind_with_retry(task.name, task.kind, master)
+            path, content_frame = self._write_kind_with_retry(task.name, task.kind, master)
         except Exception as exc:  # export write failure (E-06): same
             # handling as E-05, non-blocking for other tasks.
             message = str(exc)
@@ -99,12 +106,14 @@ class MasterExportRunner:
 
         self._write_metadata(task.name, context, path)
         return ExportResult(
-            scale_factor=master.scale_factor, bounds_adjusted=master.bounds_adjusted
+            scale_factor=master.scale_factor,
+            bounds_adjusted=master.bounds_adjusted,
+            content_frame=content_frame,
         )
 
     def _write_kind_with_retry(
         self, name: str, kind: str, master: master_pipeline.DevelopedMaster
-    ) -> Path:
+    ) -> tuple[Path, ContentFrameOutcome | None]:
         """E-06: two attempts before treating the write as failed."""
         last_exc: Exception | None = None
         for _attempt in range(_WRITE_ATTEMPTS):
@@ -115,7 +124,9 @@ class MasterExportRunner:
         assert last_exc is not None
         raise last_exc
 
-    def _write_kind(self, name: str, kind: str, master: master_pipeline.DevelopedMaster) -> Path:
+    def _write_kind(
+        self, name: str, kind: str, master: master_pipeline.DevelopedMaster
+    ) -> tuple[Path, ContentFrameOutcome | None]:
         if kind == "tiff":
             path = self._paths.tiff_dir / f"{name}.tif"
             master_pipeline.write_tiff(
@@ -124,7 +135,7 @@ class MasterExportRunner:
                 bits=self._campaign.exports.tiff.bits,
                 compression=self._campaign.exports.tiff.compression,
             )
-            return path
+            return path, None
 
         if kind == "jpeg_master":
             path = self._paths.jpeg_master_dir / f"{name}.jpg"
@@ -134,14 +145,21 @@ class MasterExportRunner:
                 quality=self._campaign.exports.jpeg_master.quality,
                 long_edge_px=self._campaign.exports.jpeg_master.long_edge_px,
             )
-            return path
+            return path, None
 
         if kind == "jpeg_positive":
             positive_cfg = self._campaign.exports.jpeg_positive
             path = self._paths.jpeg_positive_dir / f"{name}{positive_cfg.suffix}.jpg"
             manual = positive_cfg.manual_settings
+            content_frame = detect_content_frame(master.pixels, master.frame_in_output)
+            source_pixels = master.pixels
+            if content_frame is not None:
+                source_pixels = master.pixels[
+                    content_frame.y : content_frame.y + content_frame.height,
+                    content_frame.x : content_frame.x + content_frame.width,
+                ]
             positive16 = positive_pipeline.render_positive(
-                master.pixels,
+                source_pixels,
                 horizontal_flip=positive_cfg.horizontal_flip,
                 mode=positive_cfg.mode,
                 manual=positive_pipeline.ManualSettings(
@@ -157,7 +175,19 @@ class MasterExportRunner:
                 quality=positive_cfg.quality,
                 long_edge_px=positive_cfg.long_edge_px,
             )
-            return path
+            outcome = (
+                ContentFrameOutcome(
+                    x=content_frame.x,
+                    y=content_frame.y,
+                    width=content_frame.width,
+                    height=content_frame.height,
+                    fill=content_frame.fill,
+                    area_ratio=content_frame.area_ratio,
+                )
+                if content_frame is not None
+                else None
+            )
+            return path, outcome
 
         raise ValueError(f"unknown export kind: {kind!r}")
 

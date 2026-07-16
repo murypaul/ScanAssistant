@@ -16,9 +16,11 @@ from scanassistant.core.fs import FileSystem
 from scanassistant.core.queue import ExportContext
 from scanassistant.project.layout import CampaignPaths
 
-# A FRAMING or EXPORT journal entry carries all these fields in `details`
-# when it describes an effective frame — present together only on these
-# two event types.
+# A FRAMING journal entry carries all these fields in `details` when it
+# describes an effective frame. Checked together with `type == "FRAMING"`
+# below, not on the key names alone: any other event type that happened to
+# use these same five names in its own `details` would otherwise be
+# silently mistaken for the support frame here.
 _FRAME_DETAIL_KEYS = ("x", "y", "width", "height", "angle_deg")
 
 
@@ -66,7 +68,7 @@ def rebuild_export_context(
             # Journal written before the orientation -> rotation_deg migration.
             legacy = details.get("orientation", {}).get("after")
             rotation_deg = 90 if legacy == "vertical" else 0
-        if all(key in details for key in _FRAME_DETAIL_KEYS):
+        if entry.get("type") == "FRAMING" and all(key in details for key in _FRAME_DETAIL_KEYS):
             frame = details  # most recent wins (entries are chronological)
 
     if frame is None:

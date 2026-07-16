@@ -44,6 +44,7 @@ from scanassistant.core.fs import FileSystem
 from scanassistant.core.ingest import find_conflicting_path, ingest_file
 from scanassistant.core.queue import (
     EXPORT_TASK_KINDS,
+    ContentFrameOutcome,
     ExportContext,
     ExportExecutor,
     ExportFailure,
@@ -65,6 +66,7 @@ from scanassistant.project.inventory import (
 )
 from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.state import (
+    ContentFramingState,
     CurrentImageState,
     ErrorImage,
     FramingState,
@@ -625,6 +627,42 @@ class CaptureSession:
             warn = result.scale_factor > 1.0 or result.bounds_adjusted
         self.journal.log(
             "EXPORT", task.kind, image=task.name, level="warn" if warn else "info", details=details
+        )
+        if task.kind == "jpeg_positive":
+            self._log_positive_framing(task.name, result.content_frame if result else None)
+
+    def _log_positive_framing(self, name: str, content_frame: ContentFrameOutcome | None) -> None:
+        """Logs `POSITIVE_FRAMING` on **every** `jpeg_positive` export, applied
+        or not (03 §4): a reviewer tool needs to tell "processed, nothing to
+        flag" apart from "never processed", which it can't do from an absent
+        entry alone. Also updates `state.json` for the image still current —
+        once it's moved to history, the journal is the only durable copy."""
+        if content_frame is not None:
+            state = ContentFramingState(
+                x=content_frame.x,
+                y=content_frame.y,
+                width=content_frame.width,
+                height=content_frame.height,
+                fill=content_frame.fill,
+                area_ratio=content_frame.area_ratio,
+                outcome="applied",
+            )
+        else:
+            state = ContentFramingState(outcome="deferred")
+        if self.state.current_image is not None and self.state.current_image.assigned_name == name:
+            self.state.current_image.content_framing = state
+        self.journal.log(
+            "POSITIVE_FRAMING",
+            state.outcome,
+            image=name,
+            details={
+                "x": state.x,
+                "y": state.y,
+                "width": state.width,
+                "height": state.height,
+                "fill": state.fill,
+                "area_ratio": state.area_ratio,
+            },
         )
 
     def _mark_completed_if_ready(self, name: str, events: list[SessionEvent]) -> None:
