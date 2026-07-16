@@ -54,7 +54,7 @@ from scanassistant.project.state import ProjectState
 
 class ProjectScreen(QWidget):
     cursor_change_requested = Signal(str)  # « Set cursor here » (06 §6)
-    start_capture_requested = Signal()  # big button, top of the screen —
+    start_capture_requested = Signal()  # button at the bottom of the screen —
     # `MainWindow` already validates entry conditions (`_on_start_capture`)
     # the same way as the menu action/shortcut; this is just a faster,
     # more discoverable way to trigger the exact same thing.
@@ -73,8 +73,8 @@ class ProjectScreen(QWidget):
 
         self._tabs = QTabWidget()
         layout = QVBoxLayout(self)
-        layout.addWidget(self.start_capture_button)
         layout.addWidget(self._tabs)
+        layout.addWidget(self.start_capture_button)
 
         self._tabs.addTab(self._build_summary_tab(), t("project.tab_summary"))
         self._tabs.addTab(self._build_folders_tab(), t("project.tab_folders"))

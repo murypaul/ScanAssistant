@@ -52,8 +52,8 @@ Depuis l'écran d'accueil, **New campaign** ouvre un assistant en plusieurs
 
 ## L'écran projet
 
-Il s'ouvre en dehors du mode capture. Un gros bouton **Start capture** reste
-visible en permanence au-dessus des onglets — plus rapide à atteindre que
+Il s'ouvre en dehors du mode capture. Un bouton **Start capture** reste
+visible en permanence sous les onglets — plus rapide à atteindre que
 le menu ou le raccourci clavier. Onglets : **Summary**, **Folders**,
 **Capture**, **Framing**, **Exports**, **Metadata**, **CSV** (table de
 l'inventaire en lecture seule, avec recherche, filtre par statut et

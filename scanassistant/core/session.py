@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -184,14 +185,28 @@ class CaptureSession:
 
     # --- main loop -------------------------------------------------------
 
-    def pump(self, now: float) -> list[SessionEvent]:
-        """Advance monitoring and processing by one tick; returns the resulting events."""
+    def pump(
+        self, now: float, *, before_finalize_current: Callable[[], None] | None = None
+    ) -> list[SessionEvent]:
+        """Advance monitoring and processing by one tick; returns the resulting events.
+
+        `before_finalize_current`, if given, runs immediately before this
+        tick implicitly finalizes whatever image is still `current` (a new
+        stabilized file bumping it) — never on ticks where that doesn't
+        happen. The GUI uses this to flush a debounced rotation/crop edit
+        exactly when it's about to matter, not on every tick regardless
+        (which would defeat the debounce it's there to provide): the edit
+        lives only in the GUI's own state until committed, so skipping the
+        flush here would export the stale, pre-edit value.
+        """
         events: list[SessionEvent] = []
         deadline = self._new_deadline()
         events.extend(self._check_autosurveillance(now))
         for monitor_event in self.monitor.tick(now):
             events.extend(self._handle_monitor_event(monitor_event))
-        events.extend(self._drain_pending_ingest(deadline))
+        events.extend(
+            self._drain_pending_ingest(deadline, before_finalize_current=before_finalize_current)
+        )
         if self._suspended_code is None and len(self.export_queue):
             events.extend(self._drain_exports(deadline))
         events.extend(self._check_queue_growth())
@@ -256,7 +271,12 @@ class CaptureSession:
 
     # --- ingestion ---------------------------------------------------------
 
-    def _drain_pending_ingest(self, deadline: float | None = None) -> list[SessionEvent]:
+    def _drain_pending_ingest(
+        self,
+        deadline: float | None = None,
+        *,
+        before_finalize_current: Callable[[], None] | None = None,
+    ) -> list[SessionEvent]:
         events: list[SessionEvent] = []
         processed = 0
         while (
@@ -297,7 +317,15 @@ class CaptureSession:
                 events.append(NameConflictDetected(name=name, existing_path=str(conflict_path)))
                 break
 
-            events.extend(self._ingest_one(source_path, name, csv_row=name, deadline=deadline))
+            events.extend(
+                self._ingest_one(
+                    source_path,
+                    name,
+                    csv_row=name,
+                    deadline=deadline,
+                    before_finalize_current=before_finalize_current,
+                )
+            )
             self._pending_ingest.popleft()
             processed += 1
 
@@ -310,6 +338,7 @@ class CaptureSession:
         *,
         csv_row: str | None,
         deadline: float | None = None,
+        before_finalize_current: Callable[[], None] | None = None,
     ) -> list[SessionEvent]:
         """Moves `source_path` into `RAW/<name>` and installs it as the current image.
 
@@ -341,6 +370,8 @@ class CaptureSession:
             events.append(WarningEvent(code="E-04", details={"name": name}))
             return events
 
+        if before_finalize_current is not None:
+            before_finalize_current()
         events.extend(self._finalize_current_as_validated())
 
         if csv_row is not None:
