@@ -17,6 +17,7 @@ htmlcov/
 # public (qui ne contient que ce qui est nécessaire à l'exécution de l'app).
 /CLAUDE.md
 /DECISIONS.md
+/IMPLEMENTATION_NOTES.md
 /specifications/
 /tests/
 /tools/
