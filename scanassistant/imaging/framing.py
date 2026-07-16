@@ -91,23 +91,141 @@ def detect_frame(
     contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     contour = max(contours, key=cv2.contourArea) if contours else None
     if contour is None or cv2.contourArea(contour) <= 0:
-        return FrameResult(
-            x=0,
-            y=0,
-            width=width,
-            height=height,
-            angle_deg=0.0,
-            confidence=0.0,
-            level=IMPOSSIBLE,
-            components=_ZERO_COMPONENTS,
-        )
+        return _impossible_result(width, height)
 
+    return _frame_from_contour(
+        contour,
+        small.shape[:2],
+        scale,
+        width,
+        height,
+        margin_pct=margin_pct,
+        max_deskew_deg=max_deskew_deg,
+        reliable_threshold=reliable_threshold,
+        review_threshold=review_threshold,
+    )
+
+
+# --- rescue: generously-seeded GrabCut, last resort when detect_frame fails ---
+
+_RESCUE_WORKING_LONG_EDGE_PX = 500  # much smaller than detect_frame's own 1600: GrabCut
+# is a far more expensive algorithm than Otsu+contour (measured 3-8s at 1600px on real
+# samples — well past the preview's implicit "short task" budget). At 500px, measured
+# 0.3-0.7s on the same samples with no meaningful loss of geometric quality (same
+# confidence tier, same ~65-70% area fraction) — this is a last-resort geometry
+# recovery, not a fine crop, so it doesn't need detect_frame's own precision.
+_RESCUE_OUTER_MARGIN_FRACTION = 0.04  # thin band at the very edge, assumed sure background —
+# the operator never places the negative touching the frame edge exactly.
+_RESCUE_CENTER_ANCHOR_FRACTION = 0.10  # small sure-foreground anchor at the center, to give
+# GrabCut's foreground GMM a first sample to build from.
+_RESCUE_GRABCUT_ITERS = 5
+_RESCUE_GRABCUT_SEED = 12345  # cv2.grabCut's GMM init is otherwise unseeded — verified
+# non-deterministic without this (two runs on the same image gave different rectangles).
+
+
+def rescue_impossible_frame(
+    pixels: np.ndarray,
+    *,
+    margin_pct: float = 2.0,
+    max_deskew_deg: float = 5.0,
+    reliable_threshold: float = 0.90,
+    review_threshold: float = 0.60,
+) -> FrameResult | None:
+    """Last-resort fallback for when `detect_frame` returns `IMPOSSIBLE` —
+    never called in place of it, only after it has already failed.
+
+    `detect_frame`'s Otsu threshold needs a real brightness split between the
+    negative and the light table; it has nothing to hold onto on a severely
+    underexposed negative (near-zero contrast with the table). GrabCut's
+    colour-distribution model can still separate the two from a generous seed
+    even then. Returns `None` (never a degenerate all-image `FrameResult`) if
+    the rescue itself doesn't find a plausible rectangle either — the caller
+    keeps today's `IMPOSSIBLE` behavior in that case.
+    """
+    height, width = pixels.shape[:2]
+    small, scale = _reduce(pixels, _RESCUE_WORKING_LONG_EDGE_PX)
+    gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY) if small.ndim == 3 else small
+    small_h, small_w = gray.shape[:2]
+
+    margin_y = max(1, round(small_h * _RESCUE_OUTER_MARGIN_FRACTION))
+    margin_x = max(1, round(small_w * _RESCUE_OUTER_MARGIN_FRACTION))
+    mask = np.full((small_h, small_w), cv2.GC_PR_FGD, np.uint8)
+    mask[:margin_y, :] = cv2.GC_BGD
+    mask[small_h - margin_y :, :] = cv2.GC_BGD
+    mask[:, :margin_x] = cv2.GC_BGD
+    mask[:, small_w - margin_x :] = cv2.GC_BGD
+    center_y, center_x = small_h // 2, small_w // 2
+    anchor_h = max(1, round(small_h * _RESCUE_CENTER_ANCHOR_FRACTION))
+    anchor_w = max(1, round(small_w * _RESCUE_CENTER_ANCHOR_FRACTION))
+    mask[center_y - anchor_h : center_y + anchor_h, center_x - anchor_w : center_x + anchor_w] = (
+        cv2.GC_FGD
+    )
+
+    bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    bgd_model = np.zeros((1, 65), np.float64)
+    fgd_model = np.zeros((1, 65), np.float64)
+    cv2.setRNGSeed(_RESCUE_GRABCUT_SEED)
+    try:
+        cv2.grabCut(
+            bgr, mask, None, bgd_model, fgd_model, _RESCUE_GRABCUT_ITERS, cv2.GC_INIT_WITH_MASK
+        )
+    except cv2.error:
+        return None
+
+    foreground = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+    contours, _ = cv2.findContours(foreground, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    contour = max(contours, key=cv2.contourArea) if contours else None
+    if contour is None or cv2.contourArea(contour) <= 0:
+        return None
+
+    result = _frame_from_contour(
+        contour,
+        (small_h, small_w),
+        scale,
+        width,
+        height,
+        margin_pct=margin_pct,
+        max_deskew_deg=max_deskew_deg,
+        reliable_threshold=reliable_threshold,
+        review_threshold=review_threshold,
+    )
+    return None if result.level == IMPOSSIBLE else result
+
+
+def _impossible_result(width: int, height: int, confidence: float = 0.0) -> FrameResult:
+    return FrameResult(
+        x=0,
+        y=0,
+        width=width,
+        height=height,
+        angle_deg=0.0,
+        confidence=confidence,
+        level=IMPOSSIBLE,
+        components=_ZERO_COMPONENTS,
+    )
+
+
+def _frame_from_contour(
+    contour: np.ndarray,
+    small_shape: tuple[int, int],
+    scale: float,
+    width: int,
+    height: int,
+    *,
+    margin_pct: float,
+    max_deskew_deg: float,
+    reliable_threshold: float,
+    review_threshold: float,
+) -> FrameResult:
+    """Shared by `detect_frame` and `rescue_impossible_frame`: turns a contour
+    (found by whichever segmentation method) into a scored, margined
+    `FrameResult` in full-resolution coordinates."""
     (center_x, center_y), (rect_w, rect_h), raw_angle = cv2.minAreaRect(contour)
     rect_w, rect_h, angle = _normalize_angle(rect_w, rect_h, raw_angle)
 
-    small_long_edge = max(small.shape[:2])
+    small_long_edge = max(small_shape)
     components = _confidence_components(
-        contour, (center_x, center_y, rect_w, rect_h, angle), small.shape[:2], small_long_edge
+        contour, (center_x, center_y, rect_w, rect_h, angle), small_shape, small_long_edge
     )
     confidence = components.confidence
     level = classify(
@@ -155,11 +273,13 @@ def detect_frame(
 # --- algorithm steps --------------------------------------------------------
 
 
-def _reduce(pixels: np.ndarray) -> tuple[np.ndarray, float]:
+def _reduce(
+    pixels: np.ndarray, long_edge_px: int = REDUCED_LONG_EDGE_PX
+) -> tuple[np.ndarray, float]:
     long_edge = max(pixels.shape[:2])
-    if long_edge <= REDUCED_LONG_EDGE_PX or long_edge == 0:
+    if long_edge <= long_edge_px or long_edge == 0:
         return pixels, 1.0
-    scale = REDUCED_LONG_EDGE_PX / long_edge
+    scale = long_edge_px / long_edge
     height, width = pixels.shape[:2]
     resized = cv2.resize(
         pixels,

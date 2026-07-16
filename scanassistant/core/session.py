@@ -840,6 +840,9 @@ class CaptureSession:
         journal_action: str,  # auto | manual | raw | recomputed
         components: dict[str, float] | None = None,
         level: str | None = None,
+        rescued: bool = False,  # traceability only: this frame came from the generously-seeded
+        # GrabCut fallback (imaging.framing.rescue_impossible_frame), not the primary detector —
+        # never affects how the frame itself is applied.
     ) -> list[SessionEvent]:
         """Records a detected/recomputed/edited frame for the current image.
 
@@ -870,6 +873,8 @@ class CaptureSession:
         }
         if components:
             details["components"] = components
+        if rescued:
+            details["method"] = "grabcut_rescue"
         self.journal.log("FRAMING", journal_action, image=name, details=details)
 
         events: list[SessionEvent] = [

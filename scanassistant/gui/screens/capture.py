@@ -18,6 +18,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import shiboken6
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
@@ -83,6 +84,9 @@ _STATUS_MESSAGE_DURATION_MS = 5000
 _MIN_PUMP_INTERVAL_MS = 100
 _ROTATION_COMMIT_DELAY_MS = 1500
 _FRAME_COMMIT_DELAY_MS = 1500
+# Detection (rescue in particular) is capped well under this on real hardware;
+# bounded so quitting can never hang indefinitely even if it isn't.
+_PREVIEW_WORKER_SHUTDOWN_TIMEOUT_MS = 2000
 
 _LEVEL_LABELS = {
     "reliable": ("capture.confidence_reliable", "ok"),
@@ -497,6 +501,13 @@ class CaptureScreen(QWidget):
         """Second step, after `begin_shutdown()`. `wait_for_exports=True` only
         once `poll_export_progress()` has reached 0 (never blocks then);
         `False` abandons whatever is still in flight (Quit without waiting)."""
+        # A still-running detection thread must never be abandoned here: if
+        # nothing keeps it referenced until it actually finishes, Qt aborts
+        # the whole process rather than raising a catchable error. Bounded,
+        # not indefinite — this only fires at the moment of quitting, not
+        # during capture.
+        if self._preview_worker is not None:
+            self._preview_worker.wait(_PREVIEW_WORKER_SHUTDOWN_TIMEOUT_MS)
         if self.session is not None:
             if wait_for_exports:
                 self.session.export_executor.shutdown()
@@ -672,7 +683,11 @@ class CaptureScreen(QWidget):
         self._update_confidence_label()
         raw_path = self.session.paths.raw_dir / f"{name}{extension}"
 
-        worker = PreviewWorker(raw_path, self._decoder, self.session.campaign.framing, self)
+        # No parent widget: detection can take over a second (rescue on an
+        # unreadable negative), and Qt aborts the process outright if a
+        # QThread is destroyed while still running. Parenting it to this
+        # screen would let a window close mid-detection do exactly that.
+        worker = PreviewWorker(raw_path, self._decoder, self.session.campaign.framing)
         # Target name is bound into the connection closure, not re-read from
         # `self._loaded_preview_for` when the signal fires: if another image
         # was already loaded in the meantime, that field would have changed
@@ -682,10 +697,25 @@ class CaptureScreen(QWidget):
         )
         worker.failed.connect(self._on_preview_failed)
         worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(lambda w=worker: self._clear_preview_worker(w))
         self._preview_worker = worker
         worker.start()
 
+    def _clear_preview_worker(self, worker: PreviewWorker) -> None:
+        # `deleteLater` (connected alongside this) only runs once the event
+        # loop gets to it — `self._preview_worker` must stop pointing at the
+        # worker the instant it actually finishes, not after, or a shutdown
+        # check landing in between would touch an already-deleted C++ object.
+        if self._preview_worker is worker:
+            self._preview_worker = None
+
     def _on_preview_ready(self, result: PreviewResult, name: str, journal_action: str) -> None:
+        if not shiboken6.isValid(self):
+            # This screen was torn down (e.g. app closed) before detection —
+            # rescue in particular can run a second or more — finished; the
+            # worker outlives it by design (never destroyed while running),
+            # so its result can still arrive after there's nothing to show it on.
+            return
         session = self.session
         current = session.state.current_image if session is not None else None
         if current is None or current.assigned_name != name:
@@ -696,9 +726,11 @@ class CaptureScreen(QWidget):
         self._display_current_preview()
         self._update_confidence_label()
         if result.frame is not None:
-            self._apply_frame_result(name, journal_action, result.frame)
+            self._apply_frame_result(name, journal_action, result.frame, rescued=result.rescued)
 
     def _on_preview_failed(self, error: str) -> None:
+        if not shiboken6.isValid(self):
+            return  # see `_on_preview_ready`
         self.preview_area.show_message(t("capture.preview_unavailable", error=error))
 
     def _load_preview_known_frame(self, name: str, extension: str, framing: FramingState) -> None:
@@ -713,20 +745,26 @@ class CaptureScreen(QWidget):
         self._update_confidence_label()
         raw_path = self.session.paths.raw_dir / f"{name}{extension}"
 
+        # No parent widget: same reasoning as `_load_preview` — a QThread
+        # destroyed mid-run (window closing while this is still reading the
+        # RAW file) aborts the process rather than raising a catchable error.
         worker = PreviewWorker(
-            raw_path, self._decoder, self.session.campaign.framing, self, skip_detection=True
+            raw_path, self._decoder, self.session.campaign.framing, skip_detection=True
         )
         worker.succeeded.connect(
             lambda result, n=name, f=framing: self._on_known_frame_preview_ready(result, n, f)
         )
         worker.failed.connect(self._on_preview_failed)
         worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(lambda w=worker: self._clear_preview_worker(w))
         self._preview_worker = worker
         worker.start()
 
     def _on_known_frame_preview_ready(
         self, result: PreviewResult, name: str, framing: FramingState
     ) -> None:
+        if not shiboken6.isValid(self):
+            return  # see `_on_preview_ready`
         session = self.session
         current = session.state.current_image if session is not None else None
         if current is None or current.assigned_name != name:
@@ -912,7 +950,9 @@ class CaptureScreen(QWidget):
         positive8 = (positive16 // 257).astype(np.uint8)
         return np.stack([positive8, positive8, positive8], axis=-1)
 
-    def _apply_frame_result(self, name: str, journal_action: str, frame: FrameResult) -> None:
+    def _apply_frame_result(
+        self, name: str, journal_action: str, frame: FrameResult, *, rescued: bool = False
+    ) -> None:
         session = self.session
         if session is None:
             return
@@ -939,6 +979,7 @@ class CaptureScreen(QWidget):
                     "c_solidity": frame.components.c_solidity,
                 },
                 level=frame.level,
+                rescued=rescued,
             )
         self._dispatch(events)
 
