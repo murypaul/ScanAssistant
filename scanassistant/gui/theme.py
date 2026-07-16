@@ -206,6 +206,17 @@ def _build_qss(brightness: str) -> str:
         background-color: {warning_bg};
         border: none;
     }}
+    QPushButton[role="warning-banner-close"] {{
+        background-color: {warning_bg};
+        color: {text_primary};
+        border: none;
+        border-radius: 0px;
+        font-size: 16px;
+        padding: 8px 10px;
+    }}
+    QPushButton[role="warning-banner-close"]:hover {{
+        background-color: {critical_bg};
+    }}
     QWidget[role="critical-banner"] {{
         background-color: {critical_bg};
     }}

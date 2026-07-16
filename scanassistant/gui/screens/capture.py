@@ -290,8 +290,21 @@ class CaptureScreen(QWidget):
         self.warning_banner = QPushButton()
         self.warning_banner.setFlat(True)
         self.warning_banner.setProperty("role", "warning-banner")
-        self.warning_banner.setVisible(False)
         self.warning_banner.clicked.connect(self._show_warning_detail)
+        self.warning_banner_close = QPushButton("×")
+        self.warning_banner_close.setFlat(True)
+        self.warning_banner_close.setProperty("role", "warning-banner-close")
+        self.warning_banner_close.setToolTip(t("capture.dismiss_warning"))
+        self.warning_banner_close.setFixedWidth(28)
+        self.warning_banner_close.clicked.connect(self._hide_warning_banner)
+        warning_row = QHBoxLayout()
+        warning_row.setContentsMargins(0, 0, 0, 0)
+        warning_row.setSpacing(0)
+        warning_row.addWidget(self.warning_banner, 1)
+        warning_row.addWidget(self.warning_banner_close)
+        self.warning_banner_widget = QWidget()
+        self.warning_banner_widget.setLayout(warning_row)
+        self.warning_banner_widget.setVisible(False)
         self._last_warning: tuple[str, dict[str, object]] | None = None
 
         self.critical_banner_label = QLabel()
@@ -336,7 +349,7 @@ class CaptureScreen(QWidget):
         layout.addWidget(self.preview_area, 1)
         layout.addWidget(self.go_to_name_edit)
         layout.addWidget(self.conflict_panel)
-        layout.addWidget(self.warning_banner)
+        layout.addWidget(self.warning_banner_widget)
         layout.addWidget(self.critical_banner)
         layout.addWidget(self.console_widget)
 
@@ -546,15 +559,22 @@ class CaptureScreen(QWidget):
     # --- persistent banners ----------------------------------------------------
 
     def _show_warning_banner(self, code: str, details: dict[str, object]) -> None:
-        """Warning (yellow): persistent, clickable for detail.
+        """Warning (yellow): persistent until the operator dismisses it (×) or
+        acts on it, clickable elsewhere on the row for detail.
 
         Only one banner shown at a time (most recent warning) rather than a
-        stack per code: real warnings are rare and transient, a full queue
-        would be unwarranted complexity here.
+        stack per code: real warnings are rare, a full queue would be
+        unwarranted complexity here. Some warnings (e.g. E-15, a growing
+        export queue) can legitimately stay relevant for a while — dismissal
+        is a deliberate operator action, never an automatic timeout, so it's
+        never missed and never stuck either.
         """
         self._last_warning = (code, details)
         self.warning_banner.setText(format_warning(code, details))
-        self.warning_banner.setVisible(True)
+        self.warning_banner_widget.setVisible(True)
+
+    def _hide_warning_banner(self) -> None:
+        self.warning_banner_widget.setVisible(False)
 
     def _show_warning_detail(self) -> None:
         if self._last_warning is None:
@@ -1097,10 +1117,16 @@ class CaptureScreen(QWidget):
         self._frame_commit_timer.start(_FRAME_COMMIT_DELAY_MS)
 
     def _commit_pending_frame(self) -> None:
-        """Debounced, same pattern as rotation: a nudge/resize/rotate key
-        only calls `session.apply_frame()` once the operator settles on a
-        value (mouse release commits immediately instead, see
-        `_on_frame_drag_finished`)."""
+        """Debounced, same pattern as rotation: a nudge/resize/rotate key, or
+        a finished mouse drag, only calls `session.apply_frame()` (which
+        re-queues all three exports) once the operator settles on a value —
+        several quick successive adjustments collapse into a single export
+        instead of flooding the queue with one full export per tiny change.
+        Still never loses an edit: every screen exit point (`finalize_current`,
+        `reject_current_image`, `stop`, `begin_shutdown`, `_load_preview`)
+        calls this defensively first, so a pending edit is committed
+        immediately rather than dropped if the operator moves on before the
+        timer fires."""
         self._frame_commit_timer.stop()
         if not self._frame_commit_pending:
             return
@@ -1137,7 +1163,10 @@ class CaptureScreen(QWidget):
         # The overlay is already redrawn by `PreviewArea` itself during the drag.
 
     def _on_frame_drag_finished(self) -> None:
-        self._commit_pending_frame()  # commits immediately, no timer wait
+        # Debounced like a keyboard edit (see `_commit_pending_frame`) rather
+        # than committed immediately: several short drags in a row (fine-
+        # tuning the crop) collapse into one export instead of one each.
+        self._frame_commit_timer.start(_FRAME_COMMIT_DELAY_MS)
 
     def finalize_current(self) -> None:
         if self.session is None:

@@ -230,6 +230,7 @@ STRINGS: dict[str, str] = {
     "capture.status_reopened": "Reopened {name} for correction",
     "capture.status_reopen_busy": "Finalize or reject the current image before reopening another",
     "capture.status_unknown_name": "Unknown or already-used name: {name}",
+    "capture.dismiss_warning": "Dismiss",
     "capture.status_image_errored": "{name} flagged as error ({code}) — see Statistics to retry.",
     "capture.resume_processing": "Resume processing",
     "capture.recovery_report_title": "Recovery after interruption",
