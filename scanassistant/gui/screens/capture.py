@@ -18,6 +18,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import shiboken6
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
@@ -83,6 +84,9 @@ _STATUS_MESSAGE_DURATION_MS = 5000
 _MIN_PUMP_INTERVAL_MS = 100
 _ROTATION_COMMIT_DELAY_MS = 1500
 _FRAME_COMMIT_DELAY_MS = 1500
+# Detection (rescue in particular) is capped well under this on real hardware;
+# bounded so quitting can never hang indefinitely even if it isn't.
+_PREVIEW_WORKER_SHUTDOWN_TIMEOUT_MS = 2000
 
 _LEVEL_LABELS = {
     "reliable": ("capture.confidence_reliable", "ok"),
@@ -290,8 +294,21 @@ class CaptureScreen(QWidget):
         self.warning_banner = QPushButton()
         self.warning_banner.setFlat(True)
         self.warning_banner.setProperty("role", "warning-banner")
-        self.warning_banner.setVisible(False)
         self.warning_banner.clicked.connect(self._show_warning_detail)
+        self.warning_banner_close = QPushButton("×")
+        self.warning_banner_close.setFlat(True)
+        self.warning_banner_close.setProperty("role", "warning-banner-close")
+        self.warning_banner_close.setToolTip(t("capture.dismiss_warning"))
+        self.warning_banner_close.setFixedWidth(28)
+        self.warning_banner_close.clicked.connect(self._hide_warning_banner)
+        warning_row = QHBoxLayout()
+        warning_row.setContentsMargins(0, 0, 0, 0)
+        warning_row.setSpacing(0)
+        warning_row.addWidget(self.warning_banner, 1)
+        warning_row.addWidget(self.warning_banner_close)
+        self.warning_banner_widget = QWidget()
+        self.warning_banner_widget.setLayout(warning_row)
+        self.warning_banner_widget.setVisible(False)
         self._last_warning: tuple[str, dict[str, object]] | None = None
 
         self.critical_banner_label = QLabel()
@@ -336,7 +353,7 @@ class CaptureScreen(QWidget):
         layout.addWidget(self.preview_area, 1)
         layout.addWidget(self.go_to_name_edit)
         layout.addWidget(self.conflict_panel)
-        layout.addWidget(self.warning_banner)
+        layout.addWidget(self.warning_banner_widget)
         layout.addWidget(self.critical_banner)
         layout.addWidget(self.console_widget)
 
@@ -484,6 +501,13 @@ class CaptureScreen(QWidget):
         """Second step, after `begin_shutdown()`. `wait_for_exports=True` only
         once `poll_export_progress()` has reached 0 (never blocks then);
         `False` abandons whatever is still in flight (Quit without waiting)."""
+        # A still-running detection thread must never be abandoned here: if
+        # nothing keeps it referenced until it actually finishes, Qt aborts
+        # the whole process rather than raising a catchable error. Bounded,
+        # not indefinite — this only fires at the moment of quitting, not
+        # during capture.
+        if self._preview_worker is not None:
+            self._preview_worker.wait(_PREVIEW_WORKER_SHUTDOWN_TIMEOUT_MS)
         if self.session is not None:
             if wait_for_exports:
                 self.session.export_executor.shutdown()
@@ -546,15 +570,22 @@ class CaptureScreen(QWidget):
     # --- persistent banners ----------------------------------------------------
 
     def _show_warning_banner(self, code: str, details: dict[str, object]) -> None:
-        """Warning (yellow): persistent, clickable for detail.
+        """Warning (yellow): persistent until the operator dismisses it (×) or
+        acts on it, clickable elsewhere on the row for detail.
 
         Only one banner shown at a time (most recent warning) rather than a
-        stack per code: real warnings are rare and transient, a full queue
-        would be unwarranted complexity here.
+        stack per code: real warnings are rare, a full queue would be
+        unwarranted complexity here. Some warnings (e.g. E-15, a growing
+        export queue) can legitimately stay relevant for a while — dismissal
+        is a deliberate operator action, never an automatic timeout, so it's
+        never missed and never stuck either.
         """
         self._last_warning = (code, details)
         self.warning_banner.setText(format_warning(code, details))
-        self.warning_banner.setVisible(True)
+        self.warning_banner_widget.setVisible(True)
+
+    def _hide_warning_banner(self) -> None:
+        self.warning_banner_widget.setVisible(False)
 
     def _show_warning_detail(self) -> None:
         if self._last_warning is None:
@@ -652,7 +683,11 @@ class CaptureScreen(QWidget):
         self._update_confidence_label()
         raw_path = self.session.paths.raw_dir / f"{name}{extension}"
 
-        worker = PreviewWorker(raw_path, self._decoder, self.session.campaign.framing, self)
+        # No parent widget: detection can take over a second (rescue on an
+        # unreadable negative), and Qt aborts the process outright if a
+        # QThread is destroyed while still running. Parenting it to this
+        # screen would let a window close mid-detection do exactly that.
+        worker = PreviewWorker(raw_path, self._decoder, self.session.campaign.framing)
         # Target name is bound into the connection closure, not re-read from
         # `self._loaded_preview_for` when the signal fires: if another image
         # was already loaded in the meantime, that field would have changed
@@ -662,10 +697,25 @@ class CaptureScreen(QWidget):
         )
         worker.failed.connect(self._on_preview_failed)
         worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(lambda w=worker: self._clear_preview_worker(w))
         self._preview_worker = worker
         worker.start()
 
+    def _clear_preview_worker(self, worker: PreviewWorker) -> None:
+        # `deleteLater` (connected alongside this) only runs once the event
+        # loop gets to it — `self._preview_worker` must stop pointing at the
+        # worker the instant it actually finishes, not after, or a shutdown
+        # check landing in between would touch an already-deleted C++ object.
+        if self._preview_worker is worker:
+            self._preview_worker = None
+
     def _on_preview_ready(self, result: PreviewResult, name: str, journal_action: str) -> None:
+        if not shiboken6.isValid(self):
+            # This screen was torn down (e.g. app closed) before detection —
+            # rescue in particular can run a second or more — finished; the
+            # worker outlives it by design (never destroyed while running),
+            # so its result can still arrive after there's nothing to show it on.
+            return
         session = self.session
         current = session.state.current_image if session is not None else None
         if current is None or current.assigned_name != name:
@@ -676,9 +726,11 @@ class CaptureScreen(QWidget):
         self._display_current_preview()
         self._update_confidence_label()
         if result.frame is not None:
-            self._apply_frame_result(name, journal_action, result.frame)
+            self._apply_frame_result(name, journal_action, result.frame, rescued=result.rescued)
 
     def _on_preview_failed(self, error: str) -> None:
+        if not shiboken6.isValid(self):
+            return  # see `_on_preview_ready`
         self.preview_area.show_message(t("capture.preview_unavailable", error=error))
 
     def _load_preview_known_frame(self, name: str, extension: str, framing: FramingState) -> None:
@@ -693,20 +745,26 @@ class CaptureScreen(QWidget):
         self._update_confidence_label()
         raw_path = self.session.paths.raw_dir / f"{name}{extension}"
 
+        # No parent widget: same reasoning as `_load_preview` — a QThread
+        # destroyed mid-run (window closing while this is still reading the
+        # RAW file) aborts the process rather than raising a catchable error.
         worker = PreviewWorker(
-            raw_path, self._decoder, self.session.campaign.framing, self, skip_detection=True
+            raw_path, self._decoder, self.session.campaign.framing, skip_detection=True
         )
         worker.succeeded.connect(
             lambda result, n=name, f=framing: self._on_known_frame_preview_ready(result, n, f)
         )
         worker.failed.connect(self._on_preview_failed)
         worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(lambda w=worker: self._clear_preview_worker(w))
         self._preview_worker = worker
         worker.start()
 
     def _on_known_frame_preview_ready(
         self, result: PreviewResult, name: str, framing: FramingState
     ) -> None:
+        if not shiboken6.isValid(self):
+            return  # see `_on_preview_ready`
         session = self.session
         current = session.state.current_image if session is not None else None
         if current is None or current.assigned_name != name:
@@ -867,13 +925,15 @@ class CaptureScreen(QWidget):
         """Positive rendered from the preview already in memory, using campaign settings.
 
         Crop/deskew/rotation applied first (same geometry as the master
-        preview, DECISIONS.md I-99) so the positive preview matches what the
-        actual export will look like, not the raw unrotated negative.
+        preview) so the positive preview matches what the actual export will
+        look like, not the raw unrotated negative.
         """
         assert self.session is not None
         config = self.session.campaign.exports.jpeg_positive
         manual = config.manual_settings
         framed_pixels = self._render_master_preview(preview_pixels, frame_override=frame_override)
+        if frame_override is None:
+            framed_pixels = self._apply_content_frame_preview(framed_pixels)
         # `imaging.positive.render_positive` expects 16-bit input; the preview
         # is 8-bit (`imaging.preview.Preview.pixels`) — exact rescale
         # (255 * 257 = 65535), no extra library needed.
@@ -892,7 +952,43 @@ class CaptureScreen(QWidget):
         positive8 = (positive16 // 257).astype(np.uint8)
         return np.stack([positive8, positive8, positive8], axis=-1)
 
-    def _apply_frame_result(self, name: str, journal_action: str, frame: FrameResult) -> None:
+    def _apply_content_frame_preview(self, framed_pixels: np.ndarray) -> np.ndarray:
+        """Read-only reflection of the content frame already applied to the
+        last `jpeg_positive` export (`session.state.current_image.
+        content_framing`) — never recomputed here: detection only ever runs
+        in the background export task (`imaging.content_framing`), never on
+        this synchronous preview path. Skipped for the fast/downscaled
+        preview (`frame_override` set): that path uses its own, unrelated
+        scale, not `_current_preview_scale_factor`.
+
+        Nothing to show before the first `jpeg_positive` export has run for
+        this image (`content_framing` is still `None`) — the preview then
+        falls back to the support-frame crop alone, same as before this was
+        added.
+        """
+        session = self.session
+        current = session.state.current_image if session is not None else None
+        content_framing = current.content_framing if current is not None else None
+        if content_framing is None or content_framing.outcome != "applied":
+            return framed_pixels
+        # `content_framing` is in reference/master-pixel space, same
+        # convention as `framing` — `scale_factor` is reference/preview
+        # (`imaging.preview.Preview.scale_factor`), so converting to this
+        # preview's space divides, the opposite direction of
+        # `_to_reference_space`.
+        scale = self._current_preview_scale_factor
+        height, width = framed_pixels.shape[:2]
+        x0 = max(0, round(content_framing.x / scale))
+        y0 = max(0, round(content_framing.y / scale))
+        x1 = min(width, x0 + round(content_framing.width / scale))
+        y1 = min(height, y0 + round(content_framing.height / scale))
+        if x1 <= x0 or y1 <= y0:
+            return framed_pixels
+        return framed_pixels[y0:y1, x0:x1]
+
+    def _apply_frame_result(
+        self, name: str, journal_action: str, frame: FrameResult, *, rescued: bool = False
+    ) -> None:
         session = self.session
         if session is None:
             return
@@ -919,6 +1015,7 @@ class CaptureScreen(QWidget):
                     "c_solidity": frame.components.c_solidity,
                 },
                 level=frame.level,
+                rescued=rescued,
             )
         self._dispatch(events)
 
@@ -1097,10 +1194,16 @@ class CaptureScreen(QWidget):
         self._frame_commit_timer.start(_FRAME_COMMIT_DELAY_MS)
 
     def _commit_pending_frame(self) -> None:
-        """Debounced, same pattern as rotation: a nudge/resize/rotate key
-        only calls `session.apply_frame()` once the operator settles on a
-        value (mouse release commits immediately instead, see
-        `_on_frame_drag_finished`)."""
+        """Debounced, same pattern as rotation: a nudge/resize/rotate key, or
+        a finished mouse drag, only calls `session.apply_frame()` (which
+        re-queues all three exports) once the operator settles on a value —
+        several quick successive adjustments collapse into a single export
+        instead of flooding the queue with one full export per tiny change.
+        Still never loses an edit: every screen exit point (`finalize_current`,
+        `reject_current_image`, `stop`, `begin_shutdown`, `_load_preview`)
+        calls this defensively first, so a pending edit is committed
+        immediately rather than dropped if the operator moves on before the
+        timer fires."""
         self._frame_commit_timer.stop()
         if not self._frame_commit_pending:
             return
@@ -1137,7 +1240,10 @@ class CaptureScreen(QWidget):
         # The overlay is already redrawn by `PreviewArea` itself during the drag.
 
     def _on_frame_drag_finished(self) -> None:
-        self._commit_pending_frame()  # commits immediately, no timer wait
+        # Debounced like a keyboard edit (see `_commit_pending_frame`) rather
+        # than committed immediately: several short drags in a row (fine-
+        # tuning the crop) collapse into one export instead of one each.
+        self._frame_commit_timer.start(_FRAME_COMMIT_DELAY_MS)
 
     def finalize_current(self) -> None:
         if self.session is None:

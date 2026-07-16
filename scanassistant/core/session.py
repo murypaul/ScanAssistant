@@ -44,6 +44,7 @@ from scanassistant.core.fs import FileSystem
 from scanassistant.core.ingest import find_conflicting_path, ingest_file
 from scanassistant.core.queue import (
     EXPORT_TASK_KINDS,
+    ContentFrameOutcome,
     ExportContext,
     ExportExecutor,
     ExportFailure,
@@ -65,6 +66,7 @@ from scanassistant.project.inventory import (
 )
 from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.state import (
+    ContentFramingState,
     CurrentImageState,
     ErrorImage,
     FramingState,
@@ -605,6 +607,60 @@ class CaptureSession:
         """Queues export tasks with an already-known context (regeneration, crash recovery)."""
         self._queue_exports(name, kinds, context)
 
+    def regenerate_positive(self, name: str) -> list[SessionEvent]:
+        """Re-runs only the `jpeg_positive` export for `name` — never `tiff`/
+        `jpeg_master`, whose geometry (the support frame) this never
+        changes. For the "Recadrage des positifs" screen: adjusting the
+        content frame or exposure for one image must not re-touch its
+        master derivatives.
+
+        Rebuilds the frame from the journal (`core.recovery`), same as
+        `retry_error_image` — works whether or not `name` is still the
+        current image. Does nothing (empty list) if the RAW or its frame
+        can't be reconstructed.
+        """
+        context = rebuild_export_context(name, self.paths, self.fs)
+        if context is None:
+            return []
+        self.enqueue_export_context(name, ["jpeg_positive"], context)
+        events = self._drain_exports(self._new_deadline())
+        self._persist_state()
+        return events
+
+    def apply_manual_positive_override(
+        self,
+        name: str,
+        *,
+        content_frame: tuple[float, float, float, float] | None = None,
+        settings: tuple[float, int, int, int] | None = None,
+    ) -> list[SessionEvent]:
+        """Regenerates `jpeg_positive` for `name` using an operator's manual
+        choice from the "Recadrage des positifs" screen: `content_frame`
+        (x, y, width, height, each a fraction in [0, 1] of `master.pixels`'
+        own dimensions — resolution-independent, so the screen doesn't need
+        to know `master.pixels`' actual size to build this) always wins over
+        automatic detection; `settings` (exposure_ev, contrast, shadows,
+        highlights) always wins over the campaign's own exposure settings —
+        for this one regeneration only. Not durably replayed by a later,
+        unrelated regeneration of the same image (accepted simplification:
+        see `ExportContext.content_frame_override`).
+
+        Same journal-rebuild + jpeg_positive-only scope as
+        `regenerate_positive`; does nothing (empty list) if the RAW or its
+        support frame can't be reconstructed.
+        """
+        context = rebuild_export_context(name, self.paths, self.fs)
+        if context is None:
+            return []
+        if content_frame is not None:
+            context = replace(context, content_frame_override=content_frame)
+        if settings is not None:
+            context = replace(context, manual_positive_settings=settings)
+        self.enqueue_export_context(name, ["jpeg_positive"], context)
+        events = self._drain_exports(self._new_deadline())
+        self._persist_state()
+        return events
+
     def _log_export(self, task: ExportTask, result: ExportResult | None) -> None:
         """Logs an `EXPORT` journal entry: effective frame + scale factor."""
         details: dict[str, object] = {}
@@ -625,6 +681,47 @@ class CaptureSession:
             warn = result.scale_factor > 1.0 or result.bounds_adjusted
         self.journal.log(
             "EXPORT", task.kind, image=task.name, level="warn" if warn else "info", details=details
+        )
+        if task.kind == "jpeg_positive":
+            self._log_positive_framing(task.name, result.content_frame if result else None)
+
+    def _log_positive_framing(self, name: str, content_frame: ContentFrameOutcome | None) -> None:
+        """Logs `POSITIVE_FRAMING` on **every** `jpeg_positive` export, applied
+        or not (03 §4): a reviewer tool needs to tell "processed, nothing to
+        flag" apart from "never processed", which it can't do from an absent
+        entry alone. Also updates `state.json` for the image still current —
+        once it's moved to history, the journal is the only durable copy."""
+        if content_frame is not None:
+            # "manual" (operator-confirmed, `apply_manual_positive_override`)
+            # is a distinct outcome from "applied" (automatic, confident
+            # detection) — a manually-confirmed image must not keep
+            # reappearing in the "needs review" list.
+            outcome = "manual" if content_frame.source == "manual" else "applied"
+            state = ContentFramingState(
+                x=content_frame.x,
+                y=content_frame.y,
+                width=content_frame.width,
+                height=content_frame.height,
+                fill=content_frame.fill,
+                area_ratio=content_frame.area_ratio,
+                outcome=outcome,
+            )
+        else:
+            state = ContentFramingState(outcome="deferred")
+        if self.state.current_image is not None and self.state.current_image.assigned_name == name:
+            self.state.current_image.content_framing = state
+        self.journal.log(
+            "POSITIVE_FRAMING",
+            state.outcome,
+            image=name,
+            details={
+                "x": state.x,
+                "y": state.y,
+                "width": state.width,
+                "height": state.height,
+                "fill": state.fill,
+                "area_ratio": state.area_ratio,
+            },
         )
 
     def _mark_completed_if_ready(self, name: str, events: list[SessionEvent]) -> None:
@@ -840,6 +937,9 @@ class CaptureSession:
         journal_action: str,  # auto | manual | raw | recomputed
         components: dict[str, float] | None = None,
         level: str | None = None,
+        rescued: bool = False,  # traceability only: this frame came from the generously-seeded
+        # GrabCut fallback (imaging.framing.rescue_impossible_frame), not the primary detector —
+        # never affects how the frame itself is applied.
     ) -> list[SessionEvent]:
         """Records a detected/recomputed/edited frame for the current image.
 
@@ -870,6 +970,8 @@ class CaptureSession:
         }
         if components:
             details["components"] = components
+        if rescued:
+            details["method"] = "grabcut_rescue"
         self.journal.log("FRAMING", journal_action, image=name, details=details)
 
         events: list[SessionEvent] = [

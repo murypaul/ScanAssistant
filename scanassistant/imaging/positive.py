@@ -79,9 +79,28 @@ def _simple(v: np.ndarray) -> np.ndarray:
     return (v - lo) / (hi - lo)
 
 
+_EXPOSURE_SAMPLE_INSET_FRACTION = 0.20  # per side
+
+
+def _exposure_sample(v: np.ndarray) -> np.ndarray:
+    """A concentric inset of the support frame, unconditionally — the
+    unexposed film border sits near the edges and is much brighter than any
+    real content, so including it skews the percentiles computed below
+    (worst measured on real samples: mean exposure off by as much as +117 on
+    16-bit black point). Doesn't need pixel-accurate content detection to
+    help: a sample that's simply "well inside" the frame is enough for a
+    statistic, unlike the frame actually applied to the rendered positive."""
+    height, width = v.shape[:2]
+    inset_h = round(height * _EXPOSURE_SAMPLE_INSET_FRACTION)
+    inset_w = round(width * _EXPOSURE_SAMPLE_INSET_FRACTION)
+    if height - 2 * inset_h <= 0 or width - 2 * inset_w <= 0:
+        return v  # frame too small to inset meaningfully: fall back to the whole thing
+    return v[inset_h : height - inset_h, inset_w : width - inset_w]
+
+
 def _auto(v: np.ndarray) -> np.ndarray:
     """Percentile stretch + CLAHE + adaptive gamma."""
-    p_low, p_high = np.percentile(v, [0.5, 99.5])
+    p_low, p_high = np.percentile(_exposure_sample(v), [0.5, 99.5])
     stretched = np.clip((v - p_low) / (p_high - p_low), 0.0, 1.0) if p_high > p_low else v
 
     stretched16 = np.clip(stretched * 65535.0, 0, 65535).astype(np.uint16)

@@ -143,6 +143,24 @@ def _build_qss(brightness: str) -> str:
     QPushButton:default {{
         border-color: {ACCENT};
     }}
+    QPushButton[role="primary-action"] {{
+        background-color: {ACCENT};
+        color: {background};
+        border: none;
+        font-size: 14pt;
+        font-weight: 600;
+        padding: 10px 20px;
+    }}
+    QPushButton[role="primary-action"]:hover {{
+        background-color: {text_primary};
+    }}
+    QPushButton[role="primary-action"]:pressed {{
+        background-color: {text_secondary};
+    }}
+    QPushButton[role="primary-action"]:disabled {{
+        background-color: {border_strong};
+        color: {text_secondary};
+    }}
     QTabWidget::pane {{
         border: 1px solid {border};
     }}
@@ -205,6 +223,17 @@ def _build_qss(brightness: str) -> str:
     QPushButton[role="warning-banner"]:hover {{
         background-color: {warning_bg};
         border: none;
+    }}
+    QPushButton[role="warning-banner-close"] {{
+        background-color: {warning_bg};
+        color: {text_primary};
+        border: none;
+        border-radius: 0px;
+        font-size: 16px;
+        padding: 8px 10px;
+    }}
+    QPushButton[role="warning-banner-close"]:hover {{
+        background-color: {critical_bg};
     }}
     QWidget[role="critical-banner"] {{
         background-color: {critical_bg};

@@ -48,10 +48,12 @@ From the home screen, **New campaign** opens a short wizard:
 
 ## The project screen
 
-Opened outside capture mode. Tabs: **Summary**, **Folders**, **Capture**,
-**Framing**, **Exports**, **Metadata**, **CSV** (a read-only table of the
-inventory — search, filter by status, jump the cursor to a row), and
-**Log** (today's events, filterable, with a shortcut to the log folder).
+Opened outside capture mode. A large **Start capture** button sits above
+the tabs at all times — faster to reach than the menu or the shortcut.
+Tabs: **Summary**, **Folders**, **Capture**, **Framing**, **Exports**,
+**Metadata**, **CSV** (a read-only table of the inventory — search,
+filter by status, jump the cursor to a row), and **Log** (today's events,
+filterable, with a shortcut to the log folder).
 
 Every setting change is applied and saved immediately — there's no separate
 save step.
@@ -162,8 +164,11 @@ plausible size, whether it touches the image border, and its solidity.
 
 - **Reliable** (green) — used as-is.
 - **Needs review** (orange) — worth a glance before moving on.
-- **Impossible** (red) — falls back to the full, uncropped frame; fix it
-  manually if needed (see *Adjusting the crop* above).
+- **Impossible** (red) — a severely underexposed negative (near-zero
+  contrast against the light table) gets a second, more thorough attempt
+  automatically before giving up; if that also fails, falls back to the
+  full, uncropped frame — fix it manually if needed (see *Adjusting the
+  crop* above).
 
 Manual edits and re-detections regenerate the exports for that image only;
 already-finalized images are untouched (use completeness check +
@@ -179,8 +184,22 @@ Three rendering modes for the JPEG reading positive, set per campaign:
 - **manual** — campaign-wide exposure, shadows, highlights, and contrast
   settings, adjustable live during capture with a preview (`P`).
 
-The master TIFF and JPEG are never touched by this — only the reading
-positive is affected.
+The reading positive also automatically excludes the negative's unexposed
+border from its crop whenever it can confidently tell the two apart — the
+master TIFF and JPEG keep the full framed negative regardless, border
+included, for archival fidelity. Automatic exposure is never thrown off by
+that border either way, whether or not the extra crop above succeeds.
+
+When it isn't confident enough to draw that extra crop on its own, the
+image is simply left as the full framed negative — nothing is ever cut
+into by a low-confidence guess. **Project ▸ Positive crop review**
+(also available outside capture) lists every image left that way, shows
+the already-exported image with a draggable crop rectangle, and lets you
+confirm or adjust the crop and the exposure for that one image — `Enter`
+confirms and moves to the next, only the reading positive is regenerated.
+
+The master TIFF and JPEG are never touched by any of this — only the
+reading positive is affected.
 
 ## Name conflicts
 
@@ -203,9 +222,9 @@ Three levels, always non-blocking:
 
 - **Info** — status line, disappears after 5 seconds. Routine events only;
   nothing that needs acknowledging.
-- **Warning** — a banner above the status line, stays until the cause is
-  gone, click for details. Doesn't stop anything (e.g. missing metadata
-  tool, a leftover file that couldn't be cleaned up).
+- **Warning** — a banner above the status line, click for details or the
+  × to dismiss it. Doesn't stop anything (e.g. missing metadata tool, a
+  leftover file that couldn't be cleaned up, the export queue growing).
 - **Critical** — a red banner and the pipeline pauses (e.g. disk nearly
   full, a folder became inaccessible). Detections keep queuing; nothing is
   lost. Resolve the cause, then click **Resume processing**.

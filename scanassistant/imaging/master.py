@@ -29,6 +29,7 @@ class DevelopedMaster:
     pixels: np.ndarray  # (H, W, 3) uint16 if colorspace=srgb, (H, W) uint16 if gray
     scale_factor: float
     bounds_adjusted: bool  # fixed mode only
+    frame_in_output: FrameGeometry  # support frame's own footprint within `pixels`
 
 
 def develop_master(
@@ -57,6 +58,7 @@ def develop_master(
         pixels=pixels,
         scale_factor=geometry.scale_factor,
         bounds_adjusted=geometry.bounds_adjusted,
+        frame_in_output=geometry.frame_in_output,
     )
 
 

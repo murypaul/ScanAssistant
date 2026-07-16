@@ -55,6 +55,36 @@ class ExportContext:
     width: int
     height: int
     angle_deg: float
+    # `jpeg_positive` only, both `None` by default (automatic): an operator's
+    # manual choice from the "Recadrage des positifs" screen, applied for
+    # this one regeneration — not replayed from the journal by
+    # `core.recovery` on a later, unrelated regeneration (accepted
+    # simplification; see `core.session.apply_manual_positive_override`).
+    # Fractions of `master.pixels`' own width/height (each in [0, 1]), not
+    # absolute pixels: the review screen displays an already-exported JPEG
+    # that may be a different resolution (`exports.jpeg_master.long_edge_px`)
+    # — fractions need no reconciliation, `master.pixels` is only ever
+    # sliced back into absolute pixels once actually re-developed here.
+    content_frame_override: tuple[float, float, float, float] | None = None  # x, y, w, h fractions
+    manual_positive_settings: tuple[float, int, int, int] | None = None  # exposure_ev, contrast,
+    # shadows, highlights
+
+
+@dataclass(frozen=True)
+class ContentFrameOutcome:
+    """`jpeg_positive`-only: the content-frame crop actually applied to the
+    rendered positive (`imaging.content_framing`) — never the TIFF/JPEG
+    master. Primitive fields only, not the `imaging` result type itself:
+    this module must not import anything from `imaging` (see module
+    docstring)."""
+
+    x: int
+    y: int
+    width: int
+    height: int
+    fill: float
+    area_ratio: float
+    source: str = "auto"  # auto | manual — mirrors `project.state.FramingState.source`
 
 
 @dataclass(frozen=True)
@@ -63,6 +93,9 @@ class ExportResult:
 
     scale_factor: float = 1.0
     bounds_adjusted: bool = False
+    # `jpeg_positive` only; `None` means no confident crop was applied
+    # (deferred) — logged either way (`POSITIVE_FRAMING`, `core.session`).
+    content_frame: ContentFrameOutcome | None = None
 
 
 @dataclass(frozen=True)

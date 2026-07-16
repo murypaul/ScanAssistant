@@ -24,6 +24,22 @@ class FramingState:
 
 
 @dataclass
+class ContentFramingState:
+    """Content frame within the support frame (`imaging.content_framing`),
+    for the reading positive only — never applied to the master. Always
+    axis-aligned (no `angle_deg`: the support frame's own deskew already
+    resolves this)."""
+
+    x: int = 0
+    y: int = 0
+    width: int = 0
+    height: int = 0
+    fill: float = 0.0
+    area_ratio: float = 0.0
+    outcome: str = "deferred"  # applied | deferred
+
+
+@dataclass
 class CurrentImageState:
     assigned_name: str
     source_file: str = ""
@@ -31,6 +47,11 @@ class CurrentImageState:
     state: str = "IN_REVIEW"
     rotation_deg: int = 0  # 0 | 90 | 180 | 270, clockwise (V key)
     framing: FramingState = field(default_factory=FramingState)
+    # None until the jpeg_positive export has run at least once for this
+    # image — distinct from a present-but-"deferred" entry (tried, not
+    # confident enough to apply): a reviewer tool needs to tell "never
+    # processed" apart from "processed, nothing to flag".
+    content_framing: ContentFramingState | None = None
     exports: dict[str, str] = field(default_factory=dict)
 
 
@@ -90,6 +111,12 @@ def _from_dict(data: dict[str, Any]) -> ProjectState:
     current_image = None
     if isinstance(current_image_data, dict):
         framing_data = current_image_data.get("framing", {})
+        content_framing_data = current_image_data.get("content_framing")
+        content_framing = (
+            ContentFramingState(**content_framing_data)
+            if isinstance(content_framing_data, dict)
+            else None
+        )
         current_image = CurrentImageState(
             assigned_name=current_image_data["assigned_name"],
             source_file=current_image_data.get("source_file", ""),
@@ -102,6 +129,7 @@ def _from_dict(data: dict[str, Any]) -> ProjectState:
                 90 if current_image_data.get("orientation") == "vertical" else 0,
             ),
             framing=FramingState(**framing_data),
+            content_framing=content_framing,
             exports=current_image_data.get("exports", {}),
         )
     return ProjectState(

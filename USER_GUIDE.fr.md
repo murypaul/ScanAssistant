@@ -52,7 +52,9 @@ Depuis l'écran d'accueil, **New campaign** ouvre un assistant en plusieurs
 
 ## L'écran projet
 
-Il s'ouvre en dehors du mode capture. Onglets : **Summary**, **Folders**,
+Il s'ouvre en dehors du mode capture. Un gros bouton **Start capture** reste
+visible en permanence au-dessus des onglets — plus rapide à atteindre que
+le menu ou le raccourci clavier. Onglets : **Summary**, **Folders**,
 **Capture**, **Framing**, **Exports**, **Metadata**, **CSV** (table de
 l'inventaire en lecture seule, avec recherche, filtre par statut et
 positionnement du curseur sur une ligne), et **Log** (événements du jour,
@@ -170,8 +172,11 @@ bord de l'image, et sa solidité.
 - **Fiable** (vert) — utilisé tel quel.
 - **À vérifier** (orange) — mérite un coup d'œil avant de passer à la
   suite.
-- **Impossible** (rouge) — repli sur l'image entière non recadrée ; à
-  corriger manuellement si besoin (voir *Ajuster le cadre* ci-dessus).
+- **Impossible** (rouge) — un négatif très sous-exposé (contraste quasi
+  nul avec la table lumineuse) reçoit d'abord automatiquement une seconde
+  tentative plus poussée ; si elle échoue aussi, repli sur l'image entière
+  non recadrée — à corriger manuellement si besoin (voir *Ajuster le
+  cadre* ci-dessus).
 
 Les corrections manuelles et les nouvelles détections ne régénèrent les
 exports que de l'image concernée ; les images déjà finalisées restent
@@ -190,8 +195,25 @@ campagne :
 - **manual** — réglages de campagne (exposition, ombres, hautes lumières,
   contraste), ajustables à chaud pendant la capture avec aperçu (`P`).
 
-Le TIFF et le JPEG maîtres ne sont jamais affectés — seul le positif de
-lecture change.
+Le positif de lecture exclut aussi automatiquement la bordure non exposée
+du négatif de son cadrage, dès qu'il peut distinguer les deux avec
+confiance — le TIFF et le JPEG maîtres gardent toujours le négatif entier,
+bordure comprise, pour la fidélité archivistique. L'exposition automatique
+n'est plus faussée par cette bordure, que ce rognage supplémentaire
+réussisse ou non.
+
+Quand la confiance n'est pas suffisante pour tracer ce rognage
+supplémentaire tout seul, l'image reste simplement le négatif entier
+recadré au cadre support — jamais de coupe décidée sur une estimation peu
+fiable. **Project ▸ Positive crop review** (aussi accessible en dehors de
+la capture) liste chaque image laissée ainsi, affiche l'image déjà
+exportée avec un rectangle de recadrage déplaçable à la souris, et permet
+de confirmer ou d'ajuster le cadrage et l'exposition pour cette image
+précise — `Enter` confirme et passe à la suivante ; seul le positif de
+lecture est régénéré.
+
+Le TIFF et le JPEG maîtres ne sont jamais affectés par tout cela — seul le
+positif de lecture change.
 
 ## Conflits de noms
 
@@ -216,10 +238,10 @@ Trois niveaux, jamais bloquants :
 
 - **Info** — ligne de statut, disparaît après 5 secondes. Événements
   courants uniquement ; rien qui ne demande d'action de votre part.
-- **Avertissement** — bandeau au-dessus de la ligne de statut, reste tant
-  que la cause persiste, cliquable pour le détail. N'interrompt rien (par
-  exemple : outil de métadonnées introuvable, fichier résiduel impossible
-  à nettoyer).
+- **Avertissement** — bandeau au-dessus de la ligne de statut, cliquable
+  pour le détail ou fermable par le ×. N'interrompt rien (par exemple :
+  outil de métadonnées introuvable, fichier résiduel impossible à
+  nettoyer, file d'export qui grossit).
 - **Critique** — bandeau rouge, le pipeline se met en pause (par exemple :
   disque presque plein, dossier devenu inaccessible). Les détections
   continuent de s'accumuler ; rien n'est perdu. Une fois la cause résolue,
