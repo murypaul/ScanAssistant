@@ -631,17 +631,19 @@ class CaptureSession:
         self,
         name: str,
         *,
-        content_frame: tuple[int, int, int, int] | None = None,
+        content_frame: tuple[float, float, float, float] | None = None,
         settings: tuple[float, int, int, int] | None = None,
     ) -> list[SessionEvent]:
         """Regenerates `jpeg_positive` for `name` using an operator's manual
         choice from the "Recadrage des positifs" screen: `content_frame`
-        (x, y, width, height, in `master.pixels` coordinates) always wins
-        over automatic detection, `settings` (exposure_ev, contrast,
-        shadows, highlights) always wins over the campaign's own exposure
-        settings — for this one regeneration only. Not durably replayed by
-        a later, unrelated regeneration of the same image (accepted
-        simplification: see `ExportContext.content_frame_override`).
+        (x, y, width, height, each a fraction in [0, 1] of `master.pixels`'
+        own dimensions — resolution-independent, so the screen doesn't need
+        to know `master.pixels`' actual size to build this) always wins over
+        automatic detection; `settings` (exposure_ev, contrast, shadows,
+        highlights) always wins over the campaign's own exposure settings —
+        for this one regeneration only. Not durably replayed by a later,
+        unrelated regeneration of the same image (accepted simplification:
+        see `ExportContext.content_frame_override`).
 
         Same journal-rebuild + jpeg_positive-only scope as
         `regenerate_positive`; does nothing (empty list) if the RAW or its

@@ -60,7 +60,12 @@ class ExportContext:
     # this one regeneration — not replayed from the journal by
     # `core.recovery` on a later, unrelated regeneration (accepted
     # simplification; see `core.session.apply_manual_positive_override`).
-    content_frame_override: tuple[int, int, int, int] | None = None  # x, y, width, height
+    # Fractions of `master.pixels`' own width/height (each in [0, 1]), not
+    # absolute pixels: the review screen displays an already-exported JPEG
+    # that may be a different resolution (`exports.jpeg_master.long_edge_px`)
+    # — fractions need no reconciliation, `master.pixels` is only ever
+    # sliced back into absolute pixels once actually re-developed here.
+    content_frame_override: tuple[float, float, float, float] | None = None  # x, y, w, h fractions
     manual_positive_settings: tuple[float, int, int, int] | None = None  # exposure_ev, contrast,
     # shadows, highlights
 

@@ -178,7 +178,12 @@ class MasterExportRunner:
         "Recadrage des positifs" screen) always wins over automatic
         detection for this one regeneration — never recomputed against it."""
         if context.content_frame_override is not None:
-            x, y, width, height = context.content_frame_override
+            master_height, master_width = master.pixels.shape[:2]
+            x_frac, y_frac, w_frac, h_frac = context.content_frame_override
+            x = round(x_frac * master_width)
+            y = round(y_frac * master_height)
+            width = round(w_frac * master_width)
+            height = round(h_frac * master_height)
             support_area = master.frame_in_output.width * master.frame_in_output.height
             outcome = ContentFrameOutcome(
                 x=x,
