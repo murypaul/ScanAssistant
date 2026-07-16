@@ -55,6 +55,14 @@ class ExportContext:
     width: int
     height: int
     angle_deg: float
+    # `jpeg_positive` only, both `None` by default (automatic): an operator's
+    # manual choice from the "Recadrage des positifs" screen, applied for
+    # this one regeneration — not replayed from the journal by
+    # `core.recovery` on a later, unrelated regeneration (accepted
+    # simplification; see `core.session.apply_manual_positive_override`).
+    content_frame_override: tuple[int, int, int, int] | None = None  # x, y, width, height
+    manual_positive_settings: tuple[float, int, int, int] | None = None  # exposure_ev, contrast,
+    # shadows, highlights
 
 
 @dataclass(frozen=True)
@@ -71,6 +79,7 @@ class ContentFrameOutcome:
     height: int
     fill: float
     area_ratio: float
+    source: str = "auto"  # auto | manual — mirrors `project.state.FramingState.source`
 
 
 @dataclass(frozen=True)

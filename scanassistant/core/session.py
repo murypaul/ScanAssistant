@@ -627,6 +627,38 @@ class CaptureSession:
         self._persist_state()
         return events
 
+    def apply_manual_positive_override(
+        self,
+        name: str,
+        *,
+        content_frame: tuple[int, int, int, int] | None = None,
+        settings: tuple[float, int, int, int] | None = None,
+    ) -> list[SessionEvent]:
+        """Regenerates `jpeg_positive` for `name` using an operator's manual
+        choice from the "Recadrage des positifs" screen: `content_frame`
+        (x, y, width, height, in `master.pixels` coordinates) always wins
+        over automatic detection, `settings` (exposure_ev, contrast,
+        shadows, highlights) always wins over the campaign's own exposure
+        settings — for this one regeneration only. Not durably replayed by
+        a later, unrelated regeneration of the same image (accepted
+        simplification: see `ExportContext.content_frame_override`).
+
+        Same journal-rebuild + jpeg_positive-only scope as
+        `regenerate_positive`; does nothing (empty list) if the RAW or its
+        support frame can't be reconstructed.
+        """
+        context = rebuild_export_context(name, self.paths, self.fs)
+        if context is None:
+            return []
+        if content_frame is not None:
+            context = replace(context, content_frame_override=content_frame)
+        if settings is not None:
+            context = replace(context, manual_positive_settings=settings)
+        self.enqueue_export_context(name, ["jpeg_positive"], context)
+        events = self._drain_exports(self._new_deadline())
+        self._persist_state()
+        return events
+
     def _log_export(self, task: ExportTask, result: ExportResult | None) -> None:
         """Logs an `EXPORT` journal entry: effective frame + scale factor."""
         details: dict[str, object] = {}
@@ -658,6 +690,11 @@ class CaptureSession:
         entry alone. Also updates `state.json` for the image still current —
         once it's moved to history, the journal is the only durable copy."""
         if content_frame is not None:
+            # "manual" (operator-confirmed, `apply_manual_positive_override`)
+            # is a distinct outcome from "applied" (automatic, confident
+            # detection) — a manually-confirmed image must not keep
+            # reappearing in the "needs review" list.
+            outcome = "manual" if content_frame.source == "manual" else "applied"
             state = ContentFramingState(
                 x=content_frame.x,
                 y=content_frame.y,
@@ -665,7 +702,7 @@ class CaptureSession:
                 height=content_frame.height,
                 fill=content_frame.fill,
                 area_ratio=content_frame.area_ratio,
-                outcome="applied",
+                outcome=outcome,
             )
         else:
             state = ContentFramingState(outcome="deferred")

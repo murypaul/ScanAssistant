@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+
 from scanassistant.core.queue import (
     ContentFrameOutcome,
     ExportContext,
@@ -27,7 +29,7 @@ from scanassistant.imaging.geometry import FrameGeometry
 from scanassistant.imaging.raw import RawDecoder
 from scanassistant.journal.journal import Journal
 from scanassistant.metadata.writer import MetadataWriter, ProductionInfo
-from scanassistant.project.campaign import Campaign
+from scanassistant.project.campaign import Campaign, JpegPositiveExportConfig
 from scanassistant.project.layout import CampaignPaths
 
 _CacheKey = tuple[str, str, tuple[int, int, int, int, float], str, str, tuple[int, int]]
@@ -90,7 +92,7 @@ class MasterExportRunner:
             return ExportFailure(code="E-05", message=message)
 
         try:
-            path, content_frame = self._write_kind_with_retry(task.name, task.kind, master)
+            path, content_frame = self._write_kind_with_retry(task.name, task.kind, master, context)
         except Exception as exc:  # export write failure (E-06): same
             # handling as E-05, non-blocking for other tasks.
             message = str(exc)
@@ -112,20 +114,20 @@ class MasterExportRunner:
         )
 
     def _write_kind_with_retry(
-        self, name: str, kind: str, master: master_pipeline.DevelopedMaster
+        self, name: str, kind: str, master: master_pipeline.DevelopedMaster, context: ExportContext
     ) -> tuple[Path, ContentFrameOutcome | None]:
         """E-06: two attempts before treating the write as failed."""
         last_exc: Exception | None = None
         for _attempt in range(_WRITE_ATTEMPTS):
             try:
-                return self._write_kind(name, kind, master)
+                return self._write_kind(name, kind, master, context)
             except Exception as exc:  # noqa: BLE001 — retried, then re-raised as-is
                 last_exc = exc
         assert last_exc is not None
         raise last_exc
 
     def _write_kind(
-        self, name: str, kind: str, master: master_pipeline.DevelopedMaster
+        self, name: str, kind: str, master: master_pipeline.DevelopedMaster, context: ExportContext
     ) -> tuple[Path, ContentFrameOutcome | None]:
         if kind == "tiff":
             path = self._paths.tiff_dir / f"{name}.tif"
@@ -150,24 +152,13 @@ class MasterExportRunner:
         if kind == "jpeg_positive":
             positive_cfg = self._campaign.exports.jpeg_positive
             path = self._paths.jpeg_positive_dir / f"{name}{positive_cfg.suffix}.jpg"
-            manual = positive_cfg.manual_settings
-            content_frame = detect_content_frame(master.pixels, master.frame_in_output)
-            source_pixels = master.pixels
-            if content_frame is not None:
-                source_pixels = master.pixels[
-                    content_frame.y : content_frame.y + content_frame.height,
-                    content_frame.x : content_frame.x + content_frame.width,
-                ]
+            source_pixels, outcome = self._positive_source_pixels(master, context)
+            mode, manual_settings = self._positive_render_settings(positive_cfg, context)
             positive16 = positive_pipeline.render_positive(
                 source_pixels,
                 horizontal_flip=positive_cfg.horizontal_flip,
-                mode=positive_cfg.mode,
-                manual=positive_pipeline.ManualSettings(
-                    exposure_ev=manual.exposure_ev,
-                    contrast=manual.contrast,
-                    shadows=manual.shadows,
-                    highlights=manual.highlights,
-                ),
+                mode=mode,
+                manual=manual_settings,
             )
             positive_pipeline.write_jpeg_positive(
                 positive16,
@@ -175,21 +166,68 @@ class MasterExportRunner:
                 quality=positive_cfg.quality,
                 long_edge_px=positive_cfg.long_edge_px,
             )
-            outcome = (
-                ContentFrameOutcome(
-                    x=content_frame.x,
-                    y=content_frame.y,
-                    width=content_frame.width,
-                    height=content_frame.height,
-                    fill=content_frame.fill,
-                    area_ratio=content_frame.area_ratio,
-                )
-                if content_frame is not None
-                else None
-            )
             return path, outcome
 
         raise ValueError(f"unknown export kind: {kind!r}")
+
+    def _positive_source_pixels(
+        self, master: master_pipeline.DevelopedMaster, context: ExportContext
+    ) -> tuple[np.ndarray, ContentFrameOutcome | None]:
+        """The array to render the positive from: an operator's manual
+        content-frame choice (`context.content_frame_override`, from the
+        "Recadrage des positifs" screen) always wins over automatic
+        detection for this one regeneration — never recomputed against it."""
+        if context.content_frame_override is not None:
+            x, y, width, height = context.content_frame_override
+            support_area = master.frame_in_output.width * master.frame_in_output.height
+            outcome = ContentFrameOutcome(
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                fill=1.0,
+                area_ratio=(width * height) / support_area if support_area > 0 else 0.0,
+                source="manual",
+            )
+            return master.pixels[y : y + height, x : x + width], outcome
+
+        content_frame = detect_content_frame(master.pixels, master.frame_in_output)
+        if content_frame is None:
+            return master.pixels, None
+        outcome = ContentFrameOutcome(
+            x=content_frame.x,
+            y=content_frame.y,
+            width=content_frame.width,
+            height=content_frame.height,
+            fill=content_frame.fill,
+            area_ratio=content_frame.area_ratio,
+            source="auto",
+        )
+        source_pixels = master.pixels[
+            content_frame.y : content_frame.y + content_frame.height,
+            content_frame.x : content_frame.x + content_frame.width,
+        ]
+        return source_pixels, outcome
+
+    def _positive_render_settings(
+        self, positive_cfg: JpegPositiveExportConfig, context: ExportContext
+    ) -> tuple[str, positive_pipeline.ManualSettings]:
+        """An operator's manual exposure choice (`context.
+        manual_positive_settings`, from the "Recadrage des positifs" screen)
+        always wins over the campaign's own settings for this one
+        regeneration — applies regardless of the campaign's configured mode."""
+        if context.manual_positive_settings is not None:
+            exposure_ev, contrast, shadows, highlights = context.manual_positive_settings
+            return positive_pipeline.MODE_MANUAL, positive_pipeline.ManualSettings(
+                exposure_ev=exposure_ev, contrast=contrast, shadows=shadows, highlights=highlights
+            )
+        manual = positive_cfg.manual_settings
+        return positive_cfg.mode, positive_pipeline.ManualSettings(
+            exposure_ev=manual.exposure_ev,
+            contrast=manual.contrast,
+            shadows=manual.shadows,
+            highlights=manual.highlights,
+        )
 
     def _developed_master(
         self, name: str, context: ExportContext
