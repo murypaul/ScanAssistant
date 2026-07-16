@@ -5,8 +5,8 @@
 ### New / Changed
 
 **Project & Campaign**
-- The project screen now has a large "Start capture" button at the top,
-  always visible above the tabs — a faster, more discoverable way to
+- The project screen now has a "Start capture" button at the bottom,
+  always visible below the tabs — a faster, more discoverable way to
   begin than the keyboard shortcut or the menu.
 - New "Positive crop review" screen (Project menu): lists the negatives
   whose reading positive the automatic crop couldn't confidently narrow

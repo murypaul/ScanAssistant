@@ -48,8 +48,8 @@ From the home screen, **New campaign** opens a short wizard:
 
 ## The project screen
 
-Opened outside capture mode. A large **Start capture** button sits above
-the tabs at all times — faster to reach than the menu or the shortcut.
+Opened outside capture mode. A **Start capture** button sits below the
+tabs at all times — faster to reach than the menu or the shortcut.
 Tabs: **Summary**, **Folders**, **Capture**, **Framing**, **Exports**,
 **Metadata**, **CSV** (a read-only table of the inventory — search,
 filter by status, jump the cursor to a row), and **Log** (today's events,
