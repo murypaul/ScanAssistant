@@ -935,6 +935,10 @@ class CaptureSession:
         if after == before:
             return []
         current.rotation_deg = after
+        # The content frame (if any) was computed against the previous
+        # rotation and no longer lines up with the pixels it would be
+        # cropping — cleared until the re-queued export below recomputes it.
+        current.content_framing = None
         self.journal.log(
             "FRAMING",
             "rotation",
@@ -991,6 +995,10 @@ class CaptureSession:
             confidence=confidence,
             source=source,
         )
+        # The content frame (if any) was computed against the previous
+        # support frame and no longer lines up with the pixels it would be
+        # cropping — cleared until the re-queued export below recomputes it.
+        current.content_framing = None
         details: dict[str, object] = {
             "x": x,
             "y": y,

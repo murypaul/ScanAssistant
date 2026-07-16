@@ -125,31 +125,58 @@ def _to_reference_space(frame: FrameResult, scale_factor: float) -> FrameResult:
     )
 
 
+def _frame_after_rotation(
+    frame: FrameResult, rotation_deg: int, pixel_height: int, pixel_width: int
+) -> FrameResult:
+    """Rotates a frame's coordinates the same way `rotation_deg` (90°
+    multiples) rotates the `pixel_height` x `pixel_width` image it was drawn
+    over — the coordinate-only half of `_rotated_for_display`, reused by the
+    inverse transform below. `angle_deg` (deskew) is left as-is: it describes
+    a tilt relative to whatever's currently "up", which a 90°-multiple
+    rotation doesn't change.
+    """
+    times = (rotation_deg // 90) % 4
+    x, y, width, height = frame.x, frame.y, frame.width, frame.height
+    image_height, image_width = pixel_height, pixel_width
+    for _ in range(times):
+        x, y, width, height = image_height - y - height, x, height, width
+        image_height, image_width = image_width, image_height
+    return replace(frame, x=x, y=y, width=width, height=height)
+
+
+def _canonical_frame_from_display(
+    frame: FrameResult, rotation_deg: int, canonical_height: int, canonical_width: int
+) -> FrameResult:
+    """Inverse of `_frame_after_rotation`: converts a frame expressed in the
+    currently-displayed (possibly rotated) pixel space — what `PreviewArea`
+    reports back while dragging the overlay — to the canonical, un-rotated
+    space `_current_frame_result` is always stored in the rest of the time.
+    """
+    times = (rotation_deg // 90) % 4
+    if times == 0:
+        return frame
+    display_height, display_width = (
+        (canonical_width, canonical_height) if times % 2 else (canonical_height, canonical_width)
+    )
+    return _frame_after_rotation(frame, (360 - rotation_deg) % 360, display_height, display_width)
+
+
 def _rotated_for_display(
     pixels: np.ndarray, frame: FrameResult | None, rotation_deg: int
 ) -> tuple[np.ndarray, FrameResult | None]:
     """Applies the image's stored `rotation_deg` (V key, cycles 0/90/180/270°)
     to the plain negative view — display only, `pixels`/`frame` themselves
-    (canonical, reference-space) are untouched. `angle_deg` (deskew) is left
-    as-is: it describes a tilt relative to whatever's currently "up", which a
-    90°-multiple rotation doesn't change.
+    (canonical, reference-space) are untouched.
     """
     times = (rotation_deg // 90) % 4
     if times == 0:
         return pixels, frame
-    rotated_pixels = pixels
-    rotated_frame = frame
-    for _ in range(times):
-        image_height = rotated_pixels.shape[0]
-        rotated_pixels = np.ascontiguousarray(np.rot90(rotated_pixels, k=-1))
-        if rotated_frame is not None:
-            rotated_frame = replace(
-                rotated_frame,
-                x=image_height - rotated_frame.y - rotated_frame.height,
-                y=rotated_frame.x,
-                width=rotated_frame.height,
-                height=rotated_frame.width,
-            )
+    rotated_pixels = np.ascontiguousarray(np.rot90(pixels, k=-times))
+    rotated_frame = (
+        _frame_after_rotation(frame, rotation_deg, pixels.shape[0], pixels.shape[1])
+        if frame is not None
+        else None
+    )
     return rotated_pixels, rotated_frame
 
 
@@ -873,11 +900,7 @@ class CaptureScreen(QWidget):
             self.preview_area.show_image(image)
             self.preview_area.set_frame_overlay(None)  # frame is already applied, no need to repeat
         else:
-            current = self.session.state.current_image if self.session is not None else None
-            if self._pending_rotation_deg is not None:
-                rotation_deg = self._pending_rotation_deg
-            else:
-                rotation_deg = current.rotation_deg if current is not None else 0
+            rotation_deg = self._effective_rotation_deg()
             rotated_pixels, rotated_frame = _rotated_for_display(
                 pixels, self._current_frame_result, rotation_deg
             )
@@ -1192,9 +1215,23 @@ class CaptureScreen(QWidget):
         """G key: rule-of-thirds guide lines within the frame."""
         self.preview_area.toggle_guides()
 
+    def _effective_rotation_deg(self) -> int:
+        """The rotation currently reflected on screen: the not-yet-committed
+        value while a V/Shift+V debounce is pending, the session's committed
+        value otherwise."""
+        if self._pending_rotation_deg is not None:
+            return self._pending_rotation_deg
+        current = self.session.state.current_image if self.session is not None else None
+        return current.rotation_deg if current is not None else 0
+
     def _start_frame_edit(self, new_frame: FrameResult) -> None:
         self._current_frame_result = new_frame
-        self.preview_area.set_frame_overlay(new_frame)
+        rotation_deg = self._effective_rotation_deg()
+        display_frame = new_frame
+        if rotation_deg and self._current_preview_pixels is not None:
+            height, width = self._current_preview_pixels.shape[:2]
+            display_frame = _frame_after_rotation(new_frame, rotation_deg, height, width)
+        self.preview_area.set_frame_overlay(display_frame)
         self._frame_commit_pending = True
         self._frame_commit_timer.start(_FRAME_COMMIT_DELAY_MS)
 
@@ -1236,10 +1273,22 @@ class CaptureScreen(QWidget):
         self._dispatch(events)
         manual_frame = replace(frame, level="manual")
         self._current_frame_result = manual_frame
-        self.preview_area.set_frame_overlay(manual_frame)
+        rotation_deg = self._effective_rotation_deg()
+        display_frame = manual_frame
+        if rotation_deg and self._current_preview_pixels is not None:
+            height, width = self._current_preview_pixels.shape[:2]
+            display_frame = _frame_after_rotation(manual_frame, rotation_deg, height, width)
+        self.preview_area.set_frame_overlay(display_frame)
         self._update_confidence_label()
 
     def _on_frame_dragged(self, frame: FrameResult) -> None:
+        # `frame` comes back from `PreviewArea` in the currently-displayed
+        # (possibly rotated) pixel space — `_current_frame_result` is always
+        # canonical/un-rotated, so it needs converting back first.
+        rotation_deg = self._effective_rotation_deg()
+        if rotation_deg and self._current_preview_pixels is not None:
+            height, width = self._current_preview_pixels.shape[:2]
+            frame = _canonical_frame_from_display(frame, rotation_deg, height, width)
         self._current_frame_result = frame
         self._frame_commit_pending = True
         # The overlay is already redrawn by `PreviewArea` itself during the drag.
