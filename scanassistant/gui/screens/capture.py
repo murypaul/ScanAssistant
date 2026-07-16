@@ -925,13 +925,15 @@ class CaptureScreen(QWidget):
         """Positive rendered from the preview already in memory, using campaign settings.
 
         Crop/deskew/rotation applied first (same geometry as the master
-        preview, DECISIONS.md I-99) so the positive preview matches what the
-        actual export will look like, not the raw unrotated negative.
+        preview) so the positive preview matches what the actual export will
+        look like, not the raw unrotated negative.
         """
         assert self.session is not None
         config = self.session.campaign.exports.jpeg_positive
         manual = config.manual_settings
         framed_pixels = self._render_master_preview(preview_pixels, frame_override=frame_override)
+        if frame_override is None:
+            framed_pixels = self._apply_content_frame_preview(framed_pixels)
         # `imaging.positive.render_positive` expects 16-bit input; the preview
         # is 8-bit (`imaging.preview.Preview.pixels`) — exact rescale
         # (255 * 257 = 65535), no extra library needed.
@@ -949,6 +951,40 @@ class CaptureScreen(QWidget):
         )
         positive8 = (positive16 // 257).astype(np.uint8)
         return np.stack([positive8, positive8, positive8], axis=-1)
+
+    def _apply_content_frame_preview(self, framed_pixels: np.ndarray) -> np.ndarray:
+        """Read-only reflection of the content frame already applied to the
+        last `jpeg_positive` export (`session.state.current_image.
+        content_framing`) — never recomputed here: detection only ever runs
+        in the background export task (`imaging.content_framing`), never on
+        this synchronous preview path. Skipped for the fast/downscaled
+        preview (`frame_override` set): that path uses its own, unrelated
+        scale, not `_current_preview_scale_factor`.
+
+        Nothing to show before the first `jpeg_positive` export has run for
+        this image (`content_framing` is still `None`) — the preview then
+        falls back to the support-frame crop alone, same as before this was
+        added.
+        """
+        session = self.session
+        current = session.state.current_image if session is not None else None
+        content_framing = current.content_framing if current is not None else None
+        if content_framing is None or content_framing.outcome != "applied":
+            return framed_pixels
+        # `content_framing` is in reference/master-pixel space, same
+        # convention as `framing` — `scale_factor` is reference/preview
+        # (`imaging.preview.Preview.scale_factor`), so converting to this
+        # preview's space divides, the opposite direction of
+        # `_to_reference_space`.
+        scale = self._current_preview_scale_factor
+        height, width = framed_pixels.shape[:2]
+        x0 = max(0, round(content_framing.x / scale))
+        y0 = max(0, round(content_framing.y / scale))
+        x1 = min(width, x0 + round(content_framing.width / scale))
+        y1 = min(height, y0 + round(content_framing.height / scale))
+        if x1 <= x0 or y1 <= y0:
+            return framed_pixels
+        return framed_pixels[y0:y1, x0:x1]
 
     def _apply_frame_result(
         self, name: str, journal_action: str, frame: FrameResult, *, rescued: bool = False
