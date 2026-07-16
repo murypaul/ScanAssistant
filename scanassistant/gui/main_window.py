@@ -43,6 +43,7 @@ from scanassistant.gui.dialogs.preferences import PreferencesDialog
 from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.screens.capture import CaptureScreen
 from scanassistant.gui.screens.home import HomeScreen
+from scanassistant.gui.screens.positive_review import PositiveReviewScreen
 from scanassistant.gui.screens.project import ProjectScreen
 from scanassistant.gui.screens.statistics import StatisticsScreen
 from scanassistant.gui.shortcuts import (
@@ -161,6 +162,7 @@ class MainWindow(QMainWindow):
         self.capture_screen.queue_changed.connect(self._refresh_history_panel)
 
         self.statistics_screen = StatisticsScreen()
+        self.positive_review_screen = PositiveReviewScreen()
 
         self._stack = QStackedWidget()
         self._stack.addWidget(self.home_screen)
@@ -246,6 +248,12 @@ class MainWindow(QMainWindow):
         self._add_action(csv_menu, t("menu.project_csv_export"), None, self._on_csv_export)
         self.action_statistics = self._add_action(
             self.project_menu, t("menu.project_statistics"), None, self._on_open_statistics
+        )
+        self.action_positive_review = self._add_action(
+            self.project_menu,
+            t("menu.project_positive_review"),
+            None,
+            self._on_open_positive_review,
         )
         self._add_action(
             self.project_menu,
@@ -588,6 +596,23 @@ class MainWindow(QMainWindow):
         self.statistics_screen.show()
         self.statistics_screen.raise_()
         self.statistics_screen.activateWindow()
+
+    # --- positive crop review -----------------------------------------------
+
+    def _on_open_positive_review(self) -> None:
+        # Same reasoning as `_on_open_statistics`: also usable outside of
+        # capture, and from a campaign shared over a NAS/SMB mount opened
+        # from a different machine than the one that captured it.
+        session = self.capture_screen.session or self._build_offline_session()
+        if session is None:
+            QMessageBox.information(
+                self, t("positive_review.title"), t("positive_review.unavailable")
+            )
+            return
+        self.positive_review_screen.load(session)
+        self.positive_review_screen.show()
+        self.positive_review_screen.raise_()
+        self.positive_review_screen.activateWindow()
 
     def _build_offline_session(self) -> CaptureSession | None:
         campaign = self.project_screen.campaign
