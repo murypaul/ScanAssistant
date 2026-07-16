@@ -225,9 +225,12 @@ class ProjectScreen(QWidget):
         self.watched_folder_edit.editingFinished.connect(self._on_watched_folder_changed)
         browse = QPushButton(t("wizard.browse"))
         browse.clicked.connect(self._browse_watched_folder)
+        open_watched_button = QPushButton(t("project.open_watched_folder"))
+        open_watched_button.clicked.connect(self._open_watched_folder)
         watched_row = QHBoxLayout()
         watched_row.addWidget(self.watched_folder_edit, 1)
         watched_row.addWidget(browse)
+        watched_row.addWidget(open_watched_button)
 
         open_folder_button = QPushButton(t("project.open_campaign_folder"))
         open_folder_button.clicked.connect(self._open_campaign_folder)
@@ -293,6 +296,11 @@ class ProjectScreen(QWidget):
     def _open_campaign_folder(self) -> None:
         if self.paths is not None:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.paths.root)))
+
+    def _open_watched_folder(self) -> None:
+        path = self.watched_folder_edit.text().strip()
+        if path:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _browse_export_destination(self) -> None:
         path = QFileDialog.getExistingDirectory(self, t("project.export_destination"))

@@ -351,6 +351,7 @@ STRINGS: dict[str, str] = {
     "project.summary_counts": "{done} done · {remaining} remaining · {total} total",
     "project.summary_root": "Campaign folder: {root}",
     "project.open_campaign_folder": "Open campaign folder",
+    "project.open_watched_folder": "Open watched folder",
     "project.export_group": "Export copies",
     "project.export_destination": "Destination folder",
     "project.export_layout": "Layout",
