@@ -39,6 +39,9 @@
   small movement — only once the drag settles, matching how a keyboard
   adjustment already behaved. Several quick adjustments in a row now
   produce one export instead of flooding the queue with one per movement.
+  A remaining gap in the same fix meant the settle delay could still be
+  cut short to a fraction of a second while capture was running; this is
+  now fixed too, and the delay itself has also been lengthened.
 
 ## 1.4.0 — 2026-07-15
 

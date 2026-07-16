@@ -82,8 +82,8 @@ from scanassistant.watcher.stability import poll_interval_s
 
 _STATUS_MESSAGE_DURATION_MS = 5000
 _MIN_PUMP_INTERVAL_MS = 100
-_ROTATION_COMMIT_DELAY_MS = 1500
-_FRAME_COMMIT_DELAY_MS = 1500
+_ROTATION_COMMIT_DELAY_MS = 2500
+_FRAME_COMMIT_DELAY_MS = 2500
 # Detection (rescue in particular) is capped well under this on real hardware;
 # bounded so quitting can never hang indefinitely even if it isn't.
 _PREVIEW_WORKER_SHUTDOWN_TIMEOUT_MS = 2000
@@ -457,8 +457,7 @@ class CaptureScreen(QWidget):
 
     def stop(self, *, wait_for_exports: bool = True) -> None:
         self._pump_timer.stop()
-        self._commit_pending_rotation()  # never leave a rotation un-exported
-        self._commit_pending_frame()  # never leave a crop edit un-exported
+        self._flush_pending_edits()  # never leave a rotation/crop edit un-exported
         if self.session is not None:
             self._dispatch(self.session.stop(wait_for_exports=wait_for_exports))
             if wait_for_exports:
@@ -482,8 +481,7 @@ class CaptureScreen(QWidget):
         Returns the number of exports still pending right after submission.
         """
         self._pump_timer.stop()
-        self._commit_pending_rotation()  # never leave a rotation un-exported
-        self._commit_pending_frame()  # never leave a crop edit un-exported
+        self._flush_pending_edits()  # never leave a rotation/crop edit un-exported
         if self.session is None:
             return 0
         self._dispatch(self.session.stop(wait_for_exports=False))
@@ -520,16 +518,24 @@ class CaptureScreen(QWidget):
     def _pump(self) -> None:
         if self.session is None:
             return
-        # A newly-arrived, stabilized file implicitly validates whatever is
-        # still `current` (`core.session._finalize_current_as_validated`) —
-        # inside this very `pump()` call. A rotation or crop edit debounced
-        # past this point would export with the stale, pre-edit value.
-        self._commit_pending_rotation()
-        self._commit_pending_frame()
-        self._dispatch(self.session.pump(time.monotonic()))
+        # A newly-arrived, stabilized file can implicitly validate whatever
+        # is still `current` inside this very `pump()` call — a rotation or
+        # crop edit still only debounced in this screen's own state (not yet
+        # committed to `session`) would then export with the stale,
+        # pre-edit value. `before_finalize_current` flushes it, but only on
+        # the (rare) tick where that's actually about to happen: flushing
+        # unconditionally on every tick — this runs every ~100 ms — would
+        # cut the debounce down to that same ~100 ms and defeat it entirely.
+        self._dispatch(
+            self.session.pump(time.monotonic(), before_finalize_current=self._flush_pending_edits)
+        )
         self._refresh_banner()
         self._refresh_preview_state()
         self.queue_changed.emit()
+
+    def _flush_pending_edits(self) -> None:
+        self._commit_pending_rotation()
+        self._commit_pending_frame()
 
     def _dispatch(self, events: list[SessionEvent]) -> None:
         """Routes session-returned events to the same handler `_pump()` uses.
@@ -672,8 +678,7 @@ class CaptureScreen(QWidget):
         # Defense in depth: finalize/reject already flush a pending rotation
         # or crop edit before the cursor moves on, but never let one linger
         # onto a different image's export regardless of how we got here.
-        self._commit_pending_rotation()
-        self._commit_pending_frame()
+        self._flush_pending_edits()
         # Each new image starts back in plain negative view — positive/master
         # is a per-image check, not a standing preference to carry forward.
         self._positive_preview_active = False
@@ -1248,8 +1253,7 @@ class CaptureScreen(QWidget):
     def finalize_current(self) -> None:
         if self.session is None:
             return
-        self._commit_pending_rotation()  # the export must reflect the final rotation
-        self._commit_pending_frame()  # and the final crop
+        self._flush_pending_edits()  # the export must reflect the final rotation/crop
         try:
             events = self.session.validate_current()
         except IllegalTransitionError:
@@ -1261,8 +1265,7 @@ class CaptureScreen(QWidget):
     def reject_current_image(self) -> None:
         if self.session is None:
             return
-        self._commit_pending_rotation()
-        self._commit_pending_frame()
+        self._flush_pending_edits()
         try:
             events = self.session.reject_current()
         except IllegalTransitionError:
@@ -1449,6 +1452,10 @@ class CaptureScreen(QWidget):
     def _resolve_conflict(self, option: int, new_name: str | None = None) -> None:
         if self.session is None or self._pending_conflict is None:
             return
+        # Same reasoning as `finalize_current`/`reject_current_image`:
+        # resolving the conflict can itself finalize whatever image is
+        # still current (a new, till-now-conflicting file bumping it).
+        self._flush_pending_edits()
         try:
             events = self.session.resolve_conflict(option, new_name=new_name or None)
         except ValueError as exc:
