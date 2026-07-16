@@ -143,6 +143,24 @@ def _build_qss(brightness: str) -> str:
     QPushButton:default {{
         border-color: {ACCENT};
     }}
+    QPushButton[role="primary-action"] {{
+        background-color: {ACCENT};
+        color: {background};
+        border: none;
+        font-size: 14pt;
+        font-weight: 600;
+        padding: 10px 20px;
+    }}
+    QPushButton[role="primary-action"]:hover {{
+        background-color: {text_primary};
+    }}
+    QPushButton[role="primary-action"]:pressed {{
+        background-color: {text_secondary};
+    }}
+    QPushButton[role="primary-action"]:disabled {{
+        background-color: {border_strong};
+        color: {text_secondary};
+    }}
     QTabWidget::pane {{
         border: 1px solid {border};
     }}

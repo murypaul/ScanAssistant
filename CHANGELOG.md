@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.5.0 — 2026-07-16
+
+### New / Changed
+
+**Project & Campaign**
+- The project screen now has a large "Start capture" button at the top,
+  always visible above the tabs — a faster, more discoverable way to
+  begin than the keyboard shortcut or the menu.
+- New "Positive crop review" screen (Project menu): lists the negatives
+  whose reading positive the automatic crop couldn't confidently narrow
+  down, shows the already-exported image with a draggable crop overlay,
+  and lets the operator confirm or adjust the crop and the exposure for
+  that one image — one keystroke to confirm and move to the next. Only
+  the reading positive is regenerated; the archival master files are
+  never touched from this screen.
+
+**Framing**
+- A severely underexposed negative that the automatic frame detector
+  couldn't place at all (near-zero contrast against the light table) now
+  gets a second, more thorough attempt instead of being left unframed.
+
+**Exports & Metadata**
+- The reading positive now automatically excludes the negative's
+  unexposed border from its crop when it can confidently tell the two
+  apart, instead of always showing the whole framed negative. Automatic
+  exposure no longer gets thrown off by that same border either way,
+  whether or not the crop above succeeds.
+
+**Interface**
+- The "processing queue is growing" warning banner can now be dismissed
+  with a close button instead of staying on screen until the app closes.
+
+### Bug Fixes
+
+**Capture**
+- Dragging the crop rectangle no longer re-exports the image after every
+  small movement — only once the drag settles, matching how a keyboard
+  adjustment already behaved. Several quick adjustments in a row now
+  produce one export instead of flooding the queue with one per movement.
+
 ## 1.4.0 — 2026-07-15
 
 ### New / Changed

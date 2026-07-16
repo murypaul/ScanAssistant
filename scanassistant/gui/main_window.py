@@ -150,6 +150,7 @@ class MainWindow(QMainWindow):
 
         self.project_screen = ProjectScreen()
         self.project_screen.cursor_change_requested.connect(self._on_cursor_change_requested)
+        self.project_screen.start_capture_requested.connect(self._on_start_capture)
 
         # Real background thread for exports: without it, regenerating a
         # slow export synchronously (manual crop confirm, rotation...)

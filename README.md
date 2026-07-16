@@ -21,7 +21,11 @@ flat objects) run by a single operator over long, interruptible sessions.
 - **Automatic framing** — OpenCV-based crop detection with a confidence
   score (reliable / needs review / impossible), plus fast manual correction.
 - **Exports** — 16-bit TIFF master, JPEG master, and a JPEG reading positive
-  (three rendering modes), generated in the background.
+  (three rendering modes), generated in the background. The reading
+  positive also automatically excludes the negative's unexposed border
+  from its crop when confident enough, with a dedicated review screen for
+  the cases it isn't — the archival master files always keep the full
+  framed negative.
 - **Metadata** — EXIF preserved, IPTC/XMP written from campaign settings,
   ICC profiles embedded.
 - **Keyboard-first capture mode** — every action during capture (accept,
@@ -157,7 +161,11 @@ et interruptibles.
   de confiance (fiable / à vérifier / impossible), et correction manuelle
   rapide si besoin.
 - **Exports** — TIFF maître 16 bits, JPEG maître, et un JPEG positif de
-  lecture (trois modes de rendu), générés en arrière-plan.
+  lecture (trois modes de rendu), générés en arrière-plan. Le positif de
+  lecture exclut aussi automatiquement la bordure non exposée du négatif
+  de son cadrage quand la confiance est suffisante, avec un écran de
+  relecture dédié pour les cas où elle ne l'est pas — les fichiers maîtres
+  archivistiques gardent toujours le négatif entier.
 - **Métadonnées** — EXIF conservé, IPTC/XMP écrits à partir des réglages
   de campagne, profils ICC intégrés.
 - **Mode capture tout au clavier** — chaque action pendant la capture
