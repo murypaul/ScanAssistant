@@ -607,6 +607,26 @@ class CaptureSession:
         """Queues export tasks with an already-known context (regeneration, crash recovery)."""
         self._queue_exports(name, kinds, context)
 
+    def regenerate_positive(self, name: str) -> list[SessionEvent]:
+        """Re-runs only the `jpeg_positive` export for `name` — never `tiff`/
+        `jpeg_master`, whose geometry (the support frame) this never
+        changes. For the "Recadrage des positifs" screen: adjusting the
+        content frame or exposure for one image must not re-touch its
+        master derivatives.
+
+        Rebuilds the frame from the journal (`core.recovery`), same as
+        `retry_error_image` — works whether or not `name` is still the
+        current image. Does nothing (empty list) if the RAW or its frame
+        can't be reconstructed.
+        """
+        context = rebuild_export_context(name, self.paths, self.fs)
+        if context is None:
+            return []
+        self.enqueue_export_context(name, ["jpeg_positive"], context)
+        events = self._drain_exports(self._new_deadline())
+        self._persist_state()
+        return events
+
     def _log_export(self, task: ExportTask, result: ExportResult | None) -> None:
         """Logs an `EXPORT` journal entry: effective frame + scale factor."""
         details: dict[str, object] = {}
