@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.6.0 — 2026-07-19
+## 1.7.0 — 2026-07-19
 
 ### New / Changed
 
@@ -48,6 +48,15 @@
 - The user guide and README now cover tethered capture setup, including
   the Nikon USB-mode prerequisite and a Linux Mint USB-conflict some
   desktops run into.
+
+## 1.6.0 — 2026-07-16
+
+### New / Changed
+
+**Project & Campaign**
+- The Folders tab now has an "Open watched folder" button next to the
+  watched folder field, alongside the existing "Open campaign folder"
+  button.
 
 ## 1.5.0 — 2026-07-16
 
