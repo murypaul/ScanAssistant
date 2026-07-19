@@ -36,8 +36,9 @@ flat objects) run by a single operator over long, interruptible sessions.
   conflicts interactively instead of overwriting anything.
 - **Tethered capture** (optional, off by default) — remote shutter trigger
   and a live view vignette for cameras whose own screen turns off over
-  USB (Nikon D750 first); captures still arrive through the watched
-  folder like any other file.
+  USB (Nikon D750 first); each shot downloads straight into the watched
+  folder over the same connection, then follows the same path as any
+  other file.
 - **Full audit trail** — every significant action is logged (JSON Lines),
   independent of the CSV inventory itself.
 
@@ -185,8 +186,9 @@ et interruptibles.
   résolus au cas par cas plutôt qu'un écrasement silencieux.
 - **Capture tethered** (optionnel, désactivé par défaut) — déclenchement à
   distance et vignette de live view pour les appareils qui éteignent leur
-  propre écran en USB (Nikon D750 en premier lieu) ; les prises arrivent
-  toujours par le dossier surveillé, comme tout autre fichier.
+  propre écran en USB (Nikon D750 en premier lieu) ; chaque prise est
+  téléchargée directement dans le dossier surveillé sur cette même
+  connexion, puis suit le même chemin que tout autre fichier.
 - **Traçabilité complète** — chaque action significative est journalisée
   (JSON Lines), indépendamment de l'inventaire CSV lui-même.
 

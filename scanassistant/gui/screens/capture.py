@@ -78,6 +78,7 @@ from scanassistant.imaging.geometry import FrameGeometry, apply_geometry
 from scanassistant.imaging.positive import ManualSettings, render_positive
 from scanassistant.imaging.raw import RawDecoder, RawpyDecoder
 from scanassistant.journal.journal import Journal
+from scanassistant.journal.techlog import get_logger
 from scanassistant.metadata.writer import ExifToolMetadataWriter
 from scanassistant.metadata.writer import is_available as is_exiftool_available
 from scanassistant.project.campaign import Campaign
@@ -232,6 +233,7 @@ class _CameraBridge(QObject):
     disconnected = Signal()
     frameReady = Signal(object)  # LiveViewFrame
     captureTriggered = Signal()
+    captureDownloaded = Signal(object)  # list[Path]
     errorOccurred = Signal(object)  # CameraError
 
 
@@ -464,6 +466,7 @@ class CaptureScreen(QWidget):
         bridge.disconnected.connect(self._on_camera_disconnected)
         bridge.frameReady.connect(self._on_camera_frame)
         bridge.captureTriggered.connect(self._on_camera_capture_triggered)
+        bridge.captureDownloaded.connect(self._on_camera_capture_downloaded)
         bridge.errorOccurred.connect(self._on_camera_error)
         self._camera_controller = CameraController(
             camera_backend,
@@ -472,6 +475,7 @@ class CaptureScreen(QWidget):
             on_disconnected=bridge.disconnected.emit,
             on_frame=bridge.frameReady.emit,
             on_capture_triggered=bridge.captureTriggered.emit,
+            on_capture_downloaded=bridge.captureDownloaded.emit,
             on_error=bridge.errorOccurred.emit,
         )
         self._camera_controller.set_live_view_fps(camera_config.live_view_fps)
@@ -512,6 +516,8 @@ class CaptureScreen(QWidget):
             stabilization_timeout_s=campaign.capture.stabilization_timeout_s,
             extra_ignored_suffixes=tuple(campaign.capture.extra_ignored_suffixes),
         )
+        if self._camera_controller is not None:
+            self._camera_controller.set_download_folder(Path(campaign.capture.watched_folder))
         export_runner = self._export_runner_override or MasterExportRunner(
             decoder=self._decoder,
             campaign=campaign,
@@ -622,6 +628,7 @@ class CaptureScreen(QWidget):
         self._pending_conflict = None
         self.conflict_panel.setVisible(False)
         if self._camera_controller is not None:
+            self._camera_controller.set_download_folder(None)
             self._camera_controller.shutdown()
 
     # --- loop ----------------------------------------------------------------
@@ -1521,8 +1528,10 @@ class CaptureScreen(QWidget):
 
     def trigger_capture_remote(self) -> None:
         """Space key: fires the shutter on the tethered camera. A no-op if
-        the feature isn't enabled — the resulting file follows the exact
-        same watched-folder path as any other capture, never a separate one."""
+        the feature isn't enabled. The resulting file is downloaded straight
+        into the watched folder over the same PTP session, then picked up
+        by the folder monitor exactly like a manually transferred file —
+        naming, preview, and exports all follow the usual path."""
         if self._camera_controller is None:
             return
         self._camera_controller.trigger_capture()
@@ -1557,6 +1566,18 @@ class CaptureScreen(QWidget):
         self._capture_trigger_deadline = time.monotonic() + _CAPTURE_TRIGGER_TIMEOUT_S
         if self.live_view_widget is not None:
             self.live_view_widget.show_capturing()
+
+    def _on_camera_capture_downloaded(self, paths: list[Path]) -> None:
+        # No status/banner update here: the folder monitor picks up these
+        # same files off disk within one poll tick and drives the normal
+        # detection path (which is what clears the capture-trigger
+        # deadline) — this is purely so a look at the log confirms the
+        # tethered download itself, not just the ingest that follows it.
+        get_logger().info(
+            "tethered capture downloaded %d file(s): %s",
+            len(paths),
+            ", ".join(p.name for p in paths),
+        )
 
     def _on_camera_error(self, error: CameraError) -> None:
         self._set_status(format_warning(error.code, error.details))

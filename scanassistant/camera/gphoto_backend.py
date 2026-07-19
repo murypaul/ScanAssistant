@@ -9,6 +9,8 @@ Only imported when `config.json:camera.enabled` is true (wired in
 from __future__ import annotations
 
 import io
+import time
+from pathlib import Path
 from typing import NoReturn
 
 import gphoto2
@@ -23,9 +25,16 @@ from scanassistant.camera.errors import CameraBusyError, CameraIOError, CameraNo
 # every protocol-level condition — matching on well-known substrings is
 # the same approach `gphoto2` CLI users rely on in practice (see
 # IMPLEMENTATION_NOTES.md). Not yet exercised against a real D750
-# (open point, IMPLEMENTATION_NOTES.md §5).
+# (open point, IMPLEMENTATION_NOTES.md §6).
 _NOT_FOUND_MARKERS = ("could not claim the usb device", "no camera found", "model not found")
 _DEVICE_BUSY_MARKERS = ("0x2019", "device busy")
+
+# How long `download_captured_files` waits, in total, for the RAW produced
+# by the trigger just sent — comfortably under the GUI's own 15 s
+# capture-trigger deadline (`gui/screens/capture.py`) so that deadline
+# still gets to fire on genuine silence instead of this wait swallowing it.
+_DOWNLOAD_WAIT_TIMEOUT_S = 10.0
+_DOWNLOAD_POLL_MS = 500
 
 
 def _raise_for_gphoto_error(exc: gphoto2.GPhoto2Error) -> NoReturn:
@@ -109,6 +118,36 @@ class GphotoCameraBackend:
             camera.trigger_capture(self._context)
         except gphoto2.GPhoto2Error as exc:
             _raise_for_gphoto_error(exc)
+
+    def download_captured_files(self, destination_dir: Path) -> list[Path]:
+        camera = self._require_camera()
+        written: list[Path] = []
+        deadline = time.monotonic() + _DOWNLOAD_WAIT_TIMEOUT_S
+        try:
+            while True:
+                remaining_s = deadline - time.monotonic()
+                if remaining_s <= 0:
+                    break
+                wait_ms = min(_DOWNLOAD_POLL_MS, max(1, int(remaining_s * 1000)))
+                event_type, event_data = camera.wait_for_event(wait_ms, self._context)
+                if event_type == gphoto2.GP_EVENT_FILE_ADDED:
+                    camera_file = camera.file_get(
+                        event_data.folder,
+                        event_data.name,
+                        gphoto2.GP_FILE_TYPE_NORMAL,
+                        self._context,
+                    )
+                    local_path = destination_dir / event_data.name
+                    camera_file.save(str(local_path))
+                    written.append(local_path)
+                elif event_type == gphoto2.GP_EVENT_CAPTURE_COMPLETE and written:
+                    # The D750 reports FILE_ADDED before CAPTURE_COMPLETE —
+                    # once at least one file is down and the camera signals
+                    # it's done, there's nothing left worth waiting for.
+                    break
+        except gphoto2.GPhoto2Error as exc:
+            _raise_for_gphoto_error(exc)
+        return written
 
     def _require_camera(self) -> gphoto2.Camera:
         if self._camera is None:

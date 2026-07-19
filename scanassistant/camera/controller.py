@@ -4,7 +4,8 @@ A `gphoto2.Camera` handle is not safe to use from more than one thread at
 once — live view frame reads and the remote trigger must therefore share
 a single command queue rather than run on separate threads. Callbacks
 (`on_connected`, `on_disconnected`, `on_frame`, `on_capture_triggered`,
-`on_error`) are invoked from that background thread; a GUI adapter is
+`on_capture_downloaded`, `on_error`) are invoked from that background
+thread; a GUI adapter is
 responsible for marshalling them onto the Qt thread (e.g. via a `Signal`,
 safe to emit cross-thread), never this module — it must not import
 PySide6.
@@ -17,6 +18,7 @@ import threading
 import time
 from collections.abc import Callable
 from enum import Enum, auto
+from pathlib import Path
 
 from scanassistant.camera.backend import CameraBackend, LiveViewFrame
 from scanassistant.camera.errors import (
@@ -58,6 +60,7 @@ class CameraController:
         on_disconnected: Callable[[], None] | None = None,
         on_frame: Callable[[LiveViewFrame], None] | None = None,
         on_capture_triggered: Callable[[], None] | None = None,
+        on_capture_downloaded: Callable[[list[Path]], None] | None = None,
         on_error: Callable[[CameraError], None] | None = None,
     ) -> None:
         self._backend = backend
@@ -66,6 +69,7 @@ class CameraController:
         self._on_disconnected = on_disconnected
         self._on_frame = on_frame
         self._on_capture_triggered = on_capture_triggered
+        self._on_capture_downloaded = on_capture_downloaded
         self._on_error = on_error
 
         self._commands: queue_module.Queue[_Command] = queue_module.Queue()
@@ -73,6 +77,8 @@ class CameraController:
         self._fps_lock = threading.Lock()
         self._fps: int | None = None
         self._last_frame_at = 0.0
+        self._download_folder_lock = threading.Lock()
+        self._download_folder: Path | None = None
         self._thread = threading.Thread(target=self._run, name="scanassistant-camera", daemon=True)
         self._thread.start()
 
@@ -97,6 +103,15 @@ class CameraController:
     def set_live_view_fps(self, fps: int | None) -> None:
         with self._fps_lock:
             self._fps = fps
+
+    def set_download_folder(self, folder: Path | None) -> None:
+        """Where a captured file gets downloaded to, over the same PTP
+        session, right after the shutter fires — normally the campaign's
+        watched folder, set on capture start and cleared back to `None` on
+        shutdown. `None` means "don't even try": `trigger_capture` still
+        fires the shutter, but nothing is downloaded."""
+        with self._download_folder_lock:
+            self._download_folder = folder
 
     def is_connected(self) -> bool:
         """Best-effort snapshot — set only from the camera thread; a caller
@@ -217,6 +232,24 @@ class CameraController:
             return
         if self._on_capture_triggered is not None:
             self._on_capture_triggered()
+        self._download_after_trigger()
+
+    def _download_after_trigger(self) -> None:
+        with self._download_folder_lock:
+            folder = self._download_folder
+        if folder is None:
+            return
+        try:
+            downloaded = self._backend.download_captured_files(folder)
+        except CameraIOError as exc:
+            # Not surfaced as its own error banner: a silent "nothing
+            # downloaded" is indistinguishable, from the GUI's side, from
+            # the camera never having produced a file at all — the
+            # existing watched-folder deadline already covers both.
+            get_logger().warning("download after capture failed: %s", exc)
+            return
+        if downloaded and self._on_capture_downloaded is not None:
+            self._on_capture_downloaded(downloaded)
 
     def _read_and_emit_frame(self) -> None:
         with self._fps_lock:

@@ -11,6 +11,7 @@ even be touched unless `camera.enabled` is true.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from scanassistant.camera.errors import CameraBusyError, CameraNotFoundError
@@ -50,8 +51,19 @@ class CameraBackend(Protocol):
         ...
 
     def trigger_capture(self) -> None:
-        """Fires the shutter. Does not wait for the resulting file: that
-        file arrives through the watched folder like any other capture."""
+        """Fires the shutter. Does not wait for the resulting file — see
+        `download_captured_files` for that."""
+        ...
+
+    def download_captured_files(self, destination_dir: Path) -> list[Path]:
+        """Waits for the file(s) produced by the capture just triggered and
+        downloads each into `destination_dir` under its camera-side name,
+        over the same USB/PTP session — no second connection to the camera
+        is ever opened. Returns the local paths written, in arrival order.
+
+        A plain "nothing arrived" is not an error: it returns `[]` and lets
+        the caller's own watched-folder deadline surface the silence,
+        exactly as it would for a manually transferred file."""
         ...
 
 
@@ -61,7 +73,10 @@ class FakeCameraBackend:
     `busy_count` simulates the camera refusing `start_live_view()` that
     many times with `CameraBusyError` before succeeding, exercising the
     controller's retry/backoff. `reported_capture_target` lets a test
-    simulate a body that ignores the requested value.
+    simulate a body that ignores the requested value. `captured_file_names`
+    is what `download_captured_files` "produces" after each trigger — empty
+    by default, i.e. nothing ever arrives (matches a fresh double not wired
+    for the download path).
     """
 
     def __init__(
@@ -71,15 +86,20 @@ class FakeCameraBackend:
         busy_count: int = 0,
         trigger_error: Exception | None = None,
         reported_capture_target: str | None = None,
+        captured_file_names: tuple[str, ...] = (),
+        download_error: Exception | None = None,
     ) -> None:
         self.connect_error = connect_error
         self.busy_count = busy_count
         self.trigger_error = trigger_error
         self.reported_capture_target = reported_capture_target
+        self.captured_file_names = captured_file_names
+        self.download_error = download_error
         self.connected = False
         self.live_view_active = False
         self.triggered_count = 0
         self.frames_read = 0
+        self.downloaded_files: list[Path] = []
         self._start_live_view_attempts = 0
 
     def connect(self) -> None:
@@ -120,3 +140,16 @@ class FakeCameraBackend:
         if self.trigger_error is not None:
             raise self.trigger_error
         self.triggered_count += 1
+
+    def download_captured_files(self, destination_dir: Path) -> list[Path]:
+        if not self.connected:
+            raise CameraNotFoundError("not connected")
+        if self.download_error is not None:
+            raise self.download_error
+        written = []
+        for name in self.captured_file_names:
+            path = destination_dir / name
+            path.write_bytes(b"fake-raw-data")
+            written.append(path)
+        self.downloaded_files.extend(written)
+        return written

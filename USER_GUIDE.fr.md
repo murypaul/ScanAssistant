@@ -189,6 +189,11 @@ de connecter l'appareil :
   utilisée » — le fermer (ou désactiver le démarrage automatique de
   `gvfsd-gphoto2` et `gvfs-gphoto2-volume-monitor`) avant d'ouvrir le
   mode capture.
+- L'appareil ne tenant qu'une seule connexion USB à la fois, le dossier
+  surveillé de la campagne ne peut pas être le point de montage de la
+  carte mémoire tant que la capture tethered est active — pointez-le
+  plutôt vers un dossier local ordinaire (le fichier déclenché y est
+  téléchargé automatiquement).
 
 Une fois activé et l'appareil connecté :
 
@@ -196,9 +201,13 @@ Une fois activé et l'appareil connecté :
   zone d'aperçu. Elle ne démarre jamais toute seule — l'activer maintient
   le miroir de l'appareil relevé, pensez à la désactiver une fois le
   cadrage vérifié.
-- **`Espace`** déclenche l'obturateur à distance. Le RAW obtenu arrive par
-  le dossier surveillé exactement comme un fichier transféré à la main —
-  tout ce qui suit (nommage, aperçu, exports) fonctionne de la même façon.
+- **`Espace`** déclenche l'obturateur à distance et télécharge le RAW
+  obtenu directement dans le dossier surveillé, sur cette même
+  connexion — rien à brancher, débrancher ou remonter entre deux prises.
+  Il suit ensuite exactement le même chemin qu'un fichier transféré à la
+  main : nommage, aperçu, exports fonctionnent de la même façon. Le
+  négatif reste par ailleurs sur la carte mémoire, donc une connexion
+  coupée ou un téléchargement en échec ne fait perdre aucune prise.
 - Faites glisser le curseur d'opacité de la vignette pour voir au travers
   le dernier aperçu accepté ; cliquez sur la vignette pour l'agrandir et
   utilisez la molette/le glissement de la souris pour zoomer et vous

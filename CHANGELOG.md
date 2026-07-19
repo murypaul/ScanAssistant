@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.8.0 — 2026-07-19
+
+### New / Changed
+
+**Capture**
+- A remote-triggered tethered shot now downloads straight into the
+  watched folder over the same connection used for live view, instead of
+  relying on the camera being mounted as a drive — so live view and
+  automatic arrival of each shot both work at once, with nothing to
+  plug, unplug, or remount between shots. The negative still stays on
+  the memory card either way, so nothing is lost if a download fails.
+- Because of this, the watched folder for a campaign that uses tethered
+  capture must now be a regular local folder rather than the camera's
+  own memory-card mount point.
+
 ## 1.7.0 — 2026-07-19
 
 ### New / Changed

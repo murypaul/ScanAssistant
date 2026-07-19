@@ -181,6 +181,10 @@ connecting:
   block the app with a "USB connection in use" message — close it (or
   disable `gvfsd-gphoto2` and `gvfs-gphoto2-volume-monitor`'s autostart)
   before opening capture mode.
+- The camera can only hold one USB connection at a time, so the
+  campaign's watched folder can't be the camera's own memory-card mount
+  point while tethered capture is on — point it at a regular local
+  folder instead (the captured file gets downloaded there automatically).
 
 Once enabled and the camera is connected:
 
@@ -188,9 +192,12 @@ Once enabled and the camera is connected:
   preview area. It never starts on its own — turning it on keeps the
   camera's mirror raised, so switch it off again once you're done
   checking the frame.
-- **`Space`** fires the shutter remotely. The resulting RAW arrives
-  through the watched folder exactly like a manually transferred file —
-  everything downstream (naming, preview, exports) works the same way.
+- **`Space`** fires the shutter remotely and downloads the resulting RAW
+  straight into the watched folder over the same connection — nothing to
+  plug, unplug, or remount between shots. From there it's picked up
+  exactly like a manually transferred file: naming, preview, and exports
+  all work the same way. The negative also stays on the memory card, so
+  a dropped connection or a failed download doesn't lose the shot.
 - Drag the opacity slider on the vignette down to see the last accepted
   preview through it; click the vignette to expand it and use the mouse
   wheel/drag to zoom and pan for a close look at focus, click again (or

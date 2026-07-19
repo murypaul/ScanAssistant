@@ -87,9 +87,13 @@ class CameraConfig:
     # Opt-in only: when false, the camera package is never even imported.
     # Remote trigger + live view only, never full tethering.
     enabled: bool = False
-    # Forced on connect and re-read to confirm it stuck: the triggered RAW
-    # must land on the card and follow the existing watcher/ingest
-    # pipeline, never a direct USB download.
+    # Forced on connect and re-read to confirm it stuck: keeping capture on
+    # the card (rather than the body's internal RAM) means a shot still
+    # survives a dropped tether or a crash mid-download. The RAW is *also*
+    # downloaded straight over the same PTP session right after the
+    # trigger, into the campaign's watched folder — no second, gvfs-mounted
+    # connection to the camera is opened for that, since the camera can
+    # only hold one session at a time.
     capture_target: str = "card"
     # None = unlimited (throttled only by what the camera actually
     # delivers); otherwise one of LIVE_VIEW_FPS_CHOICES.
