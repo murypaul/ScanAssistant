@@ -32,6 +32,34 @@ from scanassistant.camera.errors import CameraBusyError, CameraIOError, CameraNo
 _NOT_FOUND_MARKERS = ("could not claim the usb device", "no camera found", "model not found")
 _DEVICE_BUSY_MARKERS = ("0x2019", "device busy")
 
+# Both `capturetarget` and `liveviewimagezoomratio` are vendor-worded PTP
+# enum widgets — `get_choice(i)`/`get_value()` return whatever label
+# libgphoto2's gettext catalog produces for the *host's* locale (confirmed
+# on this machine: French gives "Carte mémoire"/"Affichage entier"/"100 %"
+# — that last one with a non-breaking space — not the English labels a
+# quick manual check without `locale.setlocale()` first turns up, which is
+# `LC_ALL`-dependent and silently returns the English labels regardless of
+# the desktop's actual locale). A hardcoded label, in any one language,
+# is therefore never safe to `set_value()` with — it either no-ops
+# silently (target language doesn't match) or, worse, "coincidentally"
+# looks like it worked because the widget was already left in that state
+# by an earlier call. Choice **position** is what's actually stable
+# (confirmed identical ordering in both English and French), so every
+# lookup here goes through it instead of any label text.
+_CAPTURE_TARGET_CHOICE_INDEX = {"sdram": 0, "card": 1}  # Internal RAM, Memory card
+# "100%" is a large jump in effective detail over the full-frame view
+# without cropping so tight the frame is hard to relocate in — a
+# reasonable default focus-check zoom, not the maximum available.
+_LIVE_VIEW_UNZOOM_INDEX = 0  # Entire Display
+_LIVE_VIEW_ZOOM_INDEX = 6  # 100%
+
+
+def _find_choice_index(widget: gphoto2.CameraWidget, value: str) -> int | None:
+    for i in range(widget.count_choices()):
+        if widget.get_choice(i) == value:
+            return i
+    return None
+
 # GNOME/Nemo auto-mounts any PTP-mode camera the instant it's plugged in
 # (Nemo ▸ Devices, desktop notifications...); the resulting exclusive USB
 # claim is what `_NOT_FOUND_MARKERS` above actually catches most of the
@@ -84,10 +112,27 @@ class GphotoCameraBackend:
         self._context = gphoto2.Context()
 
     def connect(self) -> None:
+        # Cheap and harmless if gvfs's gphoto2 monitor isn't running (the
+        # normal case — see `release_gvfs_claim`): every connect attempt
+        # gets this for free rather than only the operator's manual
+        # Capture ▸ Release camera action, since the same USB-claim
+        # conflict can just as easily hit the very first automatic
+        # connect at session start.
+        release_gvfs_claim()
         camera = gphoto2.Camera()
         try:
             camera.init(self._context)
         except gphoto2.GPhoto2Error as exc:
+            # `init()` failing partway (e.g. right after claiming the USB
+            # interface but before the PTP handshake completes) can leave
+            # that claim held at the OS level — relying on `camera` simply
+            # going out of scope here does *not* release it (observed:
+            # the process keeps the USB device open, blocking every
+            # subsequent attempt, including a fresh external one). Explicit
+            # best-effort `exit()` before re-raising, so a failed connect
+            # never leaks a claim into the next retry.
+            with contextlib.suppress(gphoto2.GPhoto2Error):
+                camera.exit(self._context)
             _raise_for_gphoto_error(exc)
         self._camera = camera
 
@@ -103,11 +148,19 @@ class GphotoCameraBackend:
         try:
             config = camera.get_config(self._context)
             widget = config.get_child_by_name("capturetarget")
-            widget.set_value(target)
+            index = _CAPTURE_TARGET_CHOICE_INDEX.get(target)
+            if index is not None and index < widget.count_choices():
+                widget.set_value(widget.get_choice(index))
             camera.set_config(config, self._context)
             # Re-read: some bodies silently ignore an unsupported value.
             config = camera.get_config(self._context)
-            return str(config.get_child_by_name("capturetarget").get_value())
+            widget = config.get_child_by_name("capturetarget")
+            effective_label = str(widget.get_value())
+            effective_index = _find_choice_index(widget, effective_label)
+            for name, i in _CAPTURE_TARGET_CHOICE_INDEX.items():
+                if i == effective_index:
+                    return name
+            return effective_label
         except gphoto2.GPhoto2Error as exc:
             _raise_for_gphoto_error(exc)
 
@@ -131,10 +184,31 @@ class GphotoCameraBackend:
         except gphoto2.GPhoto2Error:
             pass  # best-effort: about to disconnect or already torn down
 
+    def set_live_view_zoomed(self, zoomed: bool) -> None:
+        # Confirmed against the real D750: `liveviewimagezoomratio`
+        # (choices include "Entire Display" and this percentage set) is
+        # the same property the body's own rear-screen zoom button
+        # drives — genuinely crops/zooms at the sensor/ISP level rather
+        # than this app blowing up the same low-res preview pixels.
+        # Best-effort and silent: a body without this widget, or not
+        # currently in live view, just keeps showing the un-zoomed frame,
+        # not worth its own error banner for a focus-check convenience.
+        try:
+            camera = self._require_camera()
+            config = camera.get_config(self._context)
+            widget = config.get_child_by_name("liveviewimagezoomratio")
+            index = _LIVE_VIEW_ZOOM_INDEX if zoomed else _LIVE_VIEW_UNZOOM_INDEX
+            if index < widget.count_choices():
+                widget.set_value(widget.get_choice(index))
+                camera.set_config(config, self._context)
+        except (gphoto2.GPhoto2Error, CameraNotFoundError):
+            pass
+
     def read_preview_frame(self) -> LiveViewFrame:
         camera = self._require_camera()
         try:
-            camera_file = camera.capture_preview(self._context)
+            camera_file = gphoto2.CameraFile()
+            camera.capture_preview(camera_file, self._context)
             jpeg_bytes = camera_file.get_data_and_size()
         except gphoto2.GPhoto2Error as exc:
             _raise_for_gphoto_error(exc)
@@ -160,10 +234,12 @@ class GphotoCameraBackend:
                 wait_ms = min(_DOWNLOAD_POLL_MS, max(1, int(remaining_s * 1000)))
                 event_type, event_data = camera.wait_for_event(wait_ms, self._context)
                 if event_type == gphoto2.GP_EVENT_FILE_ADDED:
-                    camera_file = camera.file_get(
+                    camera_file = gphoto2.CameraFile()
+                    camera.file_get(
                         event_data.folder,
                         event_data.name,
                         gphoto2.GP_FILE_TYPE_NORMAL,
+                        camera_file,
                         self._context,
                     )
                     local_path = destination_dir / event_data.name

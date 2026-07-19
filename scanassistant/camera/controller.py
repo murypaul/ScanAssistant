@@ -37,6 +37,11 @@ from scanassistant.journal.techlog import get_logger
 # "device busy" error — the last `None` means "give up".
 _LIVE_VIEW_RETRY_DELAYS_S: tuple[float | None, ...] = (0.5, 1.0, 2.0, None)
 
+# Same idea for `connect()` — a fresh USB device (just replugged, or just
+# released from a gvfs claim) can take a moment before `libgphoto2` can
+# actually talk to it.
+_CONNECT_RETRY_DELAYS_S: tuple[float | None, ...] = (0.5, 1.0, 2.0, None)
+
 _IDLE_POLL_INTERVAL_S = 0.05  # while connected but live view is off
 _LIVE_VIEW_POLL_INTERVAL_S = 0.01  # while live view is on, between frame attempts
 
@@ -46,6 +51,7 @@ class _Command(Enum):
     DISCONNECT = auto()
     START_LIVE_VIEW = auto()
     STOP_LIVE_VIEW = auto()
+    SET_LIVE_VIEW_ZOOM = auto()
     TRIGGER_CAPTURE = auto()
     SHUTDOWN = auto()
 
@@ -79,6 +85,7 @@ class CameraController:
         self._last_frame_at = 0.0
         self._download_folder_lock = threading.Lock()
         self._download_folder: Path | None = None
+        self._zoom_requested = False
         self._thread = threading.Thread(target=self._run, name="scanassistant-camera", daemon=True)
         self._thread.start()
 
@@ -96,6 +103,16 @@ class CameraController:
 
     def stop_live_view(self) -> None:
         self._commands.put(_Command.STOP_LIVE_VIEW)
+
+    def set_live_view_zoomed(self, zoomed: bool) -> None:
+        # Plain attribute, not queued data: only the latest request ever
+        # matters (a rapid expand/collapse/expand only needs the backend
+        # to end up in the last state asked for), and this only ever
+        # writes an `Enum`-eligible primitive the GIL already makes a
+        # single command-queue slot's worth of same-thread synchronization
+        # unnecessary for.
+        self._zoom_requested = zoomed
+        self._commands.put(_Command.SET_LIVE_VIEW_ZOOM)
 
     def trigger_capture(self) -> None:
         self._commands.put(_Command.TRIGGER_CAPTURE)
@@ -164,6 +181,11 @@ class CameraController:
                 if live_view_active:
                     self._safe_call(self._backend.stop_live_view)
                 return False
+            if command is _Command.SET_LIVE_VIEW_ZOOM:
+                zoomed = self._zoom_requested
+                if self._connected:
+                    self._safe_call(lambda: self._backend.set_live_view_zoomed(zoomed))
+                return live_view_active
             if command is _Command.TRIGGER_CAPTURE:
                 self._handle_trigger()
                 return live_view_active
@@ -172,21 +194,46 @@ class CameraController:
         return live_view_active
 
     def _handle_connect(self) -> None:
-        try:
-            self._backend.connect()
-        except CameraBusyError:
-            self._emit_error(CODE_USB_BUSY, {})
+        if self._connected:
+            # Idempotent: callers (the initial connect attempt, `start()`
+            # calling it again on every capture-session entry, the
+            # periodic auto-reconnect poll) don't have to track whether a
+            # previous attempt already succeeded — reconnecting for real
+            # would create a second `gphoto2.Camera()` without the first
+            # one ever being released.
             return
-        except CameraNotFoundError:
-            self._emit_error(CODE_NOT_DETECTED, {})
+        # Same reasoning as `_handle_start_live_view`'s retry: a single
+        # failed attempt right after the USB device shows up (still
+        # settling, a just-killed gvfs claim not fully released yet...) is
+        # far more common in practice than the camera being genuinely
+        # absent — retrying here is what used to require the operator to
+        # notice the error and click Capture ▸ Release camera themselves.
+        for delay in _CONNECT_RETRY_DELAYS_S:
+            try:
+                self._backend.connect()
+            except CameraBusyError:
+                if delay is None:
+                    self._emit_error(CODE_USB_BUSY, {})
+                    return
+                time.sleep(delay)
+                continue
+            except CameraNotFoundError:
+                if delay is None:
+                    self._emit_error(CODE_NOT_DETECTED, {})
+                    return
+                time.sleep(delay)
+                continue
+            except CameraIOError as exc:
+                if delay is None:
+                    self._emit_error(CODE_NOT_DETECTED, {"reason": str(exc)})
+                    return
+                time.sleep(delay)
+                continue
+            self._connected = True
+            self._confirm_capture_target()
+            if self._on_connected is not None:
+                self._on_connected()
             return
-        except CameraIOError as exc:
-            self._emit_error(CODE_NOT_DETECTED, {"reason": str(exc)})
-            return
-        self._connected = True
-        self._confirm_capture_target()
-        if self._on_connected is not None:
-            self._on_connected()
 
     def _confirm_capture_target(self) -> None:
         try:

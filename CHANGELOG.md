@@ -1,5 +1,101 @@
 # Changelog
 
+## 1.9.0 — 2026-07-20
+
+First extended real-world session with tethered capture against an
+actual D750 (previously only unit-tested against a fake backend) —
+turned up and fixed most of the feature's remaining rough edges.
+
+### Fixed
+
+**Camera — connection reliability**
+- `connect()` only ever tried once; a USB device that wasn't quite ready
+  yet (still settling after a replug, a just-released gvfs claim...)
+  permanently failed until the operator noticed and clicked Capture ▸
+  Release camera. It now retries with backoff, the same way
+  `start_live_view()` already did.
+- The gvfs USB-claim release (1.8.2) now runs automatically on every
+  connect attempt, not just from the manual menu action.
+- Tethered capture now connects on its own as soon as the app starts (if
+  the camera's already on) and keeps retrying quietly in the background
+  every 5 s until it succeeds — no need to open a campaign or click
+  anything first.
+- A failed `connect()` could leave the USB interface claimed by
+  ScanAssistant's own process, permanently blocking every later attempt
+  (including a fresh external one) until the app was restarted. Fixed by
+  releasing the partial claim before re-raising.
+- `connect()` is now a no-op once already connected, instead of silently
+  leaking a second internal handle every time it was called again (each
+  capture-session entry, the periodic reconnect poll).
+
+**Camera — data safety**
+- Captures were silently landing in the camera's internal RAM instead of
+  the memory card, despite the "keep captures on the card" setting:
+  `capturetarget` is a vendor-worded PTP enum ("Memory card"/"Internal
+  RAM" on the D750), and the plain "card"/"sdram" strings this app was
+  sending never matched any real choice, so the request was silently
+  ignored every time.
+- That fix's own first attempt was still wrong: matching against a
+  hardcoded label (even the correct one) breaks the moment
+  `libgphoto2`'s gettext catalog returns a translated label instead —
+  confirmed on a French desktop, where the real choices are "Carte
+  mémoire"/"Affichage entier"/"100 %" (non-breaking space), not the
+  English text a quick check without `locale.setlocale()` turns up.
+  `capturetarget` and the live view zoom below now both match by choice
+  **position** instead, which is stable across languages.
+
+**Camera — live view / remote trigger**
+- Two `python-gphoto2` calls (`capture_preview`, `file_get`) were passed
+  the wrong arguments, silently crashing the background camera thread
+  the moment live view or a tethered download was attempted.
+  Live view and remote-triggered downloads are confirmed working
+  end-to-end against real hardware now (a full RAW downloaded and
+  ingested normally).
+- The live view panel never painted its own background/border (a
+  missing Qt attribute), and its ●/⤡ icon buttons rendered as empty
+  squares (a generic button style's padding left no room for a
+  28px-wide icon button's label).
+- Clicking the live view image to check focus in detail changed state
+  but never actually resized the panel — nothing told the capture
+  screen to re-apply the new size, so "expand" only visibly worked by
+  coincidence, if some unrelated resize happened to fire around the
+  same time.
+- The live view opacity slider could be dragged to 0%, fading out its
+  own controls along with the image — with nothing left visible to
+  click, there was no way back short of hand-editing `config.json`.
+  Floored at 15%.
+- A stale "camera not detected" banner stayed up even after the camera
+  successfully reconnected (existing warnings are deliberately never
+  auto-dismissed elsewhere, but a connection error is actively wrong,
+  not just stale, once the connection recovers).
+
+### Added
+
+**Camera**
+- Clicking the live view image now swaps it to fill the capture screen,
+  opaque, instead of a small translucent overlay — click again (or the
+  ⤡ button) to go back. Only active while actually live, so a click near
+  a static vignette can't be mistaken for one of the capture screen's
+  own interactions.
+- While expanded, the D750's own camera-side live view zoom engages
+  automatically (the same feature its rear-screen zoom button drives) —
+  real sensor-level crop for judging focus, not this app enlarging the
+  same low-resolution preview pixels. It stays centered on the camera's
+  current AF point; panning it isn't wired up yet.
+- The live view panel can be hidden with its own × button and brought
+  back from Capture ▸ Show/hide live view panel, View ▸ Show/hide live
+  view panel, or the H key — hiding it also stops the feed itself
+  rather than leaving it running behind an invisible widget.
+- New Preferences ▸ Camera ▸ "Rotate live view 180°" for a camera
+  mounted upside-down over the negative (a common copy-stand setup) —
+  only affects the on-screen live view image, never the RAW file.
+
+### Changed
+
+- The Export queue, Session history, and Positive settings panels now
+  default to visible on a fresh install (previously hidden until opened
+  once) — an existing saved layout is never overridden by this.
+
 ## 1.8.2 — 2026-07-19
 
 ### Fixed

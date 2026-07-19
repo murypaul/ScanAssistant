@@ -102,6 +102,8 @@ def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
         f"  {c['trigger_capture']}  Trigger the camera remotely (tethered camera only)",
         f"  {c['pause_resume']}  Pause / Resume",
         f"  {c['toggle_live_view']}  Toggle live view (tethered camera only)",
+        f"  {c['toggle_live_view_panel']}  Show/hide the live view panel"
+        " (tethered camera only — also View menu)",
         f"  {c['stop_capture']}  Stop capture",
         "",
         "Crop, always available in capture mode:",
@@ -180,7 +182,7 @@ class MainWindow(QMainWindow):
         self.export_queue_dock = QDockWidget(t("export_queue.title"), self)
         self.export_queue_dock.setObjectName("exportQueueDock")
         self.export_queue_dock.setWidget(self.export_queue_panel)
-        self.export_queue_dock.setVisible(False)
+        self.export_queue_dock.setVisible(True)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.export_queue_dock)
 
         self.history_panel = HistoryPanel()
@@ -188,7 +190,7 @@ class MainWindow(QMainWindow):
         self.history_dock = QDockWidget(t("history.title"), self)
         self.history_dock.setObjectName("historyDock")
         self.history_dock.setWidget(self.history_panel)
-        self.history_dock.setVisible(False)
+        self.history_dock.setVisible(True)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.history_dock)
 
         self.positive_settings_panel = PositiveSettingsPanel()
@@ -202,7 +204,7 @@ class MainWindow(QMainWindow):
         self.positive_settings_dock = QDockWidget(t("positive_settings.title"), self)
         self.positive_settings_dock.setObjectName("positiveSettingsDock")
         self.positive_settings_dock.setWidget(self.positive_settings_panel)
-        self.positive_settings_dock.setVisible(False)
+        self.positive_settings_dock.setVisible(True)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.positive_settings_dock)
 
         self._build_menus()
@@ -395,6 +397,17 @@ class MainWindow(QMainWindow):
         self.positive_settings_dock.visibilityChanged.connect(
             self.action_positive_settings.setChecked
         )
+
+        # Not a dock widget (it's an absolutely-positioned overlay on the
+        # preview, not something Qt's dock system knows about), so unlike
+        # the panels above there's no `visibilityChanged` to sync a
+        # checkmark against — same reasoning as `action_release_camera`
+        # just below: wired live in `_wire_capture_actions`, only while a
+        # camera-enabled capture session is actually running.
+        self.action_live_view_panel = self._add_action(
+            self.view_menu, t("menu.view_live_view"), None, None
+        )
+        self.action_live_view_panel.setEnabled(False)
 
         self.help_menu = menu_bar.addMenu(t("menu.help"))
         self.action_shortcuts_help = self._add_action(
@@ -683,7 +696,7 @@ class MainWindow(QMainWindow):
 
     def _restore_dock_layout(self) -> None:
         """Reapplies each panel's visibility, dock area, and floating position/size
-        from the last time the app was closed. Silently keeps the default (hidden,
+        from the last time the app was closed. Silently keeps the default (visible,
         docked where `addDockWidget` put it) if nothing was saved yet or the saved
         state doesn't apply (corrupted value, incompatible after an upgrade)."""
         encoded = self.context.config.ui.dock_layout
@@ -889,6 +902,12 @@ class MainWindow(QMainWindow):
                 self.capture_screen.release_camera_from_file_manager
             )
 
+        self.action_live_view_panel.setEnabled(self.capture_screen.has_camera())
+        if self.capture_screen.has_camera():
+            self.action_live_view_panel.triggered.connect(
+                self.capture_screen.toggle_live_view_panel_visibility
+            )
+
         for action_name, slot in zip(
             self._PROCESSING_ACTION_SLOTS,
             (
@@ -925,6 +944,12 @@ class MainWindow(QMainWindow):
                 self.capture_screen.release_camera_from_file_manager
             )
         self.action_release_camera.setEnabled(False)
+
+        with contextlib.suppress(TypeError, RuntimeError):
+            self.action_live_view_panel.triggered.disconnect(
+                self.capture_screen.toggle_live_view_panel_visibility
+            )
+        self.action_live_view_panel.setEnabled(False)
 
         for action_name, slot in zip(
             self._PROCESSING_ACTION_SLOTS,

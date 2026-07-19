@@ -36,6 +36,8 @@ from PySide6.QtWidgets import (
 from scanassistant.camera.backend import CameraBackend, LiveViewFrame
 from scanassistant.camera.controller import CameraController
 from scanassistant.camera.errors import CODE_CAPTURE_TIMEOUT as _CODE_CAPTURE_TIMEOUT
+from scanassistant.camera.errors import CODE_NOT_DETECTED as _CODE_NOT_DETECTED
+from scanassistant.camera.errors import CODE_USB_BUSY as _CODE_USB_BUSY
 from scanassistant.camera.errors import CameraError
 from scanassistant.config import CameraConfig
 from scanassistant.core.crash_recovery import RecoveryReport, perform_crash_recovery
@@ -100,6 +102,11 @@ _PREVIEW_WORKER_SHUTDOWN_TIMEOUT_MS = 2000
 # E-22 (card full/missing) — generous compared to normal write+stabilization
 # time, since giving up too early would misreport a merely slow write.
 _CAPTURE_TRIGGER_TIMEOUT_S = 15.0
+# Background poll while a tethered camera isn't connected yet — cheap
+# no-op once it is (`CameraController.connect()` is idempotent), so this
+# just needs to be short enough that plugging in/powering on the camera
+# feels like it "just works" without a wait that feels stuck.
+_CAMERA_RECONNECT_POLL_MS = 5000
 
 _LEVEL_LABELS = {
     "reliable": ("capture.confidence_reliable", "ok"),
@@ -489,7 +496,22 @@ class CaptureScreen(QWidget):
         self.live_view_widget.toggleRequested.connect(self.toggle_live_view)
         self.live_view_widget.fpsChanged.connect(self._on_live_view_fps_changed)
         self.live_view_widget.opacityChanged.connect(self._on_live_view_opacity_changed)
+        self.live_view_widget.expandedChanged.connect(self._on_live_view_expanded_changed)
+        self.live_view_widget.closeRequested.connect(self.toggle_live_view_panel_visibility)
         self.live_view_widget.show()
+
+        # Automatic: a tethered camera that's on and plugged in connects
+        # without the operator having to do anything (start a capture
+        # session, click Release camera...) — first attempt right away,
+        # then a background poll in case it wasn't ready yet (still
+        # booting, plugged in a few seconds later...). `connect()` is a
+        # no-op once already connected, so this never fights `start()`'s
+        # own call on every capture-session entry.
+        self._camera_controller.connect()
+        self._camera_reconnect_timer = QTimer(self)
+        self._camera_reconnect_timer.setInterval(_CAMERA_RECONNECT_POLL_MS)
+        self._camera_reconnect_timer.timeout.connect(self._camera_controller.connect)
+        self._camera_reconnect_timer.start()
 
     def set_shortcuts(self, shortcuts: dict[str, dict[str, str]]) -> None:
         """Applies a new shortcut map (Preferences ▸ Shortcuts) without restarting capture."""
@@ -1275,6 +1297,8 @@ class CaptureScreen(QWidget):
                 self.toggle_pause()
             elif matches(event, actions["toggle_live_view"]):
                 self.toggle_live_view()
+            elif matches(event, actions["toggle_live_view_panel"]):
+                self.toggle_live_view_panel_visibility()
             elif matches(event, actions["stop_capture"]):
                 self.stop_capture()
             else:
@@ -1546,6 +1570,25 @@ class CaptureScreen(QWidget):
         self._camera_controller.connect()
         self._set_status(t("capture.camera_release_status"))
 
+    def toggle_live_view_panel_visibility(self) -> None:
+        """H key, View ▸ Show/hide live view panel, or the panel's own ×
+        button (hide only). A no-op if tethered capture isn't enabled.
+
+        Hiding stops the feed too rather than leaving it running behind an
+        invisible widget — pointless USB/CPU cost with nothing to show for
+        it. Showing it again never restarts the feed on its own, same
+        "manual only" rule as `toggle_live_view` itself."""
+        if self.live_view_widget is None:
+            return
+        if self.live_view_widget.isVisible():
+            if self._camera_controller is not None and self.live_view_widget.is_live():
+                self._camera_controller.stop_live_view()
+                self.live_view_widget.set_live(False)
+            self.live_view_widget.setVisible(False)
+        else:
+            self.live_view_widget.setVisible(True)
+            self._reposition_live_view()
+
     def trigger_capture_remote(self) -> None:
         """Space key: fires the shutter on the tethered camera. A no-op if
         the feature isn't enabled. The resulting file is downloaded straight
@@ -1569,7 +1612,15 @@ class CaptureScreen(QWidget):
             self._camera_controller.start_live_view()
 
     def _on_camera_connected(self) -> None:
-        pass  # nothing to show until the operator actually turns live view on
+        # Unlike other warnings (deliberately never auto-dismissed — see
+        # `_show_warning_banner`), a stale "camera not detected"/"USB busy"
+        # banner is actively wrong the moment the connection it was about
+        # recovers, not just less relevant — worth a narrow exception.
+        if self._last_warning is not None and self._last_warning[0] in (
+            _CODE_NOT_DETECTED,
+            _CODE_USB_BUSY,
+        ):
+            self._hide_warning_banner()
 
     def _on_camera_disconnected(self) -> None:
         if self.live_view_widget is not None:
@@ -1612,6 +1663,14 @@ class CaptureScreen(QWidget):
     def _on_live_view_opacity_changed(self, _opacity: float) -> None:
         if self._persist_camera_config is not None:
             self._persist_camera_config()
+
+    def _on_live_view_expanded_changed(self, expanded: bool) -> None:
+        self._reposition_live_view()
+        if self._camera_controller is not None:
+            # Camera-side zoom (real detail, not this app's own digital
+            # zoom/pan re-scaling the same pixels) while checking focus —
+            # see `GphotoCameraBackend.set_live_view_zoomed`.
+            self._camera_controller.set_live_view_zoomed(expanded)
 
     def _reposition_live_view(self) -> None:
         if self.live_view_widget is None:

@@ -64,6 +64,7 @@ _ACTION_LABEL_KEYS: dict[str, dict[str, str]] = {
         "trigger_capture": "preferences.shortcut_trigger_capture",
         "pause_resume": "preferences.shortcut_pause_resume",
         "toggle_live_view": "preferences.shortcut_toggle_live_view",
+        "toggle_live_view_panel": "preferences.shortcut_toggle_live_view_panel",
         "stop_capture": "preferences.shortcut_stop_capture",
     },
     "name_conflict": {
@@ -347,13 +348,23 @@ class PreferencesDialog(QDialog):
         restart_note = QLabel(t("preferences.camera_enabled_restart_note"))
         restart_note.setWordWrap(True)
 
+        self.camera_rotate_180_check = QCheckBox(t("preferences.camera_rotate_180"))
+        self.camera_rotate_180_check.setToolTip(t("preferences.camera_rotate_180_tooltip"))
+        self.camera_rotate_180_check.setChecked(self.context.config.camera.live_view_rotate_180)
+        self.camera_rotate_180_check.toggled.connect(self._on_camera_rotate_180_changed)
+
         layout = QVBoxLayout()
         layout.addWidget(self.camera_enabled_check)
         layout.addWidget(restart_note)
+        layout.addWidget(self.camera_rotate_180_check)
         layout.addStretch(1)
         widget = QWidget()
         widget.setLayout(layout)
         return widget
+
+    def _on_camera_rotate_180_changed(self, checked: bool) -> None:
+        self.context.config.camera.live_view_rotate_180 = bool(checked)
+        self._save()
 
     def _on_camera_enabled_changed(self, checked: bool) -> None:
         if not checked or is_camera_available():

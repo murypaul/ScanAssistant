@@ -99,6 +99,11 @@ class CameraConfig:
     # delivers); otherwise one of LIVE_VIEW_FPS_CHOICES.
     live_view_fps: int | None = None
     live_view_opacity: float = 1.0  # [0.0;1.0]
+    # Rig-dependent: a camera mounted upside-down over the negative (common
+    # in a copy-stand setup) delivers an already-inverted preview — this
+    # only ever affects the on-screen live view image, never the RAW
+    # itself (the body writes that the same way regardless).
+    live_view_rotate_180: bool = False
 
 
 LIVE_VIEW_FPS_CHOICES: tuple[int, ...] = (10, 15, 20, 25, 30)

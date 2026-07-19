@@ -161,6 +161,15 @@ def _build_qss(brightness: str) -> str:
         border-color: {border_strong};
         color: {text_secondary};
     }}
+    QPushButton[role="live-view-icon"] {{
+        background-color: {surface};
+        border: 1px solid {border_strong};
+        border-radius: 3px;
+        padding: 2px;
+    }}
+    QPushButton[role="live-view-icon"]:hover {{
+        border-color: {ACCENT};
+    }}
     QTabWidget::pane {{
         border: 1px solid {border};
     }}

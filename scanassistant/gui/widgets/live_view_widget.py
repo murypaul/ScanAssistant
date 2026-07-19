@@ -48,6 +48,7 @@ _MEASURED_FPS_WINDOW = 8  # rolling average over this many inter-frame gaps
 _ZOOM_MIN, _ZOOM_MAX = 1.0, 6.0
 _ZOOM_STEP = 1.15
 _LIVE_DOT_COLOR = QColor("#e2685c")
+_MIN_OPACITY_PERCENT = 15
 
 
 def image_from_live_view_frame(frame: LiveViewFrame) -> QImage:
@@ -200,6 +201,14 @@ class LiveViewWidget(QWidget):
     toggleRequested = Signal()  # L key / on-widget toggle button
     opacityChanged = Signal(float)  # 0.0-1.0, already persisted to `camera_config`
     fpsChanged = Signal(object)  # int | None, already persisted to `camera_config`
+    # Expand/collapse changes this widget's own preferred geometry
+    # (`size_for()`), but resizing an absolutely-positioned overlay is the
+    # parent's job (`CaptureScreen._reposition_live_view`) — it only ever
+    # gets called on the parent's own resize otherwise, so without this
+    # signal, expanding never actually grows the widget until some
+    # unrelated resize happens to trigger one.
+    expandedChanged = Signal(bool)
+    closeRequested = Signal()  # × button — panel hidden until View menu / shortcut
 
     def __init__(self, camera_config: CameraConfig, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -209,6 +218,7 @@ class LiveViewWidget(QWidget):
         self._capturing = False
 
         self.stage = _LiveViewStage()
+        self.stage.setToolTip(t("live_view.expand_tooltip"))
         self.stage.clicked.connect(self._on_stage_clicked)
         # Applied to the whole widget, not just `stage`: this is a plain
         # child overlay sitting on top of `PreviewArea`, not a top-level
@@ -239,26 +249,39 @@ class LiveViewWidget(QWidget):
         self._select_fps_combo(camera_config.live_view_fps)
         self.fps_combo.currentIndexChanged.connect(self._on_fps_combo_changed)
 
-        self.opacity_slider = SliderField(0, 100, decimals=0, default=100)
+        # Floor above 0: at 0 the *whole* widget fades out (see
+        # `_apply_opacity`), controls included — with nothing left visible
+        # to click, there would be no way back short of editing
+        # config.json by hand.
+        self.opacity_slider = SliderField(_MIN_OPACITY_PERCENT, 100, decimals=0, default=100)
         self.opacity_slider.setValue(round(camera_config.live_view_opacity * 100))
         self.opacity_slider.committed.connect(self._on_opacity_committed)
 
         self.toggle_button = QPushButton("●")
         self.toggle_button.setToolTip(t("live_view.toggle_tooltip"))
+        self.toggle_button.setProperty("role", "live-view-icon")
         self.toggle_button.setFixedWidth(28)
         self.toggle_button.clicked.connect(self.toggleRequested.emit)
 
         self.shrink_button = QPushButton("⤡")
         self.shrink_button.setToolTip(t("live_view.collapse_tooltip"))
+        self.shrink_button.setProperty("role", "live-view-icon")
         self.shrink_button.setFixedWidth(28)
         self.shrink_button.clicked.connect(self.collapse)
         self.shrink_button.setVisible(False)
+
+        self.close_button = QPushButton("×")
+        self.close_button.setToolTip(t("live_view.close_tooltip"))
+        self.close_button.setProperty("role", "live-view-icon")
+        self.close_button.setFixedWidth(28)
+        self.close_button.clicked.connect(self.closeRequested.emit)
 
         top_row = QHBoxLayout()
         top_row.addWidget(self.live_badge)
         top_row.addStretch(1)
         top_row.addWidget(self.fps_measured_label)
         top_row.addWidget(self.shrink_button)
+        top_row.addWidget(self.close_button)
 
         controls_row = QHBoxLayout()
         controls_row.addWidget(QLabel(t("live_view.fps_label")))
@@ -274,14 +297,21 @@ class LiveViewWidget(QWidget):
         layout.addWidget(self.stage, 1)
         layout.addLayout(controls_row)
 
+        # Without this, a plain `QWidget` subclass never paints its own
+        # stylesheet background/border (only its children) — same fix as
+        # `conflict_panel`/`critical_banner` in `capture.py`.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"LiveViewWidget {{ background: #14171c; border: 1px solid {BORDER}; }}")
-        self._apply_opacity(camera_config.live_view_opacity)
         self.expanded = False
+        self._apply_opacity()
 
     # --- fed by CaptureScreen from CameraController callbacks --------------
 
     def show_frame(self, frame: LiveViewFrame, *, now: float | None = None) -> None:
-        self.stage.set_image(image_from_live_view_frame(frame))
+        image = image_from_live_view_frame(frame)
+        if self._camera_config.live_view_rotate_180:
+            image = image.mirrored(True, True)
+        self.stage.set_image(image)
         self._measured_fps.record(time.monotonic() if now is None else now)
         measured = self._measured_fps.value()
         self.fps_measured_label.setText(
@@ -296,6 +326,11 @@ class LiveViewWidget(QWidget):
         if not live:
             self._measured_fps.reset()
             self.fps_measured_label.setText(t("live_view.fps_measured_pending"))
+            # Nothing left to check focus against once the feed itself
+            # stops — an expanded panel showing a frozen last frame would
+            # otherwise just sit there with no way to tell it's stale.
+            if self.expanded:
+                self.collapse()
 
     def is_live(self) -> bool:
         return self._live
@@ -312,19 +347,30 @@ class LiveViewWidget(QWidget):
     # --- expand/collapse ----------------------------------------------------
 
     def _on_stage_clicked(self) -> None:
-        if not self.expanded:
+        # Only while actually live: a click on a static (non-streaming)
+        # vignette has nothing to check focus against, and would otherwise
+        # risk misfiring during normal capture-screen interaction near it.
+        if not self._live:
+            return
+        if self.expanded:
+            self.collapse()
+        else:
             self.expand()
 
     def expand(self) -> None:
         self.expanded = True
         self.stage.expanded = True
         self.shrink_button.setVisible(True)
+        self._apply_opacity()
+        self.expandedChanged.emit(True)
 
     def collapse(self) -> None:
         self.expanded = False
         self.stage.expanded = False
         self.stage.reset_view()
         self.shrink_button.setVisible(False)
+        self._apply_opacity()
+        self.expandedChanged.emit(False)
 
     def size_for(self, container: QRectF) -> QRectF:
         """This widget's target geometry within `container` (the preview
@@ -360,8 +406,18 @@ class LiveViewWidget(QWidget):
     def _on_opacity_committed(self, value: float) -> None:
         opacity = value / 100
         self._camera_config.live_view_opacity = opacity
-        self._apply_opacity(opacity)
+        self._apply_opacity()
         self.opacityChanged.emit(opacity)
 
-    def _apply_opacity(self, opacity: float) -> None:
-        self._opacity_effect.setOpacity(opacity)
+    def _effective_opacity(self) -> float:
+        # Expanded is meant to fully replace the still preview, not layer
+        # translucently over it — the configured opacity only applies to
+        # the small picture-in-picture vignette.
+        if self.expanded:
+            return 1.0
+        # Floored here too, not just on the slider: a `config.json` written
+        # before the floor existed could still carry a stored 0.0.
+        return max(_MIN_OPACITY_PERCENT / 100, self._camera_config.live_view_opacity)
+
+    def _apply_opacity(self) -> None:
+        self._opacity_effect.setOpacity(self._effective_opacity())

@@ -141,6 +141,12 @@ STRINGS: dict[str, str] = {
     "preferences.camera_enabled_restart_note": (
         "Takes effect the next time ScanAssistant is started."
     ),
+    "preferences.camera_rotate_180": "Rotate live view 180°",
+    "preferences.camera_rotate_180_tooltip": (
+        "For a camera mounted upside-down over the negative (a common copy-stand"
+        " setup) — only affects the on-screen live view image, never the RAW file"
+        " itself."
+    ),
     "preferences.camera_install_title": "Tethered camera support",
     "preferences.camera_install_question": (
         "Tethered capture needs an extra Python package (gphoto2) that isn't"
@@ -178,6 +184,7 @@ STRINGS: dict[str, str] = {
     "preferences.shortcut_trigger_capture": "Trigger the camera remotely",
     "preferences.shortcut_pause_resume": "Pause / Resume",
     "preferences.shortcut_toggle_live_view": "Toggle live view",
+    "preferences.shortcut_toggle_live_view_panel": "Show/hide the live view panel",
     "preferences.shortcut_stop_capture": "Stop capture",
     "preferences.shortcut_toggle_guides": "Toggle rule-of-thirds guides",
     "preferences.shortcut_option_1": "Rename current image",
@@ -203,6 +210,7 @@ STRINGS: dict[str, str] = {
     "menu.capture_rename": "Rename current image…",
     "menu.capture_go_to_name": "Go to name…",
     "menu.capture_release_camera": "Release camera from file manager",
+    "menu.view_live_view": "Show/hide live view panel",
     "menu.processing": "Processing",
     "menu.processing_recompute_frame": "Recompute frame",
     "menu.processing_rotate": "Rotate 90°",
@@ -291,6 +299,7 @@ STRINGS: dict[str, str] = {
     "live_view.toggle_tooltip": "Toggle live view (L)",
     "live_view.expand_tooltip": "Click to check focus in detail",
     "live_view.collapse_tooltip": "Back to thumbnail",
+    "live_view.close_tooltip": "Hide the live view panel (View menu to bring it back)",
     # --- New campaign wizard (06 §4) ---
     "wizard.title": "New campaign",
     "wizard.browse": "Browse…",
