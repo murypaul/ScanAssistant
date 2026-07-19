@@ -281,6 +281,7 @@ class CaptureScreen(QWidget):
         self._camera_config = camera_config
         self._persist_camera_config = persist_camera_config
         self._camera_controller: CameraController | None = None
+        self._release_gvfs_claim: Callable[[], None] | None = None
         self.live_view_widget: LiveViewWidget | None = None
         if camera_config is not None and camera_config.enabled:
             self._build_camera(camera_config, camera_backend)
@@ -457,9 +458,13 @@ class CaptureScreen(QWidget):
         here, not at module load time, so a user without a tethered camera
         never pays the cost of it (or a broken install of it)."""
         if camera_backend is None:
-            from scanassistant.camera.gphoto_backend import GphotoCameraBackend
+            from scanassistant.camera.gphoto_backend import (
+                GphotoCameraBackend,
+                release_gvfs_claim,
+            )
 
             camera_backend = GphotoCameraBackend()
+            self._release_gvfs_claim = release_gvfs_claim
 
         bridge = _CameraBridge(self)
         bridge.connected.connect(self._on_camera_connected)
@@ -1525,6 +1530,21 @@ class CaptureScreen(QWidget):
         self.stopped.emit()
 
     # --- tethered camera: remote trigger + live view ------------------------
+
+    def has_camera(self) -> bool:
+        return self._camera_controller is not None
+
+    def release_camera_from_file_manager(self) -> None:
+        """Capture ▸ Release camera from file manager. The file manager's
+        own auto-mount (Nemo/gvfs) claims a PTP-mode camera the instant
+        it's plugged in, which is what usually makes the camera read as
+        "not detected" here — this releases that claim and retries
+        connecting. A no-op if tethered capture isn't enabled."""
+        if self._camera_controller is None or self._release_gvfs_claim is None:
+            return
+        self._release_gvfs_claim()
+        self._camera_controller.connect()
+        self._set_status(t("capture.camera_release_status"))
 
     def trigger_capture_remote(self) -> None:
         """Space key: fires the shutter on the tethered camera. A no-op if

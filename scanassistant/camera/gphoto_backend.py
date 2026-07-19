@@ -8,7 +8,9 @@ Only imported when `config.json:camera.enabled` is true (wired in
 
 from __future__ import annotations
 
+import contextlib
 import io
+import subprocess
 import time
 from pathlib import Path
 from typing import NoReturn
@@ -24,10 +26,37 @@ from scanassistant.camera.errors import CameraBusyError, CameraIOError, CameraNo
 # Device Busy") rather than exposing a stable set of named constants for
 # every protocol-level condition — matching on well-known substrings is
 # the same approach `gphoto2` CLI users rely on in practice (see
-# IMPLEMENTATION_NOTES.md). Not yet exercised against a real D750
-# (open point, IMPLEMENTATION_NOTES.md §6).
+# IMPLEMENTATION_NOTES.md). Exercised against a real D750: the "Could not
+# claim the USB device" case below is by far the most common one in
+# practice, not a rare edge case — see `release_gvfs_claim`.
 _NOT_FOUND_MARKERS = ("could not claim the usb device", "no camera found", "model not found")
 _DEVICE_BUSY_MARKERS = ("0x2019", "device busy")
+
+# GNOME/Nemo auto-mounts any PTP-mode camera the instant it's plugged in
+# (Nemo ▸ Devices, desktop notifications...); the resulting exclusive USB
+# claim is what `_NOT_FOUND_MARKERS` above actually catches most of the
+# time — `libgphoto2` reports it identically to the camera being genuinely
+# absent. Killing the daemons (rather than just unmounting) is deliberate:
+# gvfs mounts are D-Bus-activatable, so anything that enumerates volumes
+# afterwards (a file-open dialog, Nemo's own background poll...) would
+# just respawn the monitor and reclaim the camera again if it were merely
+# unmounted.
+_GVFS_GPHOTO2_PROCESSES = ("gvfs-gphoto2-volume-monitor", "gvfsd-gphoto2")
+_RELEASE_TIMEOUT_S = 5
+
+
+def release_gvfs_claim() -> None:
+    """Menu action (Capture ▸ Release camera from file manager). Never
+    raises: `killall` finding nothing to kill is the normal case once this
+    has already been done once, not an error worth surfacing — the
+    connect attempt right after this call is the real signal of whether
+    it helped."""
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        subprocess.run(
+            ["killall", *_GVFS_GPHOTO2_PROCESSES],
+            capture_output=True,
+            timeout=_RELEASE_TIMEOUT_S,
+        )
 
 # How long `download_captured_files` waits, in total, for the RAW produced
 # by the trigger just sent — comfortably under the GUI's own 15 s

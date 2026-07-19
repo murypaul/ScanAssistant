@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.8.2 — 2026-07-19
+
+### Fixed
+
+**Camera**
+- First real-world test against the D750 turned up the actual leading
+  cause of "camera not detected": Nemo/gvfs auto-mounts any PTP-mode
+  camera the instant it's plugged in, and the resulting exclusive USB
+  claim makes `libgphoto2` report the camera as absent even though it's
+  right there. New Capture ▸ Release camera from file manager menu item
+  releases that claim and retries connecting — enabled whenever tethered
+  capture is on for the current session.
+
 ## 1.8.1 — 2026-07-19
 
 ### Fixed

@@ -300,12 +300,17 @@ class MainWindow(QMainWindow):
         self.action_go_to_name = self._add_action(
             self.capture_menu, t("menu.capture_go_to_name"), None, None
         )
+        self.capture_menu.addSeparator()
+        self.action_release_camera = self._add_action(
+            self.capture_menu, t("menu.capture_release_camera"), None, None
+        )
         for action in (
             self.action_stop_capture,
             self.action_pause_resume,
             self.action_finalize,
             self.action_reject,
             self.action_go_to_name,
+            self.action_release_camera,
         ):
             action.setEnabled(False)
 
@@ -875,6 +880,15 @@ class MainWindow(QMainWindow):
             action.setEnabled(True)
             action.triggered.connect(slot)
 
+        # Camera-specific: only meaningful (and only enabled) when tethered
+        # capture is actually on for this campaign — unlike the actions
+        # above, which apply to every capture session.
+        self.action_release_camera.setEnabled(self.capture_screen.has_camera())
+        if self.capture_screen.has_camera():
+            self.action_release_camera.triggered.connect(
+                self.capture_screen.release_camera_from_file_manager
+            )
+
         for action_name, slot in zip(
             self._PROCESSING_ACTION_SLOTS,
             (
@@ -905,6 +919,12 @@ class MainWindow(QMainWindow):
             with contextlib.suppress(TypeError, RuntimeError):
                 action.triggered.disconnect(slot)
             action.setEnabled(False)
+
+        with contextlib.suppress(TypeError, RuntimeError):
+            self.action_release_camera.triggered.disconnect(
+                self.capture_screen.release_camera_from_file_manager
+            )
+        self.action_release_camera.setEnabled(False)
 
         for action_name, slot in zip(
             self._PROCESSING_ACTION_SLOTS,
