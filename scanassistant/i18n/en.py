@@ -141,6 +141,18 @@ STRINGS: dict[str, str] = {
     "preferences.camera_enabled_restart_note": (
         "Takes effect the next time ScanAssistant is started."
     ),
+    "preferences.camera_install_title": "Tethered camera support",
+    "preferences.camera_install_question": (
+        "Tethered capture needs an extra Python package (gphoto2) that isn't"
+        " installed yet. Install it now? This downloads it from PyPI into"
+        " ScanAssistant's own virtual environment — nothing else changes."
+    ),
+    "preferences.camera_install_success": (
+        "Installed. Tethered camera support is now enabled."
+    ),
+    "preferences.camera_install_failed": (
+        "Could not install the camera package: {error}"
+    ),
     "preferences.export_settings": "Export settings…",
     "preferences.import_settings": "Import settings…",
     "preferences.restart_notice": "Settings imported. Restart ScanAssistant to fully apply them.",

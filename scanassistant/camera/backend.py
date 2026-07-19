@@ -10,11 +10,23 @@ even be touched unless `camera.enabled` is true.
 
 from __future__ import annotations
 
+import importlib.util
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from scanassistant.camera.errors import CameraBusyError, CameraNotFoundError
+
+
+def is_available() -> bool:
+    """Whether the `gphoto2` binding is installed in this venv.
+
+    `find_spec` only locates the module, never imports it — same "not even
+    touched unless enabled" guarantee as the rest of this file, so this is
+    safe to call before `camera.enabled` is actually turned on (that's the
+    point: `preferences.py` calls it right when the operator flips the
+    switch, to decide whether to offer installing it first)."""
+    return importlib.util.find_spec("gphoto2") is not None
 
 
 @dataclass(frozen=True)

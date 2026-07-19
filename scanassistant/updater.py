@@ -110,3 +110,30 @@ def apply_update(app_dir: Path, python_executable: str) -> UpdateApplyResult:
         )
 
     return UpdateApplyResult(success=True, output=pull.stdout + install.stdout)
+
+
+def install_camera_dependencies(app_dir: Path, python_executable: str) -> UpdateApplyResult:
+    """`pip install -e ".[camera]"` — no `git pull`.
+
+    Run when the operator turns tethered capture on
+    (`preferences.py:_on_camera_enabled_changed`) and `gphoto2` isn't
+    importable yet in the running venv: the extra is opt-in (pyproject.toml
+    `camera`, needs the system `libgphoto2` besides the Python binding) so
+    a user who never plugs in a camera never pays for it, but flipping the
+    switch must not just leave them to hit `ModuleNotFoundError` the next
+    time they open Capture.
+    """
+    try:
+        install = subprocess.run(
+            [python_executable, "-m", "pip", "install", "-e", ".[camera]"],
+            cwd=app_dir,
+            capture_output=True,
+            text=True,
+            timeout=_PIP_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return UpdateApplyResult(success=False, output="", error=str(exc))
+    if install.returncode != 0:
+        return UpdateApplyResult(success=False, output=install.stdout, error=install.stderr.strip())
+
+    return UpdateApplyResult(success=True, output=install.stdout)

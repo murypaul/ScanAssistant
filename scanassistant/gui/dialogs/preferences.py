@@ -9,6 +9,7 @@ Help ▸ Check for updates.
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
@@ -35,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from scanassistant.app_context import AppContext
+from scanassistant.camera.backend import is_available as is_camera_available
 from scanassistant.config import load_config, save_config
 from scanassistant.gui.shortcuts import (
     CONTEXTS,
@@ -43,8 +45,10 @@ from scanassistant.gui.shortcuts import (
     is_allowed_key,
     merge_with_defaults,
 )
+from scanassistant.gui.update_worker import CameraDependencyInstallWorker
 from scanassistant.i18n import t
 from scanassistant.metadata.writer import is_available as is_exiftool_available
+from scanassistant.updater import UpdateApplyResult
 
 _ACTION_LABEL_KEYS: dict[str, dict[str, str]] = {
     "capture": {
@@ -130,12 +134,15 @@ class PreferencesDialog(QDialog):
         self,
         context: AppContext,
         *,
+        app_dir: Path,
         check_updates: Callable[[], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.context = context
+        self._app_dir = app_dir
         self._check_updates = check_updates
+        self._camera_install_worker: CameraDependencyInstallWorker | None = None
         self._shortcuts = merge_with_defaults(context.config.shortcuts)
         self.setWindowTitle(t("preferences.title"))
         self.setMinimumSize(560, 560)
@@ -349,8 +356,54 @@ class PreferencesDialog(QDialog):
         return widget
 
     def _on_camera_enabled_changed(self, checked: bool) -> None:
-        self.context.config.camera.enabled = bool(checked)
-        self._save()
+        if not checked or is_camera_available():
+            self.context.config.camera.enabled = bool(checked)
+            self._save()
+            return
+
+        # Turning tethered capture on for the first time in this venv:
+        # `gphoto2` is an opt-in extra (pyproject.toml `camera`), never
+        # installed by default. Offer to install it right now rather than
+        # persisting `enabled` and leaving the operator to hit
+        # `ModuleNotFoundError` the next time Capture opens.
+        self.camera_enabled_check.blockSignals(True)
+        self.camera_enabled_check.setChecked(False)
+        self.camera_enabled_check.blockSignals(False)
+
+        answer = QMessageBox.question(
+            self,
+            t("preferences.camera_install_title"),
+            t("preferences.camera_install_question"),
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        self.camera_enabled_check.setEnabled(False)
+        worker = CameraDependencyInstallWorker(self._app_dir, sys.executable)
+        worker.finished_install.connect(self._on_camera_install_finished)
+        self._camera_install_worker = worker
+        worker.start()
+
+    def _on_camera_install_finished(self, result: UpdateApplyResult) -> None:
+        self._camera_install_worker = None
+        self.camera_enabled_check.setEnabled(True)
+        if result.success:
+            self.camera_enabled_check.blockSignals(True)
+            self.camera_enabled_check.setChecked(True)
+            self.camera_enabled_check.blockSignals(False)
+            self.context.config.camera.enabled = True
+            self._save()
+            QMessageBox.information(
+                self,
+                t("preferences.camera_install_title"),
+                t("preferences.camera_install_success"),
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                t("preferences.camera_install_title"),
+                t("preferences.camera_install_failed", error=result.error),
+            )
 
     # --- Shortcuts -----------------------------------------------------------
 

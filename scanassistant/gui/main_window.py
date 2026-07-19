@@ -498,7 +498,12 @@ class MainWindow(QMainWindow):
     # --- preferences -------------------------------------------------------
 
     def _show_preferences(self) -> None:
-        dialog = PreferencesDialog(self.context, check_updates=self._check_for_updates, parent=self)
+        dialog = PreferencesDialog(
+            self.context,
+            app_dir=self._app_dir(),
+            check_updates=self._check_for_updates,
+            parent=self,
+        )
         dialog.exec()
         self._apply_shortcuts()
 

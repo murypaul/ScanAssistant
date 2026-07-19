@@ -35,7 +35,7 @@ dev = [
 # Tethered camera support (remote trigger + live view, DECISIONS.md I-138):
 # requires the system `libgphoto2` library besides this Python binding.
 camera = [
-    "python-gphoto2>=2.5,<3",
+    "gphoto2>=2.5,<3",
 ]
 
 [tool.setuptools.dynamic]

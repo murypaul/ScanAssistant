@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.8.1 — 2026-07-19
+
+### Fixed
+
+**Camera**
+- `pyproject.toml`'s `camera` extra referenced a nonexistent PyPI package
+  (`python-gphoto2` — the actual distribution is `gphoto2`), so a config
+  with tethered capture already enabled crashed on startup with
+  `ModuleNotFoundError` no matter what you installed by hand.
+- Turning "Enable tethered camera" on in Preferences now checks whether
+  `gphoto2` is installed and, if not, offers to install it into
+  ScanAssistant's own virtual environment right there — the setting is
+  only actually turned on once that succeeds, so this class of crash
+  can't happen again from the preferences flow.
+
 ## 1.8.0 — 2026-07-19
 
 ### New / Changed

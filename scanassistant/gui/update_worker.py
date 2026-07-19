@@ -17,6 +17,7 @@ from scanassistant.updater import (
     UpdateCheckResult,
     apply_update,
     check_for_update,
+    install_camera_dependencies,
 )
 
 
@@ -43,3 +44,18 @@ class UpdateApplyWorker(QThread):
     def run(self) -> None:
         result: UpdateApplyResult = apply_update(self._app_dir, self._python_executable)
         self.finished_apply.emit(result)
+
+
+class CameraDependencyInstallWorker(QThread):
+    finished_install = Signal(object)  # UpdateApplyResult
+
+    def __init__(self, app_dir: Path, python_executable: str) -> None:
+        super().__init__()
+        self._app_dir = app_dir
+        self._python_executable = python_executable
+
+    def run(self) -> None:
+        result: UpdateApplyResult = install_camera_dependencies(
+            self._app_dir, self._python_executable
+        )
+        self.finished_install.emit(result)
