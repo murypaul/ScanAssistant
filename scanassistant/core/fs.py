@@ -84,8 +84,14 @@ class RealFileSystem:
         path.unlink()
 
     def touch_and_remove(self, path: Path) -> None:
-        """Access probe file (`.scanassistant_probe`)."""
-        path.touch(exist_ok=False)
+        """Access probe file (`.scanassistant_probe`).
+
+        Clears a leftover probe from a previous run first: this only checks
+        that the folder is currently writable, not that no earlier crash
+        left the probe behind between its own touch and unlink.
+        """
+        path.unlink(missing_ok=True)
+        path.touch()
         path.unlink()
 
     def sha256(self, path: Path) -> str:

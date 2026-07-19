@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 import numpy as np
 
@@ -65,6 +65,19 @@ class RawDecoder(Protocol):
         ...
 
 
+def _reference_size(raw: Any) -> tuple[int, int]:
+    """`raw.sizes.width/height` are pre-flip, sensor-space dimensions —
+    swapped here for a 90°/270° rotation (`flip` 5 or 6) so the result
+    describes the post-rotation reference space instead: the same space
+    `pixels` (post `_apply_orientation`) and `RawDevelopment.pixels`
+    (rawpy's own flip already applied by `postprocess`) are both in.
+    """
+    width, height = raw.sizes.width, raw.sizes.height
+    if raw.sizes.flip in (5, 6):
+        return height, width
+    return width, height
+
+
 class RawpyDecoder:
     """Production implementation (rawpy/LibRaw)."""
 
@@ -72,7 +85,7 @@ class RawpyDecoder:
         import rawpy
 
         with rawpy.imread(str(path)) as raw:
-            reference_width, reference_height = raw.sizes.width, raw.sizes.height
+            reference_width, reference_height = _reference_size(raw)
             flip = raw.sizes.flip
             try:
                 thumb = raw.extract_thumb()
@@ -119,14 +132,15 @@ class RawpyDecoder:
                 # without this, `user_flip=None` (default) would rotate the image twice.
             )
             height, width = rgb.shape[:2]
+            reference_width, reference_height = _reference_size(raw)
             return RawThumbnail(
                 format="bitmap",
                 data=rgb.tobytes(),
                 width=width,
                 height=height,
                 flip=raw.sizes.flip,
-                reference_width=raw.sizes.width,
-                reference_height=raw.sizes.height,
+                reference_width=reference_width,
+                reference_height=reference_height,
             )
 
     def develop(self, path: Path) -> RawDevelopment:

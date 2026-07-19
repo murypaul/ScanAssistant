@@ -58,12 +58,19 @@ class PositiveReviewScreen(QWidget):
         self._session: CaptureSession | None = None
         self._names: list[str] = []
         self._master_pixels: np.ndarray | None = None
+        self._current_name: str | None = None
         self._current_frame: FrameResult | None = None
         # Same object passed to `self.settings_panel.load(...)` — the panel
         # mutates `manual_settings` on it in place, so this reference always
         # reflects the operator's live edits without reaching into the
         # panel's own private state.
         self._exposure_config: JpegPositiveExportConfig | None = None
+        # In-progress crop/exposure edits, keyed by name, for images the
+        # operator dragged/adjusted but hasn't confirmed yet: without this,
+        # navigating to another row and back would silently replace them
+        # with the default inset / campaign-wide settings again.
+        self._pending_frames: dict[str, FrameResult] = {}
+        self._pending_exposures: dict[str, ManualPositiveSettings] = {}
 
         self.category_deferred_checkbox = QCheckBox(t("positive_review.category_deferred"))
         self.category_deferred_checkbox.setChecked(True)
@@ -132,15 +139,18 @@ class PositiveReviewScreen(QWidget):
         self._load_index(row)
 
     def _load_index(self, index: int) -> None:
+        self._save_pending_edits()
         session = self._session
         if session is None or index < 0 or index >= len(self._names):
             self._master_pixels = None
+            self._current_name = None
             self._current_frame = None
             self.confirm_button.setEnabled(False)
             self.preview_area.show_message(t("positive_review.nothing_to_review"))
             self.status_label.setText("")
             return
         name = self._names[index]
+        self._current_name = name
         self.status_label.setText(
             t("positive_review.reviewing", index=index + 1, total=len(self._names), name=name)
         )
@@ -153,11 +163,16 @@ class PositiveReviewScreen(QWidget):
             return
         self._master_pixels = pixels
         height, width = pixels.shape[:2]
-        self._current_frame = _default_content_frame(width, height)
+        self._current_frame = self._pending_frames.get(name) or _default_content_frame(
+            width, height
+        )
         self.confirm_button.setEnabled(True)
         self.preview_area.show_image(pixels)
         self.preview_area.set_frame_overlay(self._current_frame)
-        manual = session.campaign.exports.jpeg_positive.manual_settings
+        manual = (
+            self._pending_exposures.get(name)
+            or session.campaign.exports.jpeg_positive.manual_settings
+        )
         self._exposure_config = JpegPositiveExportConfig(
             mode="manual",
             horizontal_flip=session.campaign.exports.jpeg_positive.horizontal_flip,
@@ -169,6 +184,19 @@ class PositiveReviewScreen(QWidget):
             ),
         )
         self.settings_panel.load(self._exposure_config)
+
+    def _save_pending_edits(self) -> None:
+        """Remembers the in-progress crop/exposure for the image being
+        navigated away from, so it's restored (instead of reset to the
+        default inset / campaign settings) if the operator comes back to it
+        before confirming."""
+        name = self._current_name
+        if name is None:
+            return
+        if self._current_frame is not None:
+            self._pending_frames[name] = self._current_frame
+        if self._exposure_config is not None:
+            self._pending_exposures[name] = self._exposure_config.manual_settings
 
     def _on_frame_dragged(self, frame: FrameResult) -> None:
         self._current_frame = frame
@@ -197,6 +225,9 @@ class PositiveReviewScreen(QWidget):
             else None
         )
         session.apply_manual_positive_override(name, content_frame=content_frame, settings=settings)
+        self._pending_frames.pop(name, None)
+        self._pending_exposures.pop(name, None)
+        self._current_name = None
         self.refresh_list()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:

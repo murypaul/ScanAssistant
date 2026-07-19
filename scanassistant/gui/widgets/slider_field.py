@@ -146,6 +146,8 @@ class SliderField(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self._minimum = minimum
+        self._maximum = maximum
         self._decimals = decimals
         self._default = default
         self._value = default
@@ -179,6 +181,11 @@ class SliderField(QWidget):
         self._apply(value, notify=None)
 
     def _apply(self, value: float, *, notify: str | None) -> None:
+        # `_track.set_value()` below only clamps the visual handle — without
+        # this, a value arriving via `setText()`/paste (bypassing the
+        # validator's per-keystroke range enforcement) would still reach
+        # `self._value` and every listener unclamped.
+        value = max(self._minimum, min(self._maximum, value))
         value = round(value, self._decimals) if self._decimals else float(round(value))
         self._value = value
         self._track.set_value(value)
