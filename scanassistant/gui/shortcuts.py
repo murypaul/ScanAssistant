@@ -8,8 +8,8 @@ without that counting as a duplicate, since only one context is ever
 active at a time.
 
 Scope: only the single named-key actions (letters, function keys, arrows
-used as plain navigation, Enter/Escape/Space, and the digit options in a
-name conflict) are remappable here. Crop move/resize/rotate (arrow keys
+used as plain navigation, Enter/Escape/Space/Tab, and the digit options in
+a name conflict) are remappable here. Crop move/resize/rotate (arrow keys
 combined with Shift/Ctrl for magnitude) stay fixed and always active in
 capture — those are spatial gestures, not a pick-a-letter shortcut, and
 remapping them would add a lot of surface for very little real benefit.
@@ -37,7 +37,9 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "master_preview": "T",
         "cycle_preview": "K",
         "go_to_name": "Ctrl+G",
-        "pause_resume": "Space",
+        "trigger_capture": "Space",
+        "pause_resume": "Tab",
+        "toggle_live_view": "L",
         "stop_capture": "Escape",
     },
     NAME_CONFLICT: {
@@ -71,6 +73,7 @@ _ALLOWED_BASE_KEYS = (
         Qt.Key.Key_Enter,
         Qt.Key.Key_Escape,
         Qt.Key.Key_Space,
+        Qt.Key.Key_Tab,
     }
 )
 

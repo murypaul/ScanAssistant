@@ -13,14 +13,15 @@ from __future__ import annotations
 
 import contextlib
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
 import cv2
 import numpy as np
 import shiboken6
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QKeyEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QCompleter,
     QHBoxLayout,
@@ -32,6 +33,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from scanassistant.camera.backend import CameraBackend, LiveViewFrame
+from scanassistant.camera.controller import CameraController
+from scanassistant.camera.errors import CODE_CAPTURE_TIMEOUT as _CODE_CAPTURE_TIMEOUT
+from scanassistant.camera.errors import CameraError
+from scanassistant.config import CameraConfig
 from scanassistant.core.crash_recovery import RecoveryReport, perform_crash_recovery
 from scanassistant.core.errors import IllegalTransitionError
 from scanassistant.core.events import (
@@ -60,6 +66,7 @@ from scanassistant.gui.shortcuts import (
     matches_shifted,
     merge_with_defaults,
 )
+from scanassistant.gui.widgets.live_view_widget import LiveViewWidget
 from scanassistant.gui.widgets.preview_area import PreviewArea
 from scanassistant.i18n import t
 from scanassistant.imaging.framing import (
@@ -87,6 +94,11 @@ _FRAME_COMMIT_DELAY_MS = 2500
 # Detection (rescue in particular) is capped well under this on real hardware;
 # bounded so quitting can never hang indefinitely even if it isn't.
 _PREVIEW_WORKER_SHUTDOWN_TIMEOUT_MS = 2000
+# How long to wait, after the camera confirms a remote trigger fired, for the
+# resulting file to actually show up in the watched folder before flagging
+# E-22 (card full/missing) — generous compared to normal write+stabilization
+# time, since giving up too early would misreport a merely slow write.
+_CAPTURE_TRIGGER_TIMEOUT_S = 15.0
 
 _LEVEL_LABELS = {
     "reliable": ("capture.confidence_reliable", "ok"),
@@ -211,6 +223,18 @@ def _downscaled_for_fast_preview(
     return resized, scaled_frame
 
 
+class _CameraBridge(QObject):
+    """`CameraController`'s callbacks fire on its own background thread —
+    this relays them as Signals, which Qt delivers safely to the Qt thread
+    regardless of which thread `emit()` was called from."""
+
+    connected = Signal()
+    disconnected = Signal()
+    frameReady = Signal(object)  # LiveViewFrame
+    captureTriggered = Signal()
+    errorOccurred = Signal(object)  # CameraError
+
+
 class CaptureScreen(QWidget):
     stopped = Signal()
     queue_changed = Signal()
@@ -223,6 +247,9 @@ class CaptureScreen(QWidget):
         export_runner: ExportRunner | None = None,
         export_executor: ExportExecutor | None = None,
         shortcuts: dict[str, dict[str, str]] | None = None,
+        camera_config: CameraConfig | None = None,
+        camera_backend: CameraBackend | None = None,
+        persist_camera_config: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.session: CaptureSession | None = None
@@ -243,10 +270,18 @@ class CaptureScreen(QWidget):
         self._positive_preview_active = False
         self._master_preview_active = False
         self._pending_conflict: NameConflictDetected | None = None
+        self._capture_trigger_deadline: float | None = None
 
         self.preview_area = PreviewArea()
         self.preview_area.frame_dragged.connect(self._on_frame_dragged)
         self.preview_area.frame_drag_finished.connect(self._on_frame_drag_finished)
+
+        self._camera_config = camera_config
+        self._persist_camera_config = persist_camera_config
+        self._camera_controller: CameraController | None = None
+        self.live_view_widget: LiveViewWidget | None = None
+        if camera_config is not None and camera_config.enabled:
+            self._build_camera(camera_config, camera_backend)
 
         # Stage header: name + confidence, in a bar of its own directly
         # above the preview — never drawn on top of the image itself, only
@@ -410,6 +445,42 @@ class CaptureScreen(QWidget):
         self._frame_commit_timer.timeout.connect(self._commit_pending_frame)
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._reposition_live_view()
+
+    def _build_camera(
+        self, camera_config: CameraConfig, camera_backend: CameraBackend | None
+    ) -> None:
+        """Constructs the `CameraController` + `LiveViewWidget`, only ever
+        called when `camera_config.enabled` — `gphoto2` itself is imported
+        here, not at module load time, so a user without a tethered camera
+        never pays the cost of it (or a broken install of it)."""
+        if camera_backend is None:
+            from scanassistant.camera.gphoto_backend import GphotoCameraBackend
+
+            camera_backend = GphotoCameraBackend()
+
+        bridge = _CameraBridge(self)
+        bridge.connected.connect(self._on_camera_connected)
+        bridge.disconnected.connect(self._on_camera_disconnected)
+        bridge.frameReady.connect(self._on_camera_frame)
+        bridge.captureTriggered.connect(self._on_camera_capture_triggered)
+        bridge.errorOccurred.connect(self._on_camera_error)
+        self._camera_controller = CameraController(
+            camera_backend,
+            capture_target=camera_config.capture_target,
+            on_connected=bridge.connected.emit,
+            on_disconnected=bridge.disconnected.emit,
+            on_frame=bridge.frameReady.emit,
+            on_capture_triggered=bridge.captureTriggered.emit,
+            on_error=bridge.errorOccurred.emit,
+        )
+        self._camera_controller.set_live_view_fps(camera_config.live_view_fps)
+
+        self.live_view_widget = LiveViewWidget(camera_config, parent=self)
+        self.live_view_widget.toggleRequested.connect(self.toggle_live_view)
+        self.live_view_widget.fpsChanged.connect(self._on_live_view_fps_changed)
+        self.live_view_widget.opacityChanged.connect(self._on_live_view_opacity_changed)
+        self.live_view_widget.show()
 
     def set_shortcuts(self, shortcuts: dict[str, dict[str, str]]) -> None:
         """Applies a new shortcut map (Preferences ▸ Shortcuts) without restarting capture."""
@@ -474,6 +545,8 @@ class CaptureScreen(QWidget):
         self._loaded_preview_for = None
         self._refresh_banner()
         self._refresh_preview_state()
+        if self._camera_controller is not None:
+            self._camera_controller.connect()
 
         interval_ms = max(
             _MIN_PUMP_INTERVAL_MS,
@@ -495,6 +568,15 @@ class CaptureScreen(QWidget):
         self.session = None
         self._pending_conflict = None
         self.conflict_panel.setVisible(False)
+        self._capture_trigger_deadline = None
+        if self._camera_controller is not None:
+            # Releases the mirror-up state rather than the whole USB
+            # connection: leaving capture mode is expected to be temporary
+            # (back to the project screen, then capture again), unlike
+            # `finish_shutdown()`.
+            self._camera_controller.stop_live_view()
+            if self.live_view_widget is not None:
+                self.live_view_widget.set_live(False)
 
     # --- non-blocking shutdown (drain_on_exit) ----------------------------------
 
@@ -539,6 +621,8 @@ class CaptureScreen(QWidget):
             self.session = None
         self._pending_conflict = None
         self.conflict_panel.setVisible(False)
+        if self._camera_controller is not None:
+            self._camera_controller.shutdown()
 
     # --- loop ----------------------------------------------------------------
 
@@ -558,7 +642,26 @@ class CaptureScreen(QWidget):
         )
         self._refresh_banner()
         self._refresh_preview_state()
+        self._check_capture_trigger_timeout()
         self.queue_changed.emit()
+
+    def _check_capture_trigger_timeout(self) -> None:
+        """E-22: a remote trigger confirmed camera-side, but its file never
+        showed up (card full/missing, `capturetarget` mismatch). Cleared as
+        soon as a new file is detected (`ImageDetected`, `_handle_event`),
+        so this only ever fires on genuine silence."""
+        if self._capture_trigger_deadline is None:
+            return
+        if time.monotonic() < self._capture_trigger_deadline:
+            return
+        self._clear_capture_trigger_deadline()
+        self._set_status(format_warning(_CODE_CAPTURE_TIMEOUT, {}))
+        self._show_warning_banner(_CODE_CAPTURE_TIMEOUT, {})
+
+    def _clear_capture_trigger_deadline(self) -> None:
+        self._capture_trigger_deadline = None
+        if self.live_view_widget is not None:
+            self.live_view_widget.clear_capturing()
 
     def _flush_pending_edits(self) -> None:
         self._commit_pending_rotation()
@@ -580,6 +683,8 @@ class CaptureScreen(QWidget):
     def _handle_event(self, event: object) -> None:
         if isinstance(event, ImageDetected):
             self._stabilizing.add(event.path)
+            if self._capture_trigger_deadline is not None:
+                self._clear_capture_trigger_deadline()
         elif isinstance(event, ImageStabilized | StabilizationTimedOut):
             self._stabilizing.discard(event.path)
         elif isinstance(event, ImageRejected):
@@ -1071,6 +1176,26 @@ class CaptureScreen(QWidget):
 
     # --- keyboard shortcuts, CAPTURE context ------------------------------------
 
+    def event(self, event: QEvent) -> bool:
+        # `Tab` never reaches `keyPressEvent` under Qt's default focus
+        # policy — `QWidget` intercepts it here, in `event()`, for focus
+        # traversal, before a key event is even dispatched. Only swallowed
+        # when some capture action is actually bound to it right now (so an
+        # operator who remaps it away gets ordinary Tab navigation back),
+        # and only outside the text-field/conflict contexts, which need
+        # their own (unrelated) Tab-based navigation untouched.
+        if (
+            event.type() == QEvent.Type.KeyPress
+            and isinstance(event, QKeyEvent)
+            and event.key() == Qt.Key.Key_Tab
+            and self._pending_conflict is None
+            and not (self.go_to_name_edit.isVisible() and self.go_to_name_edit.hasFocus())
+            and "Tab" in self._shortcuts[CAPTURE].values()
+        ):
+            self.keyPressEvent(event)
+            return True
+        return super().event(event)
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
         # Context priority order: text field > conflict > capture. Single
         # handler, no scattered `QShortcut` instances.
@@ -1132,8 +1257,12 @@ class CaptureScreen(QWidget):
                 self.cycle_preview_action(direction=-1)
             elif matches(event, actions["go_to_name"]):
                 self.open_go_to_name()
+            elif matches(event, actions["trigger_capture"]):
+                self.trigger_capture_remote()
             elif matches(event, actions["pause_resume"]):
                 self.toggle_pause()
+            elif matches(event, actions["toggle_live_view"]):
+                self.toggle_live_view()
             elif matches(event, actions["stop_capture"]):
                 self.stop_capture()
             else:
@@ -1387,6 +1516,72 @@ class CaptureScreen(QWidget):
     def stop_capture(self) -> None:
         self.stop()
         self.stopped.emit()
+
+    # --- tethered camera: remote trigger + live view ------------------------
+
+    def trigger_capture_remote(self) -> None:
+        """Space key: fires the shutter on the tethered camera. A no-op if
+        the feature isn't enabled — the resulting file follows the exact
+        same watched-folder path as any other capture, never a separate one."""
+        if self._camera_controller is None:
+            return
+        self._camera_controller.trigger_capture()
+
+    def toggle_live_view(self) -> None:
+        """L key, or the button on `live_view_widget` itself. Manual only —
+        never starts on its own — so the mirror doesn't stay up longer than
+        the operator actually needs it."""
+        if self._camera_controller is None or self.live_view_widget is None:
+            return
+        if self.live_view_widget.is_live():
+            self._camera_controller.stop_live_view()
+            self.live_view_widget.set_live(False)
+        else:
+            self._camera_controller.start_live_view()
+
+    def _on_camera_connected(self) -> None:
+        pass  # nothing to show until the operator actually turns live view on
+
+    def _on_camera_disconnected(self) -> None:
+        if self.live_view_widget is not None:
+            self.live_view_widget.set_live(False)
+
+    def _on_camera_frame(self, frame: LiveViewFrame) -> None:
+        if self.live_view_widget is None:
+            return
+        self.live_view_widget.show_frame(frame)
+        if not self.live_view_widget.is_live():
+            self.live_view_widget.set_live(True)
+
+    def _on_camera_capture_triggered(self) -> None:
+        self._capture_trigger_deadline = time.monotonic() + _CAPTURE_TRIGGER_TIMEOUT_S
+        if self.live_view_widget is not None:
+            self.live_view_widget.show_capturing()
+
+    def _on_camera_error(self, error: CameraError) -> None:
+        self._set_status(format_warning(error.code, error.details))
+        self._show_warning_banner(error.code, error.details)
+
+    def _on_live_view_fps_changed(self, fps: int | None) -> None:
+        if self._camera_controller is not None:
+            self._camera_controller.set_live_view_fps(fps)
+        if self._persist_camera_config is not None:
+            self._persist_camera_config()
+
+    def _on_live_view_opacity_changed(self, _opacity: float) -> None:
+        if self._persist_camera_config is not None:
+            self._persist_camera_config()
+
+    def _reposition_live_view(self) -> None:
+        if self.live_view_widget is None:
+            return
+        container = QRectF(self.preview_area.geometry())
+        self.live_view_widget.setGeometry(self.live_view_widget.size_for(container).toRect())
+        self.live_view_widget.raise_()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._reposition_live_view()
 
     # --- session history (correction side panel) ---------------------------
 

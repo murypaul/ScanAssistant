@@ -100,8 +100,11 @@ disposition du clavier). Ce sont les valeurs par défaut — modifiez-les
 depuis **File ▸ Preferences ▸ Shortcuts** (cliquez sur la touche actuelle,
 puis appuyez sur la nouvelle). Les déplacements et la rotation du cadre
 (flèches, +/−, Ctrl+flèches) restent fixes — c'est un geste spatial, pas un
-raccourci à choisir — de même que les rôles de Tab et Échap dans le
-panneau de conflit de nom.
+raccourci à choisir — de même que le rôle d'Échap comme annulation dans le
+panneau de conflit de nom. Tab reste reconfigurable en Capture (ci-dessous)
+mais garde toujours son rôle habituel de navigation entre champs/options
+dans le panneau de conflit de nom, puisqu'un seul des deux contextes est
+actif à la fois.
 
 ### Capture
 
@@ -115,7 +118,9 @@ panneau de conflit de nom.
 | P | Basculer l'aperçu positif |
 | T | Basculer l'aperçu maître (cadre appliqué) |
 | K | Cycler l'aperçu (négatif → positif → maître), indépendant de P/T — Maj+K cycle dans l'autre sens |
-| Espace | Pause / reprendre |
+| Tab | Pause / reprendre |
+| Espace | Déclencher une capture à distance (appareil tethered uniquement, voir [Capture tethered](#capture-tethered-live-view-et-déclenchement-à-distance) ci-dessous) |
+| L | Activer/désactiver le live view (appareil tethered uniquement) |
 | F11 | Plein écran |
 | Échap | Arrêter la capture (retour à la préparation ; les exports continuent) |
 
@@ -159,6 +164,50 @@ pour revenir à la détection automatique.
 | F1 | Cette liste de raccourcis |
 | F11 | Plein écran |
 | Alt+lettre | Ouvrir le menu correspondant |
+
+## Capture tethered (live view et déclenchement à distance)
+
+Optionnel, désactivé par défaut (à activer dans **File ▸ Preferences ▸
+Camera** — prend effet au prochain démarrage de l'application). Le
+firmware Nikon éteint l'écran arrière de l'appareil tant qu'il est
+connecté en USB : impossible de voir ce qu'on cadre sur l'appareil
+lui-même — cette fonctionnalité affiche le flux en direct à l'écran à la
+place, et permet de déclencher au clavier. Elle ne remplace pas le
+chargement du film et le cadrage à la main, et ne pilote à distance ni
+l'exposition, ni l'ISO, ni l'ouverture, ni la mise au point — seuls le
+flux en direct et le déclenchement sont concernés.
+
+Le **Nikon D750** est le premier boîtier pris en charge (USB/PTP). Avant
+de connecter l'appareil :
+
+- Sur l'appareil, régler **menu Setup ▸ USB** sur **PTP/MTP** (pas
+  *Mass Storage*) — sinon l'OS le monte comme un simple disque USB au
+  lieu d'un appareil photo.
+- Sur Linux Mint (et les autres bureaux Cinnamon/GNOME), le service
+  `gvfs`/`gvfsd-gphoto2` de l'OS tente de capter l'appareil en premier et
+  peut bloquer l'application avec un message « connexion USB déjà
+  utilisée » — le fermer (ou désactiver le démarrage automatique de
+  `gvfsd-gphoto2` et `gvfs-gphoto2-volume-monitor`) avant d'ouvrir le
+  mode capture.
+
+Une fois activé et l'appareil connecté :
+
+- **`L`** active/désactive la vignette de live view, dans un coin de la
+  zone d'aperçu. Elle ne démarre jamais toute seule — l'activer maintient
+  le miroir de l'appareil relevé, pensez à la désactiver une fois le
+  cadrage vérifié.
+- **`Espace`** déclenche l'obturateur à distance. Le RAW obtenu arrive par
+  le dossier surveillé exactement comme un fichier transféré à la main —
+  tout ce qui suit (nommage, aperçu, exports) fonctionne de la même façon.
+- Faites glisser le curseur d'opacité de la vignette pour voir au travers
+  le dernier aperçu accepté ; cliquez sur la vignette pour l'agrandir et
+  utilisez la molette/le glissement de la souris pour zoomer et vous
+  déplacer et vérifier la mise au point de près, cliquez à nouveau (ou
+  sur l'icône de réduction) pour revenir à la petite vignette.
+- Le réglage de fréquence est un plafond, pas une garantie : le live view
+  en USB 2.0 plafonne en général autour de 10-20 fps quel que soit le
+  réglage choisi ; la vignette affiche la fréquence réellement atteinte à
+  côté du réglage.
 
 ## Recadrage et confiance
 
@@ -287,6 +336,9 @@ appliquées et enregistrées dès le changement :
 - **Updates** — la vérification automatique au démarrage, volontaire (voir
   [Mise à jour](README.md#mise-à-jour) dans le README), et un bouton de
   vérification manuelle.
+- **Camera** — active la capture tethered (voir [Capture
+  tethered](#capture-tethered-live-view-et-déclenchement-à-distance)
+  ci-dessus). Désactivé par défaut ; prend effet au prochain démarrage.
 - **Shortcuts** — tous les raccourcis reconfigurables (voir plus haut),
   avec réinitialisation individuelle ou globale.
 

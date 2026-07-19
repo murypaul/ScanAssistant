@@ -57,7 +57,9 @@ _ACTION_LABEL_KEYS: dict[str, dict[str, str]] = {
         "master_preview": "preferences.shortcut_master_preview",
         "cycle_preview": "preferences.shortcut_cycle_preview",
         "go_to_name": "preferences.shortcut_go_to_name",
+        "trigger_capture": "preferences.shortcut_trigger_capture",
         "pause_resume": "preferences.shortcut_pause_resume",
+        "toggle_live_view": "preferences.shortcut_toggle_live_view",
         "stop_capture": "preferences.shortcut_stop_capture",
     },
     "name_conflict": {
@@ -147,6 +149,7 @@ class PreferencesDialog(QDialog):
             tabs, self._build_thresholds_tab(), t("preferences.tab_thresholds")
         )
         self._add_scrollable_tab(tabs, self._build_updates_tab(), t("preferences.tab_updates"))
+        self._add_scrollable_tab(tabs, self._build_camera_tab(), t("preferences.tab_camera"))
         self._add_scrollable_tab(tabs, self._build_shortcuts_tab(), t("preferences.tab_shortcuts"))
 
         export_button = QPushButton(t("preferences.export_settings"))
@@ -325,6 +328,29 @@ class PreferencesDialog(QDialog):
     def _on_check_now(self) -> None:
         if self._check_updates is not None:
             self._check_updates()
+
+    # --- Camera ----------------------------------------------------------------
+
+    def _build_camera_tab(self) -> QWidget:
+        self.camera_enabled_check = QCheckBox(t("preferences.camera_enabled"))
+        self.camera_enabled_check.setToolTip(t("preferences.camera_enabled_tooltip"))
+        self.camera_enabled_check.setChecked(self.context.config.camera.enabled)
+        self.camera_enabled_check.toggled.connect(self._on_camera_enabled_changed)
+
+        restart_note = QLabel(t("preferences.camera_enabled_restart_note"))
+        restart_note.setWordWrap(True)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.camera_enabled_check)
+        layout.addWidget(restart_note)
+        layout.addStretch(1)
+        widget = QWidget()
+        widget.setLayout(layout)
+        return widget
+
+    def _on_camera_enabled_changed(self, checked: bool) -> None:
+        self.context.config.camera.enabled = bool(checked)
+        self._save()
 
     # --- Shortcuts -----------------------------------------------------------
 

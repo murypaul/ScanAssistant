@@ -94,8 +94,11 @@ available everywhere too. Shortcuts are letter-based (not tied to a
 keyboard layout). These are the defaults — remap any of them from
 **File ▸ Preferences ▸ Shortcuts** (click the current key, then press the
 new one). The crop's arrow/+/− moves and Ctrl+arrow rotation stay fixed —
-they're a spatial gesture, not a pick-a-key shortcut — and so does Tab and
-Esc's role as navigation/cancel in the name conflict panel.
+they're a spatial gesture, not a pick-a-key shortcut — and so does Esc's
+role as cancel in the name conflict panel. Tab is remappable in Capture
+(below) but always keeps its usual field/option navigation role in the
+name conflict panel, since only one of the two contexts is ever active at
+a time.
 
 ### Capture
 
@@ -109,7 +112,9 @@ Esc's role as navigation/cancel in the name conflict panel.
 | P | Toggle positive preview |
 | T | Toggle master (applied-crop) preview |
 | K | Cycle preview (negative → positive → master), independent of P/T — Shift+K cycles the other way |
-| Space | Pause / resume |
+| Tab | Pause / resume |
+| Space | Trigger a remote capture (tethered camera only, see [Tethered capture](#tethered-capture-live-view--remote-trigger) below) |
+| L | Toggle live view on/off (tethered camera only) |
 | F11 | Full screen |
 | Esc | Stop capture (returns to preparation; exports keep processing) |
 
@@ -153,6 +158,46 @@ automatic detection.
 | F1 | This shortcut list |
 | F11 | Full screen |
 | Alt+letter | Open the matching menu |
+
+## Tethered capture (live view & remote trigger)
+
+Optional, off by default (enable it in **File ▸ Preferences ▸ Camera** —
+takes effect the next time the app starts). Nikon's own firmware turns
+off the camera's rear screen while it's connected over USB, so there's no
+way to see what you're framing on the camera itself — this feature
+displays a live view feed on screen instead, and lets you fire the
+shutter from the keyboard. It does not replace loading film and framing
+by hand, and it doesn't remotely control exposure, ISO, aperture, or
+autofocus — only the live feed and the shutter.
+
+The **Nikon D750** is the first supported body (USB/PTP). Before
+connecting:
+
+- On the camera, set **Setup menu ▸ USB** to **PTP/MTP** (not *Mass
+  Storage*) — otherwise the OS mounts it as a regular USB drive instead of
+  a camera.
+- On Linux Mint (and other Cinnamon/GNOME desktops), the OS's own
+  `gvfs`/`gvfsd-gphoto2` service tries to claim the camera first and can
+  block the app with a "USB connection in use" message — close it (or
+  disable `gvfsd-gphoto2` and `gvfs-gphoto2-volume-monitor`'s autostart)
+  before opening capture mode.
+
+Once enabled and the camera is connected:
+
+- **`L`** toggles the live view vignette on/off, in the corner of the
+  preview area. It never starts on its own — turning it on keeps the
+  camera's mirror raised, so switch it off again once you're done
+  checking the frame.
+- **`Space`** fires the shutter remotely. The resulting RAW arrives
+  through the watched folder exactly like a manually transferred file —
+  everything downstream (naming, preview, exports) works the same way.
+- Drag the opacity slider on the vignette down to see the last accepted
+  preview through it; click the vignette to expand it and use the mouse
+  wheel/drag to zoom and pan for a close look at focus, click again (or
+  the shrink icon) to go back to the small vignette.
+- The fps setting is a ceiling, not a guarantee — USB 2.0 live view
+  typically tops out around 10-20 fps regardless of what's selected; the
+  vignette shows the fps actually being achieved next to the setting.
 
 ## Framing & confidence
 
@@ -266,6 +311,9 @@ capture, like most menus), applied and saved as soon as you change them:
   queue's early-warning size.
 - **Updates** — the opt-in startup check (see [Updating](README.md#updating)
   in the README) and a manual check button.
+- **Camera** — enables tethered capture (see
+  [Tethered capture](#tethered-capture-live-view--remote-trigger) below).
+  Off by default; takes effect the next time the app is started.
 - **Shortcuts** — every remappable key (see above), with per-key and
   global reset.
 

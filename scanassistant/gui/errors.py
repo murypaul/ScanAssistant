@@ -9,6 +9,14 @@ layer that should ever touch `error.*` catalog keys directly.
 
 from __future__ import annotations
 
+from scanassistant.camera.errors import (
+    CODE_CAPTURE_TIMEOUT,
+    CODE_LIVE_VIEW_FAILED,
+    CODE_NOT_DETECTED,
+    CODE_SEEN_AS_STORAGE,
+    CODE_TRIGGER_FAILED,
+    CODE_USB_BUSY,
+)
 from scanassistant.i18n import t
 from scanassistant.project.errors import (
     InvalidCampaignError,
@@ -24,6 +32,14 @@ _WARNING_KEYS = {
     "E-04": "error.E-04",
     "E-08": "error.E-08",
     "E-15": "error.E-15",
+    # Camera (remote trigger + live view): always a warning, never critical —
+    # a tethering hiccup must never suspend the folder-watching pipeline.
+    CODE_NOT_DETECTED: "error.E-17",
+    CODE_USB_BUSY: "error.E-18",
+    CODE_SEEN_AS_STORAGE: "error.E-19",
+    CODE_TRIGGER_FAILED: "error.E-20",
+    CODE_LIVE_VIEW_FAILED: "error.E-21",
+    CODE_CAPTURE_TIMEOUT: "error.E-22",
 }
 
 _CRITICAL_KEYS = {

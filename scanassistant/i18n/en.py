@@ -87,6 +87,7 @@ STRINGS: dict[str, str] = {
     "preferences.tab_processing": "Processing",
     "preferences.tab_thresholds": "Thresholds",
     "preferences.tab_updates": "Updates",
+    "preferences.tab_camera": "Camera",
     "preferences.tab_shortcuts": "Shortcuts",
     "preferences.reopen_last": "Reopen last project on startup",
     "preferences.exiftool": "exiftool path",
@@ -130,6 +131,16 @@ STRINGS: dict[str, str] = {
         " is sent beyond that; a manual check (Help ▸ Check for updates…) is"
         " always available regardless of this setting."
     ),
+    "preferences.camera_enabled": "Enable tethered camera (remote trigger + live view)",
+    "preferences.camera_enabled_tooltip": (
+        "Nikon D750 over USB, first supported body. Adds a remote-trigger"
+        " shortcut and a live view vignette to capture mode — the RAW still"
+        " arrives through the watched folder like any other capture. Off by"
+        " default: leaves everything else unaffected."
+    ),
+    "preferences.camera_enabled_restart_note": (
+        "Takes effect the next time ScanAssistant is started."
+    ),
     "preferences.export_settings": "Export settings…",
     "preferences.import_settings": "Import settings…",
     "preferences.restart_notice": "Settings imported. Restart ScanAssistant to fully apply them.",
@@ -138,7 +149,7 @@ STRINGS: dict[str, str] = {
     "preferences.shortcuts_reset_all": "Reset all to defaults",
     "preferences.shortcuts_invalid_key": (
         "{shortcut} can't be used — only letters, digits, function keys, arrows,"
-        " Enter, Escape, Space (with modifiers) are allowed, and Ctrl+S never is."
+        " Enter, Escape, Space, Tab (with modifiers) are allowed, and Ctrl+S never is."
     ),
     "preferences.shortcuts_conflict": "{shortcut} is already used by “{action}” in this context.",
     "preferences.shortcuts_context_capture": "Capture",
@@ -152,7 +163,9 @@ STRINGS: dict[str, str] = {
     "preferences.shortcut_master_preview": "Master preview",
     "preferences.shortcut_cycle_preview": "Cycle preview (negative → positive → master)",
     "preferences.shortcut_go_to_name": "Go to name",
+    "preferences.shortcut_trigger_capture": "Trigger the camera remotely",
     "preferences.shortcut_pause_resume": "Pause / Resume",
+    "preferences.shortcut_toggle_live_view": "Toggle live view",
     "preferences.shortcut_stop_capture": "Stop capture",
     "preferences.shortcut_toggle_guides": "Toggle rule-of-thirds guides",
     "preferences.shortcut_option_1": "Rename current image",
@@ -253,6 +266,17 @@ STRINGS: dict[str, str] = {
     ),
     "capture.error_watched_folder_missing": "The watched folder is not set or does not exist.",
     "capture.error_watched_folder_inaccessible": "The watched folder is not accessible: {error}",
+    # --- Live view / remote trigger (tethered camera) ---
+    "live_view.live_badge": "LIVE",
+    "live_view.capturing": "Capturing…",
+    "live_view.fps_unlimited": "Unlimited",
+    "live_view.fps_label": "FPS",
+    "live_view.fps_measured": "{fps:.0f} fps",
+    "live_view.fps_measured_pending": "— fps",
+    "live_view.opacity_label": "Opacity",
+    "live_view.toggle_tooltip": "Toggle live view (L)",
+    "live_view.expand_tooltip": "Click to check focus in detail",
+    "live_view.collapse_tooltip": "Back to thumbnail",
     # --- New campaign wizard (06 §4) ---
     "wizard.title": "New campaign",
     "wizard.browse": "Browse…",
@@ -410,6 +434,20 @@ STRINGS: dict[str, str] = {
     "error.E-16_backup_hint": (
         " A backup exists (inventory.csv.bak), but it reflects an earlier state, "
         "before any progress was recorded — check it before restoring it."
+    ),
+    "error.E-17": "Camera not detected. Check the USB cable and that it is powered on.",
+    "error.E-18": (
+        "The camera's USB connection is in use by another program "
+        "(on Linux Mint, check whether gvfs is holding it) — close it and try again."
+    ),
+    "error.E-19": (
+        "The camera looks like a USB drive rather than a camera — "
+        "switch its USB mode to PTP/MTP in its Setup menu."
+    ),
+    "error.E-20": "The remote trigger failed. Check the camera and try again.",
+    "error.E-21": "Live view could not be started. Turn the camera off and on, then try again.",
+    "error.E-22": (
+        "The camera reported a capture, but no file arrived (memory card full or missing?)."
     ),
     "error.generic": "Internal error — see LOGS/debug.log.",
 }

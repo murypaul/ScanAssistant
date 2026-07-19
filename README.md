@@ -34,6 +34,10 @@ flat objects) run by a single operator over long, interruptible sessions.
 - **Robustness** — resumes cleanly after a crash or forced shutdown, handles
   full disks and inaccessible folders without losing a file, resolves name
   conflicts interactively instead of overwriting anything.
+- **Tethered capture** (optional, off by default) — remote shutter trigger
+  and a live view vignette for cameras whose own screen turns off over
+  USB (Nikon D750 first); captures still arrive through the watched
+  folder like any other file.
 - **Full audit trail** — every significant action is logged (JSON Lines),
   independent of the CSV inventory itself.
 
@@ -49,6 +53,11 @@ keyboard shortcuts.
   - Debian/Ubuntu/Mint: `sudo apt install libimage-exiftool-perl`
   - Windows: download the executable from [exiftool.org](https://exiftool.org)
     and put it on your `PATH` (or point to it in the app's settings).
+- **Tethered capture** (optional, `pip install -e ".[camera]"`): needs the
+  system `libgphoto2` library (Debian/Ubuntu/Mint:
+  `sudo apt install libgphoto2-6`) besides the Python package. See
+  [`USER_GUIDE.md`](USER_GUIDE.md#tethered-capture-live-view--remote-trigger)
+  for camera-side setup and a Linux Mint-specific USB conflict to watch for.
 - **Hardware**: nothing special — no GPU, no heavy AI model, any machine
   from the last several years is enough. 4 GB RAM works, 8 GB is
   comfortable. **Disk space is the real constraint**, not CPU or RAM: each
@@ -174,6 +183,10 @@ et interruptibles.
 - **Robustesse** — reprise propre après un arrêt brutal, disque plein ou
   dossier devenu inaccessible sans perte de fichier, conflits de noms
   résolus au cas par cas plutôt qu'un écrasement silencieux.
+- **Capture tethered** (optionnel, désactivé par défaut) — déclenchement à
+  distance et vignette de live view pour les appareils qui éteignent leur
+  propre écran en USB (Nikon D750 en premier lieu) ; les prises arrivent
+  toujours par le dossier surveillé, comme tout autre fichier.
 - **Traçabilité complète** — chaque action significative est journalisée
   (JSON Lines), indépendamment de l'inventaire CSV lui-même.
 
@@ -189,6 +202,12 @@ Voir [`USER_GUIDE.fr.md`](USER_GUIDE.fr.md) pour le flux complet, les
   - Debian/Ubuntu/Mint : `sudo apt install libimage-exiftool-perl`
   - Windows : télécharger l'exécutable depuis [exiftool.org](https://exiftool.org)
     et le placer dans le `PATH` (ou l'indiquer dans les réglages de l'app).
+- **Capture tethered** (optionnel, `pip install -e ".[camera]"`) : nécessite
+  la bibliothèque système `libgphoto2` en plus du paquet Python
+  (Debian/Ubuntu/Mint : `sudo apt install libgphoto2-6`). Voir
+  [`USER_GUIDE.fr.md`](USER_GUIDE.fr.md#capture-tethered-live-view-et-déclenchement-à-distance)
+  pour la préparation côté appareil et un conflit USB spécifique à Linux
+  Mint à surveiller.
 - **Matériel** : rien de particulier — pas de GPU, pas de modèle d'IA
   lourd, n'importe quelle machine des dernières années suffit. 4 Go de RAM
   fonctionnent, 8 Go sont confortables. **L'espace disque est la vraie

@@ -99,7 +99,9 @@ def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
         f"  {c['master_preview']}  Master preview",
         f"  {c['cycle_preview']}  Cycle preview (negative / positive / master,"
         f" Shift+{c['cycle_preview']}: the other way)",
+        f"  {c['trigger_capture']}  Trigger the camera remotely (tethered camera only)",
         f"  {c['pause_resume']}  Pause / Resume",
+        f"  {c['toggle_live_view']}  Toggle live view (tethered camera only)",
         f"  {c['stop_capture']}  Stop capture",
         "",
         "Crop, always available in capture mode:",
@@ -156,7 +158,10 @@ class MainWindow(QMainWindow):
         # slow export synchronously (manual crop confirm, rotation...)
         # freezes the whole window (DECISIONS.md I-92/I-98).
         self.capture_screen = CaptureScreen(
-            export_executor=ThreadedExportExecutor(), shortcuts=self._shortcuts
+            export_executor=ThreadedExportExecutor(),
+            shortcuts=self._shortcuts,
+            camera_config=context.config.camera,
+            persist_camera_config=lambda: save_config(context.config),
         )
         self.capture_screen.stopped.connect(self._on_capture_stopped)
         self.capture_screen.queue_changed.connect(self._refresh_export_queue_panel)
@@ -530,6 +535,13 @@ class MainWindow(QMainWindow):
             self._open_project(Path(path))
 
     def _open_project(self, root: Path) -> None:
+        if self.capture_screen.session is not None:
+            # Switching projects (new/open/recent) while a capture is
+            # running would otherwise leave the old campaign's watcher and
+            # export queue running in the background against a project
+            # whose lock is about to be released below.
+            self.capture_screen.stop_capture()
+
         try:
             opened = open_campaign(root)
         except ScanAssistantError as exc:
@@ -965,7 +977,7 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         QMessageBox.about(self, t("menu.help_about"), t("app.version_line", version=__version__))
 
-    # --- updates (I-102: manual click or opt-in startup check only) ------------
+    # --- updates (manual click or opt-in startup check only, never periodic) ---
 
     def _app_dir(self) -> Path:
         """The current installation's own directory — never a different one."""

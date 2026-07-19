@@ -83,6 +83,24 @@ class UpdatesConfig:
 
 
 @dataclass
+class CameraConfig:
+    # Opt-in only: when false, the camera package is never even imported.
+    # Remote trigger + live view only, never full tethering.
+    enabled: bool = False
+    # Forced on connect and re-read to confirm it stuck: the triggered RAW
+    # must land on the card and follow the existing watcher/ingest
+    # pipeline, never a direct USB download.
+    capture_target: str = "card"
+    # None = unlimited (throttled only by what the camera actually
+    # delivers); otherwise one of LIVE_VIEW_FPS_CHOICES.
+    live_view_fps: int | None = None
+    live_view_opacity: float = 1.0  # [0.0;1.0]
+
+
+LIVE_VIEW_FPS_CHOICES: tuple[int, ...] = (10, 15, 20, 25, 30)
+
+
+@dataclass
 class GlobalConfig:
     schema_version: int = SCHEMA_VERSION
     general: GeneralConfig = field(default_factory=GeneralConfig)
@@ -92,6 +110,7 @@ class GlobalConfig:
     thresholds: ThresholdsConfig = field(default_factory=ThresholdsConfig)
     csv: CsvConfig = field(default_factory=CsvConfig)
     updates: UpdatesConfig = field(default_factory=UpdatesConfig)
+    camera: CameraConfig = field(default_factory=CameraConfig)
     # context -> action -> key string (e.g. "R", "Ctrl+N"). Deliberately kept
     # a plain dict here rather than validated against the allowed key class:
     # that check needs Qt (scanassistant.gui.shortcuts), and this module has
@@ -126,6 +145,15 @@ class GlobalConfig:
             for actions in self.shortcuts.values()
         ):
             raise ValueError("shortcuts must be a mapping of context -> action -> key string")
+        if self.camera.capture_target not in {"card", "sdram"}:
+            raise ValueError("camera.capture_target must be one of: card, sdram")
+        if (
+            self.camera.live_view_fps is not None
+            and self.camera.live_view_fps not in LIVE_VIEW_FPS_CHOICES
+        ):
+            raise ValueError(f"camera.live_view_fps must be None or one of {LIVE_VIEW_FPS_CHOICES}")
+        if not 0.0 <= self.camera.live_view_opacity <= 1.0:
+            raise ValueError("camera.live_view_opacity must be within [0.0, 1.0]")
 
 
 def config_dir() -> Path:
@@ -165,5 +193,6 @@ def _from_dict(data: dict) -> GlobalConfig:
         thresholds=ThresholdsConfig(**data.get("thresholds", {})),
         csv=CsvConfig(**data.get("csv", {})),
         updates=UpdatesConfig(**data.get("updates", {})),
+        camera=CameraConfig(**data.get("camera", {})),
         shortcuts=data.get("shortcuts", {}),
     )

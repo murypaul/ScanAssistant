@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.6.0 — 2026-07-19
+
+### New / Changed
+
+**Capture**
+- Optional tethered capture for cameras whose own rear screen turns off
+  while connected over USB (Nikon D750 first): a live view vignette over
+  the preview, and a keyboard shortcut to fire the shutter remotely.
+  Off by default — captures still arrive through the watched folder like
+  any other file.
+- The live view vignette can be expanded with mouse zoom and pan to check
+  focus closely, and its opacity can be lowered to see the last accepted
+  preview through it. Its frame rate is adjustable, with the actual
+  achieved rate shown alongside the setting.
+
+**Preferences & Shortcuts**
+- A new Camera tab (File ▸ Preferences) turns tethered capture on or off.
+- Pause/resume moved from Space to Tab; Space now fires a remote capture
+  when tethered capture is on; a new L shortcut toggles live view. All
+  three stay remappable like any other shortcut.
+
+### Bug Fixes
+
+**Capture**
+- Switching to a different project while a capture session was still
+  running no longer leaves the previous campaign's folder watching and
+  export processing active in the background.
+- A leftover file from an earlier crash no longer causes the watched
+  folder to be wrongly reported as inaccessible.
+
+**Framing**
+- Rotated negatives (portrait shots the camera stores pre-rotated) could
+  get an incorrectly positioned crop, both automatic and manual — fixed.
+
+**Positive preview**
+- Navigating away from an image in Positive crop review with an
+  unconfirmed crop or exposure adjustment, then back, no longer discards
+  it.
+
+**Interface**
+- Typing or pasting an out-of-range value directly into a numeric slider
+  field no longer bypasses its minimum/maximum limits.
+
+### Documentation
+
+- The user guide and README now cover tethered capture setup, including
+  the Nikon USB-mode prerequisite and a Linux Mint USB-conflict some
+  desktops run into.
+
 ## 1.5.0 — 2026-07-16
 
 ### New / Changed
