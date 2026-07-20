@@ -104,6 +104,8 @@ def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
         f"  {c['toggle_live_view']}  Toggle live view (tethered camera only)",
         f"  {c['toggle_live_view_panel']}  Show/hide the live view panel"
         " (tethered camera only — also View menu)",
+        f"  {c['pick_white_balance']}  Pick white balance from a neutral point in the preview"
+        " (applies to the rest of the session)",
         f"  {c['stop_capture']}  Stop capture",
         "",
         "Crop, always available in capture mode:",
@@ -178,11 +180,19 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self.capture_screen)
         self.setCentralWidget(self._stack)
 
+        # `setVisible(False)`, not the `QDockWidget` default of visible: a
+        # throwaway construction-time value would otherwise still get
+        # captured as the "restore to visible" baseline the first time
+        # `_set_capture_docks_available(False)` runs (`_show_home()`, still
+        # inside `__init__`, before `_restore_dock_layout()`'s own
+        # `restoreState()` — if there even is a saved layout — has a chance
+        # to set a real one) — every dock defaulted to visible the very
+        # first time capture mode was entered, restored layout or not.
         self.export_queue_panel = ExportQueuePanel()
         self.export_queue_dock = QDockWidget(t("export_queue.title"), self)
         self.export_queue_dock.setObjectName("exportQueueDock")
         self.export_queue_dock.setWidget(self.export_queue_panel)
-        self.export_queue_dock.setVisible(True)
+        self.export_queue_dock.setVisible(False)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.export_queue_dock)
 
         self.history_panel = HistoryPanel()
@@ -190,7 +200,7 @@ class MainWindow(QMainWindow):
         self.history_dock = QDockWidget(t("history.title"), self)
         self.history_dock.setObjectName("historyDock")
         self.history_dock.setWidget(self.history_panel)
-        self.history_dock.setVisible(True)
+        self.history_dock.setVisible(False)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.history_dock)
 
         self.positive_settings_panel = PositiveSettingsPanel()
@@ -204,7 +214,7 @@ class MainWindow(QMainWindow):
         self.positive_settings_dock = QDockWidget(t("positive_settings.title"), self)
         self.positive_settings_dock.setObjectName("positiveSettingsDock")
         self.positive_settings_dock.setWidget(self.positive_settings_panel)
-        self.positive_settings_dock.setVisible(True)
+        self.positive_settings_dock.setVisible(False)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.positive_settings_dock)
 
         self._build_menus()

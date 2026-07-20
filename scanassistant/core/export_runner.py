@@ -32,7 +32,9 @@ from scanassistant.metadata.writer import MetadataWriter, ProductionInfo
 from scanassistant.project.campaign import Campaign, JpegPositiveExportConfig
 from scanassistant.project.layout import CampaignPaths
 
-_CacheKey = tuple[str, str, tuple[int, int, int, int, float], str, str, tuple[int, int]]
+_CacheKey = tuple[
+    str, str, tuple[int, int, int, int, float], str, str, tuple[int, int], tuple[float, ...] | None
+]
 _WRITE_ATTEMPTS = 2  # E-06: two attempts, then the image is flagged ERROR
 
 
@@ -239,6 +241,7 @@ class MasterExportRunner:
     ) -> master_pipeline.DevelopedMaster:
         framing = self._campaign.framing
         exports = self._campaign.exports
+        white_balance = self._campaign.imaging.white_balance
         key: _CacheKey = (
             name,
             context.rotation_deg,
@@ -246,6 +249,7 @@ class MasterExportRunner:
             exports.tiff.colorspace,
             framing.size_mode,
             _final_dimensions(framing.final_dimensions_px),
+            tuple(white_balance) if white_balance is not None else None,
         )
         if self._cache_key == key and self._cached_master is not None:
             return self._cached_master
@@ -265,6 +269,7 @@ class MasterExportRunner:
             size_mode=framing.size_mode,
             final_dimensions_px=_final_dimensions(framing.final_dimensions_px),
             colorspace=exports.tiff.colorspace,
+            user_wb=white_balance,
         )
         self._cache_key = key
         self._cached_master = master

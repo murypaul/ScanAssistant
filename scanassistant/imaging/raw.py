@@ -56,12 +56,20 @@ class RawDecoder(Protocol):
         """Embedded thumbnail (`rawpy.extract_thumb()`)."""
         ...
 
-    def read_full_preview(self, path: Path) -> RawThumbnail:
-        """Fallback: thumbnail missing or under 1024 px on the long edge."""
+    def read_full_preview(self, path: Path, *, user_wb: list[float] | None = None) -> RawThumbnail:
+        """Fallback: thumbnail missing or under 1024 px on the long edge, or
+        the session has a `user_wb` to reflect (the embedded thumbnail is
+        the camera's own JPEG rendering, already fixed to whatever white
+        balance the camera itself used — it can't be recolored after the
+        fact)."""
         ...
 
-    def develop(self, path: Path) -> RawDevelopment:
-        """Full 16-bit development (`rawpy.postprocess`)."""
+    def develop(self, path: Path, *, user_wb: list[float] | None = None) -> RawDevelopment:
+        """Full 16-bit development (`rawpy.postprocess`).
+
+        `user_wb`: `[R, G1, B, G2]` multipliers overriding the camera's own
+        white balance (`use_camera_wb=True`) when given.
+        """
         ...
 
 
@@ -119,14 +127,15 @@ class RawpyDecoder:
                 reference_height=reference_height,
             )
 
-    def read_full_preview(self, path: Path) -> RawThumbnail:
+    def read_full_preview(self, path: Path, *, user_wb: list[float] | None = None) -> RawThumbnail:
         import rawpy
 
         with rawpy.imread(str(path)) as raw:
             rgb = raw.postprocess(
                 half_size=True,
                 output_bps=8,
-                use_camera_wb=True,
+                use_camera_wb=user_wb is None,
+                user_wb=user_wb,
                 no_auto_bright=True,
                 user_flip=0,  # rotation applied by the caller via `flip`;
                 # without this, `user_flip=None` (default) would rotate the image twice.
@@ -143,12 +152,13 @@ class RawpyDecoder:
                 reference_height=reference_height,
             )
 
-    def develop(self, path: Path) -> RawDevelopment:
+    def develop(self, path: Path, *, user_wb: list[float] | None = None) -> RawDevelopment:
         import rawpy
 
         with rawpy.imread(str(path)) as raw:
             rgb = raw.postprocess(
-                use_camera_wb=True,
+                use_camera_wb=user_wb is None,
+                user_wb=user_wb,
                 no_auto_bright=True,
                 output_bps=16,
                 output_color=rawpy.ColorSpace.sRGB,

@@ -54,6 +54,7 @@ class PreviewWorker(QThread):
         parent: QObject | None = None,
         *,
         skip_detection: bool = False,
+        user_wb: list[float] | None = None,
     ) -> None:
         super().__init__(parent)
         self._path = path
@@ -63,6 +64,7 @@ class PreviewWorker(QThread):
         # panel): its frame is already known (session history) and must not
         # be silently overwritten by a fresh, possibly different detection.
         self._skip_detection = skip_detection
+        self._user_wb = user_wb
 
     def start(self, *args, **kwargs) -> None:
         _running_workers.add(self)
@@ -71,7 +73,7 @@ class PreviewWorker(QThread):
 
     def run(self) -> None:
         try:
-            preview: Preview = extract_preview(self._path, self._decoder)
+            preview: Preview = extract_preview(self._path, self._decoder, user_wb=self._user_wb)
             if self._skip_detection or not self._framing_config.enabled:
                 frame, rescued = None, False
             else:

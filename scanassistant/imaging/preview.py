@@ -39,11 +39,17 @@ class Preview:
     scale_factor: float  # reference_width / preview_width
 
 
-def extract_preview(path: Path, decoder: RawDecoder) -> Preview:
-    """Embedded thumbnail, falling back to a full-frame preview if missing/too small."""
-    thumb = decoder.read_thumbnail(path)
-    if not _is_usable(thumb):
-        thumb = decoder.read_full_preview(path)
+def extract_preview(
+    path: Path, decoder: RawDecoder, *, user_wb: list[float] | None = None
+) -> Preview:
+    """Embedded thumbnail, falling back to a full-frame preview if missing/too
+    small — or, whenever the session has a fixed white balance, skipped
+    outright in favor of the full-frame preview: the embedded thumbnail is
+    the camera's own JPEG, already rendered with the camera's per-shot
+    white balance, and can't be recolored after the fact."""
+    thumb = None if user_wb is not None else decoder.read_thumbnail(path)
+    if thumb is None or not _is_usable(thumb):
+        thumb = decoder.read_full_preview(path, user_wb=user_wb)
 
     image = _decode(thumb)
     image = _apply_orientation(image, thumb.flip)

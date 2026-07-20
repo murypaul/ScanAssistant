@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.10.0 — 2026-07-20
+
+### New / Changed
+**Capture**
+- Session-wide white balance: pick a neutral point once from the preview
+  (`W`, then click) and it now applies to every capture for the rest of
+  the session — both the exported TIFF/JPEG files and the on-screen
+  preview — instead of the camera's own per-shot white balance, which
+  drifted depending on what was in front of the lens rather than the
+  actual lighting.
+- The correction side panel (recently finalized images, click one to
+  reopen and fix a mistake) now stays populated across stopping and
+  restarting capture mode within the same campaign, instead of forgetting
+  everything the moment you step back to the project screen.
+
+**Live view**
+- The live badge, measured fps, and close button now float directly over
+  the video feed instead of taking a row of their own above it, leaving
+  more room for the actual preview.
+- Measured fps now updates once a second instead of on every single
+  frame, much less distracting to look at.
+
+### Bug Fixes
+**Framing**
+- Nudging the crop frame with the arrow keys moved it in the wrong
+  direction after rotating the image 90°/180°/270° — arrow keys now
+  always match what's on screen, regardless of rotation.
+
+**Interface**
+- The export queue, session history, and positive settings side panels
+  used to appear automatically the very first time capture mode was
+  entered in a session, even with nothing to show yet — they now
+  correctly stay hidden until the operator opens them.
+- The "Capturing…" indicator during a remote-triggered shot could show up
+  as a small floating window elsewhere on screen instead of over the live
+  view.
+- The live view toggle button's height no longer mismatches the other
+  controls next to it.
+
 ## 1.9.0 — 2026-07-20
 
 First extended real-world session with tethered capture against an

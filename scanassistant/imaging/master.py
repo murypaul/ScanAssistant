@@ -41,9 +41,10 @@ def develop_master(
     size_mode: str,
     final_dimensions_px: tuple[int, int],
     colorspace: str,
+    user_wb: list[float] | None = None,
 ) -> DevelopedMaster:
     """RAW 16-bit development + geometry."""
-    development = decoder.develop(raw_path)
+    development = decoder.develop(raw_path, user_wb=user_wb)
     geometry = apply_geometry(
         development.pixels,
         frame,

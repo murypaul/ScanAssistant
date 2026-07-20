@@ -20,7 +20,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QCompleter,
@@ -79,11 +79,13 @@ from scanassistant.imaging.framing import (
 from scanassistant.imaging.geometry import FrameGeometry, apply_geometry
 from scanassistant.imaging.positive import ManualSettings, render_positive
 from scanassistant.imaging.raw import RawDecoder, RawpyDecoder
+from scanassistant.imaging.white_balance import sample_white_balance
 from scanassistant.journal.journal import Journal
 from scanassistant.journal.techlog import get_logger
 from scanassistant.metadata.writer import ExifToolMetadataWriter
 from scanassistant.metadata.writer import is_available as is_exiftool_available
-from scanassistant.project.campaign import Campaign
+from scanassistant.project.campaign import Campaign, save_campaign
+from scanassistant.project.errors import InvalidCampaignError
 from scanassistant.project.inventory import MAX_NAME_LENGTH, STATUS_COLUMN, Inventory
 from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.state import FramingState, ProjectState
@@ -164,6 +166,21 @@ def _frame_after_rotation(
     return replace(frame, x=x, y=y, width=width, height=height)
 
 
+def _rotate_delta_to_canonical(dx: float, dy: float, rotation_deg: int) -> tuple[float, float]:
+    """Converts an arrow-key nudge — dx/dy expressed the way the operator
+    sees them on screen, right/down positive — to the canonical, un-rotated
+    frame space `_current_frame_result` is stored in. Without this, nudging
+    while a 90°-multiple rotation is active moves the frame in whatever
+    direction "right"/"down" happen to mean in canonical space, which looks
+    inverted or transposed on screen. Inverse of the per-step map
+    `_frame_after_rotation` applies to a frame's position.
+    """
+    times = (rotation_deg // 90) % 4
+    for _ in range(times):
+        dx, dy = dy, -dx
+    return dx, dy
+
+
 def _canonical_frame_from_display(
     frame: FrameResult, rotation_deg: int, canonical_height: int, canonical_width: int
 ) -> FrameResult:
@@ -198,6 +215,30 @@ def _rotated_for_display(
         else None
     )
     return rotated_pixels, rotated_frame
+
+
+def _canonical_point_from_display(
+    x: float, y: float, rotation_deg: int, canonical_height: int, canonical_width: int
+) -> tuple[float, float]:
+    """Inverse of the per-step rotation `_frame_after_rotation` applies to a
+    frame's origin, for a bare point instead of a whole frame — used by the
+    white balance picker (`W` key) to convert a click in the currently
+    displayed (possibly rotated) preview back to the RAW's own un-rotated
+    pixel grid. Reuses `_canonical_frame_from_display` (a zero-size "frame"
+    at the point) rather than a separate derivation of the same rotation.
+    """
+    dummy = FrameResult(
+        x=round(x),
+        y=round(y),
+        width=0,
+        height=0,
+        angle_deg=0.0,
+        confidence=0.0,
+        level="manual",
+        components=ConfidenceComponents(0, 0, 0, 0, 0),
+    )
+    canonical = _canonical_frame_from_display(dummy, rotation_deg, canonical_height, canonical_width)
+    return canonical.x, canonical.y
 
 
 _FAST_PREVIEW_MAX_DIM = 480
@@ -280,10 +321,18 @@ class CaptureScreen(QWidget):
         self._master_preview_active = False
         self._pending_conflict: NameConflictDetected | None = None
         self._capture_trigger_deadline: float | None = None
+        self._picking_white_balance = False
+        # Carries `CaptureSession.session_history()` forward across a
+        # stop/start capture-mode cycle (`self` — unlike `self.session` — is
+        # never recreated during the app's lifetime), keyed by campaign root
+        # so switching to a *different* campaign doesn't leak history into
+        # it. Cleared by nothing short of quitting the app.
+        self._session_history_by_root: dict[Path, list[SessionHistoryEntry]] = {}
 
         self.preview_area = PreviewArea()
         self.preview_area.frame_dragged.connect(self._on_frame_dragged)
         self.preview_area.frame_drag_finished.connect(self._on_frame_drag_finished)
+        self.preview_area.point_picked.connect(self._on_white_balance_point_picked)
 
         self._camera_config = camera_config
         self._persist_camera_config = persist_camera_config
@@ -566,6 +615,7 @@ class CaptureScreen(QWidget):
             disk_critical_gb=disk_critical_gb,
             max_name_length=max_name_length,
             export_queue_warn_threshold=export_queue_warn_threshold,
+            session_history=self._session_history_by_root.get(paths.root),
         )
         if was_stale:
             report = perform_crash_recovery(self.session)
@@ -592,6 +642,7 @@ class CaptureScreen(QWidget):
         self._pump_timer.stop()
         self._flush_pending_edits()  # never leave a rotation/crop edit un-exported
         if self.session is not None:
+            self._session_history_by_root[self.session.paths.root] = self.session.session_history()
             self._dispatch(self.session.stop(wait_for_exports=wait_for_exports))
             if wait_for_exports:
                 self.session.export_executor.shutdown()  # releases the background thread, if any
@@ -858,7 +909,12 @@ class CaptureScreen(QWidget):
         # unreadable negative), and Qt aborts the process outright if a
         # QThread is destroyed while still running. Parenting it to this
         # screen would let a window close mid-detection do exactly that.
-        worker = PreviewWorker(raw_path, self._decoder, self.session.campaign.framing)
+        worker = PreviewWorker(
+            raw_path,
+            self._decoder,
+            self.session.campaign.framing,
+            user_wb=self.session.campaign.imaging.white_balance,
+        )
         # Target name is bound into the connection closure, not re-read from
         # `self._loaded_preview_for` when the signal fires: if another image
         # was already loaded in the meantime, that field would have changed
@@ -920,7 +976,11 @@ class CaptureScreen(QWidget):
         # destroyed mid-run (window closing while this is still reading the
         # RAW file) aborts the process rather than raising a catchable error.
         worker = PreviewWorker(
-            raw_path, self._decoder, self.session.campaign.framing, skip_detection=True
+            raw_path,
+            self._decoder,
+            self.session.campaign.framing,
+            skip_detection=True,
+            user_wb=self.session.campaign.imaging.white_balance,
         )
         worker.succeeded.connect(
             lambda result, n=name, f=framing: self._on_known_frame_preview_ready(result, n, f)
@@ -1245,6 +1305,11 @@ class CaptureScreen(QWidget):
             self._handle_conflict_key(event)
             return
 
+        if self._picking_white_balance and event.key() == Qt.Key.Key_Escape:
+            self.toggle_white_balance_picker()
+            event.accept()
+            return
+
         # Plain arrows, +/-/=, and Ctrl+arrows are reserved (shortcuts.py:
         # `_CAPTURE_RESERVED`) and always active — the crop's move/resize/
         # deskew, not a remappable pick-a-letter shortcut.
@@ -1299,6 +1364,8 @@ class CaptureScreen(QWidget):
                 self.toggle_live_view()
             elif matches(event, actions["toggle_live_view_panel"]):
                 self.toggle_live_view_panel_visibility()
+            elif matches(event, actions["pick_white_balance"]):
+                self.toggle_white_balance_picker()
             elif matches(event, actions["stop_capture"]):
                 self.stop_capture()
             else:
@@ -1345,6 +1412,7 @@ class CaptureScreen(QWidget):
         if self._current_frame_result is None:
             return
         self._ensure_negative_view_for_editing()
+        dx, dy = _rotate_delta_to_canonical(dx, dy, self._effective_rotation_deg())
         frame = self._current_frame_result
         scale = self._current_preview_scale_factor
         new_frame = replace(frame, x=round(frame.x + dx * scale), y=round(frame.y + dy * scale))
@@ -1379,6 +1447,83 @@ class CaptureScreen(QWidget):
     def _toggle_guides(self) -> None:
         """G key: rule-of-thirds guide lines within the frame."""
         self.preview_area.toggle_guides()
+
+    def toggle_white_balance_picker(self) -> None:
+        """W key: arms/disarms picking a neutral point on the current
+        preview to define the session's white balance (typically done once,
+        on the first captured image) — the next click on the preview
+        samples it. Pressing W or Escape again while armed cancels."""
+        if self.session is None or self._current_preview_pixels is None:
+            return
+        self._picking_white_balance = not self._picking_white_balance
+        self.preview_area.set_picking_enabled(self._picking_white_balance)
+        if self._picking_white_balance:
+            self._ensure_negative_view_for_editing()
+            self._set_status(t("capture.status_white_balance_pick"))
+        else:
+            self._set_status(t("capture.status_white_balance_cancelled"))
+
+    def _on_white_balance_point_picked(self, point: QPointF) -> None:
+        self._picking_white_balance = False
+        self.preview_area.set_picking_enabled(False)
+        if self.session is None or self._current_preview_pixels is None:
+            return
+        current = self.session.state.current_image
+        if current is None:
+            return
+        height, width = self._current_preview_pixels.shape[:2]
+        rotation_deg = self._effective_rotation_deg()
+        canonical_x, canonical_y = _canonical_point_from_display(
+            point.x(), point.y(), rotation_deg, height, width
+        )
+        scale = self._current_preview_scale_factor
+        x = round(canonical_x * scale)
+        y = round(canonical_y * scale)
+        raw_path = self.session.paths.raw_dir / f"{current.assigned_name}{current.extension}"
+        try:
+            white_balance = sample_white_balance(self._decoder, raw_path, x, y)
+        except Exception:
+            self._set_status(t("capture.status_white_balance_error"))
+            return
+        self._apply_white_balance(white_balance, current.assigned_name)
+
+    def _apply_white_balance(self, white_balance: list[float], picked_on: str) -> None:
+        """Persists the session-wide white balance on the campaign — every
+        development from now on uses it instead of the camera's own
+        per-shot white balance. If `picked_on` (typically the calibration
+        shot itself) was already fully exported, its exports are
+        regenerated too, same reuse of `retry_error_image` as
+        `core.completeness.regenerate_selection`."""
+        assert self.session is not None
+        before = self.session.campaign.imaging.white_balance
+        self.session.campaign.imaging.white_balance = white_balance
+        try:
+            save_campaign(self.session.campaign, self.session.paths.campaign_json)
+        except InvalidCampaignError:
+            self.session.campaign.imaging.white_balance = before
+            self._set_status(t("capture.status_white_balance_error"))
+            return
+        self.session.journal.log(
+            "PROJECT",
+            "setting_changed",
+            details={"key": "imaging.white_balance", "before": before, "after": white_balance},
+        )
+        inventory = self.session.inventory
+        row = next(
+            (r for r in inventory.rows if r[inventory.name_column] == picked_on),
+            None,
+        )
+        if row is not None and row.get(STATUS_COLUMN) == "done":
+            self._dispatch(self.session.retry_error_image(picked_on))
+        self._set_status(t("capture.status_white_balance_set"))
+
+        # The image just picked from is still on screen with its old,
+        # camera-white-balanced preview — reload it (known frame, no
+        # re-detection) so the operator sees the corrected color
+        # immediately, not only from the next capture onwards.
+        current = self.session.state.current_image
+        if current is not None and current.assigned_name == picked_on:
+            self._load_preview_known_frame(current.assigned_name, current.extension, current.framing)
 
     def _effective_rotation_deg(self) -> int:
         """The rotation currently reflected on screen: the not-yet-committed

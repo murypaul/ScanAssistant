@@ -121,6 +121,7 @@ actif à la fois.
 | Tab | Pause / reprendre |
 | Espace | Déclencher une capture à distance (appareil tethered uniquement, voir [Capture tethered](#capture-tethered-live-view-et-déclenchement-à-distance) ci-dessous) |
 | L | Activer/désactiver le live view (appareil tethered uniquement) |
+| W | Choisir la balance des blancs sur un point neutre de l'aperçu (cliquer après avoir appuyé sur W) — s'applique au reste de la séance, aperçu et exports ; Échap annule |
 | F11 | Plein écran |
 | Échap | Arrêter la capture (retour à la préparation ; les exports continuent) |
 
@@ -142,6 +143,21 @@ Chaque modification se stabilise en un seul export après une courte pause
 (ou immédiatement, au relâchement de la souris) — rien à valider ni à
 annuler. En cas d'erreur, glissez le cadre en arrière ou appuyez sur `C`
 pour revenir à la détection automatique.
+
+### Balance des blancs
+
+La balance des blancs automatique du boîtier dérive d'une prise à l'autre
+selon ce qui se trouve dans le cadre — mais la table lumineuse en dessous
+reste la même pour toute la séance, donc une balance fixée une fois pour
+toutes donne un rendu plus cohérent qu'une estimation refaite à chaque
+négatif.
+
+Appuyez sur `W` sur la première capture de la séance (une vue de la table
+à vide convient bien) — le curseur devient une croix — puis cliquez sur un
+point neutre de l'aperçu. Cette balance s'applique ensuite à la fois à
+l'aperçu à l'écran et à chaque export, pour toute la durée où la campagne
+reste ouverte (un arrêt/reprise de la capture ne la réinitialise pas).
+`W` à nouveau ou Échap annule la sélection sans rien changer.
 
 ### Panneau de conflit de nom
 

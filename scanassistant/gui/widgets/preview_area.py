@@ -65,6 +65,7 @@ _CURSOR_BY_ZONE = {
 class PreviewArea(QWidget):
     frame_dragged = Signal(object)  # FrameResult, continuously while dragging
     frame_drag_finished = Signal()  # once, on release — caller debounces the commit
+    point_picked = Signal(QPointF)  # pixmap-space point, while picking mode is on
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -89,6 +90,7 @@ class PreviewArea(QWidget):
         self._drag_zone: str | None = None
         self._drag_start_point: QPointF | None = None
         self._drag_start_frame: FrameResult | None = None
+        self._picking_enabled = False
         self.setMouseTracking(True)
         self.show_waiting("")
 
@@ -137,6 +139,13 @@ class PreviewArea(QWidget):
         """Flips the guides on/off, returns the new state."""
         self.set_guides_visible(not self._guides_visible)
         return self._guides_visible
+
+    def set_picking_enabled(self, enabled: bool) -> None:
+        """White balance picker (`W` key): while on, the next left click
+        anywhere on the image emits `point_picked` instead of drag-editing
+        the crop, and the cursor becomes a crosshair."""
+        self._picking_enabled = enabled
+        self.setCursor(Qt.CursorShape.CrossCursor if enabled else Qt.CursorShape.ArrowCursor)
 
     # --- internals -----------------------------------------------------------
 
@@ -200,6 +209,14 @@ class PreviewArea(QWidget):
         return QPointF((pos.x() - offset_x) / scale, (pos.y() - offset_y) / scale)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        if self._picking_enabled:
+            point = self._to_pixmap_point(event.position())
+            if event.button() == Qt.MouseButton.LeftButton and point is not None:
+                self.point_picked.emit(point)
+                event.accept()
+                return
+            super().mousePressEvent(event)
+            return
         frame = self._draggable_frame()
         point = self._to_pixmap_point(event.position()) if frame is not None else None
         if event.button() != Qt.MouseButton.LeftButton or frame is None or point is None:
@@ -218,7 +235,8 @@ class PreviewArea(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._drag_zone is None:
-            self._update_hover_cursor(event.position())
+            if not self._picking_enabled:
+                self._update_hover_cursor(event.position())
             super().mouseMoveEvent(event)
             return
         point = self._to_pixmap_point(event.position())

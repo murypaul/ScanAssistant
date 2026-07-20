@@ -41,6 +41,7 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "pause_resume": "Tab",
         "toggle_live_view": "L",
         "toggle_live_view_panel": "H",
+        "pick_white_balance": "W",
         "stop_capture": "Escape",
     },
     NAME_CONFLICT: {

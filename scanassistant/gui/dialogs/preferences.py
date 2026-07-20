@@ -65,6 +65,7 @@ _ACTION_LABEL_KEYS: dict[str, dict[str, str]] = {
         "pause_resume": "preferences.shortcut_pause_resume",
         "toggle_live_view": "preferences.shortcut_toggle_live_view",
         "toggle_live_view_panel": "preferences.shortcut_toggle_live_view_panel",
+        "pick_white_balance": "preferences.shortcut_pick_white_balance",
         "stop_capture": "preferences.shortcut_stop_capture",
     },
     "name_conflict": {

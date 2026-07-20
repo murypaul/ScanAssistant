@@ -93,10 +93,14 @@ class _PendingConflict:
 
 @dataclass(frozen=True)
 class SessionHistoryEntry:
-    """Snapshot of an image finalized during this run, for the history side panel.
+    """Snapshot of a finalized image, for the correction side panel.
 
-    In-memory only (not persisted to `state.json`): the history resets on
-    restart, matching "this capture session" rather than the whole campaign.
+    In-memory only (not persisted to `state.json`): lost if the app itself
+    closes, but — carried across capture-mode stop/start by
+    `CaptureScreen._session_history_by_root` — not just because the
+    operator went back to the project screen and re-entered capture. Scoped
+    to "the operator has this campaign open right now", not the campaign's
+    entire history (that's the journal's job) nor a single capture-mode run.
     """
 
     name: str
@@ -126,6 +130,7 @@ class CaptureSession:
         disk_critical_gb: float = 2.0,
         max_name_length: int = MAX_NAME_LENGTH,
         export_queue_warn_threshold: int = _EXPORT_QUEUE_WARN_THRESHOLD,
+        session_history: list[SessionHistoryEntry] | None = None,
     ) -> None:
         self.paths = paths
         self.campaign = campaign
@@ -147,7 +152,12 @@ class CaptureSession:
         self._export_queue_warn_threshold = export_queue_warn_threshold
 
         self.export_queue = ExportQueue.from_state_entries(state.export_queue)
-        self._session_history: list[SessionHistoryEntry] = []
+        # Carried over from a previous `CaptureSession` for this same
+        # campaign (`gui.screens.capture.CaptureScreen` keeps it across a
+        # stop/start capture-mode cycle, keyed by campaign root) — the
+        # correction side panel is meant to span the whole time the
+        # operator has this campaign open, not just one capture-mode run.
+        self._session_history: list[SessionHistoryEntry] = list(session_history or [])
         self._pending_ingest: deque[Path] = deque()
         self._conflict: _PendingConflict | None = None
         self._export_pending_kinds: dict[str, set[str]] = {}

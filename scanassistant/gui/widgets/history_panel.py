@@ -1,11 +1,12 @@
-"""Session-history side panel: thumbnails of images finalized this run.
+"""Session-history side panel: thumbnails of recently finalized images.
 
 Lets the operator click back to a just-captured image to fix a mistake
 (wrong rotation, bad crop) without hunting through the CSV viewer, which
-refuses to reposition the cursor on a `done` row. Scoped to the current
-capture session only (`core.session.CaptureSession.session_history`, not
-persisted) — this is a shortcut for catching a mistake right after making
-it, not a project-wide gallery.
+refuses to reposition the cursor on a `done` row. Scoped to the campaign
+currently open (`core.session.CaptureSession.session_history`, not
+persisted to disk — lost if the app closes, but survives leaving and
+re-entering capture mode) — this is a shortcut for catching a mistake made
+earlier in this sitting, not a project-wide gallery.
 """
 
 from __future__ import annotations

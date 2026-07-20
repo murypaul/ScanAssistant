@@ -130,6 +130,18 @@ class OptionsConfig:
 
 
 @dataclass
+class ImagingConfig:
+    # `rawpy.postprocess(user_wb=...)` multipliers [R, G1, B, G2], normalized
+    # to G=1.0 — picked once by the operator from a neutral point in the
+    # session (light table background) and reused for every development
+    # instead of the camera's own per-shot white balance, which drifts since
+    # the scene is otherwise constant across the session. None = camera
+    # white balance (`use_camera_wb=True`), the previous unconditional
+    # behavior.
+    white_balance: list[float] | None = None
+
+
+@dataclass
 class Campaign:
     name: str
     schema_version: int = SCHEMA_VERSION
@@ -146,6 +158,7 @@ class Campaign:
     exports: ExportsConfig = field(default_factory=ExportsConfig)
     iptc: IptcConfig = field(default_factory=IptcConfig)
     options: OptionsConfig = field(default_factory=OptionsConfig)
+    imaging: ImagingConfig = field(default_factory=ImagingConfig)
 
     def validate(self) -> None:
         """Validates `campaign.json`. Raises `InvalidCampaignError` (E-10)."""
@@ -258,6 +271,16 @@ class Campaign:
             raise InvalidCampaignError(
                 "exports.jpeg_positive.manual_settings.highlights", "must be within [0, 100]"
             )
+
+        if self.imaging.white_balance is not None:
+            if len(self.imaging.white_balance) != 4:
+                raise InvalidCampaignError(
+                    "imaging.white_balance", "must have exactly 4 multipliers [R, G1, B, G2]"
+                )
+            if not all(0.1 <= v <= 10 for v in self.imaging.white_balance):
+                raise InvalidCampaignError(
+                    "imaging.white_balance", "each multiplier must be within [0.1, 10]"
+                )
 
 
 def load_campaign(path: Path) -> Campaign:
@@ -385,6 +408,7 @@ def _from_dict(data: dict[str, Any]) -> Campaign:
             exports=_exports_from_dict(data.get("exports", {})),
             iptc=IptcConfig(**data.get("iptc", {})),
             options=OptionsConfig(**data.get("options", {})),
+            imaging=ImagingConfig(**data.get("imaging", {})),
         )
     except KeyError as exc:
         raise InvalidCampaignError("(file)", f"missing required field: {exc}") from exc

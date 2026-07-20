@@ -23,10 +23,13 @@ from PySide6.QtGui import (
     QPainter,
     QPaintEvent,
     QPixmap,
+    QResizeEvent,
+    QShowEvent,
     QWheelEvent,
 )
 from PySide6.QtWidgets import (
     QComboBox,
+    QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
@@ -37,14 +40,26 @@ from PySide6.QtWidgets import (
 
 from scanassistant.camera.backend import LiveViewFrame
 from scanassistant.config import LIVE_VIEW_FPS_CHOICES, CameraConfig
-from scanassistant.gui.theme import BORDER, TEXT_SECONDARY
+from scanassistant.gui.theme import ACCENT, BORDER
 from scanassistant.gui.widgets.slider_field import SliderField
 from scanassistant.i18n import t
+
+
+def _floating_text_shadow() -> QGraphicsDropShadowEffect:
+    """A soft black shadow behind overlay text/icons — QSS has no
+    `text-shadow`, and these sit directly over the live video with no
+    backing band, unlike normal chrome elsewhere in the app."""
+    effect = QGraphicsDropShadowEffect()
+    effect.setBlurRadius(6)
+    effect.setOffset(0, 1)
+    effect.setColor(QColor(0, 0, 0, 220))
+    return effect
 
 _COLLAPSED_WIDTH_FRACTION = 0.32
 _EXPANDED_SIZE_FRACTION = 0.9
 _ASPECT = 4 / 3
 _MEASURED_FPS_WINDOW = 8  # rolling average over this many inter-frame gaps
+_FPS_LABEL_UPDATE_INTERVAL_S = 1.0  # display refresh — separate from the averaging window itself
 _ZOOM_MIN, _ZOOM_MAX = 1.0, 6.0
 _ZOOM_STEP = 1.15
 _LIVE_DOT_COLOR = QColor("#e2685c")
@@ -99,7 +114,44 @@ class _LiveViewStage(QWidget):
         self._pan = QPointF(0.5, 0.5)  # normalized center of the visible crop
         self._drag_start: QPointF | None = None
         self._drag_start_pan: QPointF | None = None
+        self._top_overlay: QWidget | None = None
+        self._center_overlay: QWidget | None = None
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_top_overlay(self, widget: QWidget) -> None:
+        """A control bar (live badge/fps/close) drawn over the top edge of
+        the image instead of a row taking up space above it — reparented
+        here so it always tracks the stage's own size, the space it used to
+        need going to the image itself instead."""
+        self._top_overlay = widget
+        widget.setParent(self)
+        self._position_top_overlay()
+
+    def set_center_overlay(self, widget: QWidget) -> None:
+        """The "Capturing…" label, centered over the image — reparented
+        here rather than left parentless (its previous state made it an
+        unparented top-level widget: `show_capturing()` popped up a stray,
+        unstyled little window at an arbitrary screen position instead of
+        overlaying the live view)."""
+        self._center_overlay = widget
+        widget.setParent(self)
+        self._position_center_overlay()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._position_top_overlay()
+        self._position_center_overlay()
+
+    def _position_top_overlay(self) -> None:
+        if self._top_overlay is None:
+            return
+        height = self._top_overlay.sizeHint().height()
+        self._top_overlay.setGeometry(0, 0, self.width(), height)
+
+    def _position_center_overlay(self) -> None:
+        if self._center_overlay is None:
+            return
+        self._center_overlay.setGeometry(0, 0, self.width(), self.height())
 
     def set_image(self, image: QImage) -> None:
         self._pixmap = QPixmap.fromImage(image)
@@ -230,6 +282,7 @@ class LiveViewWidget(QWidget):
 
         self.live_badge = QLabel(f"● {t('live_view.live_badge')}")
         self.live_badge.setStyleSheet("color: #e2685c; font-weight: bold; font-size: 9pt;")
+        self.live_badge.setGraphicsEffect(_floating_text_shadow())
         self.live_badge.setVisible(False)
 
         self.capturing_label = QLabel(t("live_view.capturing"))
@@ -238,9 +291,12 @@ class LiveViewWidget(QWidget):
         )
         self.capturing_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.capturing_label.setVisible(False)
+        self.stage.set_center_overlay(self.capturing_label)
 
         self.fps_measured_label = QLabel(t("live_view.fps_measured_pending"))
-        self.fps_measured_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 8pt;")
+        self.fps_measured_label.setStyleSheet("color: white; font-size: 8pt;")
+        self.fps_measured_label.setGraphicsEffect(_floating_text_shadow())
+        self._fps_label_updated_at: float | None = None
 
         self.fps_combo = QComboBox()
         self.fps_combo.addItem(t("live_view.fps_unlimited"), None)
@@ -263,25 +319,43 @@ class LiveViewWidget(QWidget):
         self.toggle_button.setFixedWidth(28)
         self.toggle_button.clicked.connect(self.toggleRequested.emit)
 
+        # Floating directly over the video, not on a backing band: no box,
+        # a soft shadow instead (`_floating_text_shadow`) — same reasoning
+        # as `live_badge`/`fps_measured_label` above.
         self.shrink_button = QPushButton("⤡")
         self.shrink_button.setToolTip(t("live_view.collapse_tooltip"))
-        self.shrink_button.setProperty("role", "live-view-icon")
-        self.shrink_button.setFixedWidth(28)
+        self.shrink_button.setFixedSize(24, 24)
+        self.shrink_button.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: white;"
+            " font-size: 12pt; }"
+            f" QPushButton:hover {{ color: {ACCENT}; }}"
+        )
+        self.shrink_button.setGraphicsEffect(_floating_text_shadow())
         self.shrink_button.clicked.connect(self.collapse)
         self.shrink_button.setVisible(False)
 
+        # The one overlay control kept as a small filled shape rather than
+        # a bare glyph — a close button floating with nothing but a shadow
+        # reads as part of the image, not as something to click.
         self.close_button = QPushButton("×")
         self.close_button.setToolTip(t("live_view.close_tooltip"))
-        self.close_button.setProperty("role", "live-view-icon")
-        self.close_button.setFixedWidth(28)
+        self.close_button.setFixedSize(22, 22)
+        self.close_button.setStyleSheet(
+            "QPushButton { background: rgba(0, 0, 0, 110); border: none;"
+            " border-radius: 11px; color: white; font-weight: bold; }"
+            " QPushButton:hover { background: rgba(0, 0, 0, 170); }"
+        )
         self.close_button.clicked.connect(self.closeRequested.emit)
 
-        top_row = QHBoxLayout()
+        top_overlay = QWidget()
+        top_row = QHBoxLayout(top_overlay)
+        top_row.setContentsMargins(6, 3, 6, 3)
         top_row.addWidget(self.live_badge)
         top_row.addStretch(1)
         top_row.addWidget(self.fps_measured_label)
         top_row.addWidget(self.shrink_button)
         top_row.addWidget(self.close_button)
+        self.stage.set_top_overlay(top_overlay)
 
         controls_row = QHBoxLayout()
         controls_row.addWidget(QLabel(t("live_view.fps_label")))
@@ -293,7 +367,6 @@ class LiveViewWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
-        layout.addLayout(top_row)
         layout.addWidget(self.stage, 1)
         layout.addLayout(controls_row)
 
@@ -305,6 +378,14 @@ class LiveViewWidget(QWidget):
         self.expanded = False
         self._apply_opacity()
 
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        # Deferred to actually showing, not set once in `__init__`: a bare
+        # `sizeHint()` measured before the widget is shown in its real
+        # parent chain (and styled by the app's global stylesheet) doesn't
+        # reliably match `fps_combo`'s own final rendered height.
+        self.toggle_button.setFixedHeight(self.fps_combo.height())
+
     # --- fed by CaptureScreen from CameraController callbacks --------------
 
     def show_frame(self, frame: LiveViewFrame, *, now: float | None = None) -> None:
@@ -312,19 +393,30 @@ class LiveViewWidget(QWidget):
         if self._camera_config.live_view_rotate_180:
             image = image.mirrored(True, True)
         self.stage.set_image(image)
-        self._measured_fps.record(time.monotonic() if now is None else now)
-        measured = self._measured_fps.value()
-        self.fps_measured_label.setText(
-            t("live_view.fps_measured", fps=measured)
-            if measured is not None
-            else t("live_view.fps_measured_pending")
-        )
+        current = time.monotonic() if now is None else now
+        self._measured_fps.record(current)
+        # The rolling average (`_MeasuredFps`) already smooths the value
+        # itself — this throttles how often the *label* repaints, since a
+        # number changing every single frame reads as jittery noise rather
+        # than a measurement, however stable the underlying value is.
+        if (
+            self._fps_label_updated_at is None
+            or current - self._fps_label_updated_at >= _FPS_LABEL_UPDATE_INTERVAL_S
+        ):
+            self._fps_label_updated_at = current
+            measured = self._measured_fps.value()
+            self.fps_measured_label.setText(
+                t("live_view.fps_measured", fps=measured)
+                if measured is not None
+                else t("live_view.fps_measured_pending")
+            )
 
     def set_live(self, live: bool) -> None:
         self._live = live
         self.live_badge.setVisible(live)
         if not live:
             self._measured_fps.reset()
+            self._fps_label_updated_at = None
             self.fps_measured_label.setText(t("live_view.fps_measured_pending"))
             # Nothing left to check focus against once the feed itself
             # stops — an expanded panel showing a frozen last frame would

@@ -20,6 +20,10 @@ flat objects) run by a single operator over long, interruptible sessions.
   verification and full traceability back to the original filename.
 - **Automatic framing** — OpenCV-based crop detection with a confidence
   score (reliable / needs review / impossible), plus fast manual correction.
+- **Fixed white balance** — pick a neutral point once at the start of a
+  session and it applies to every capture from then on, preview included,
+  instead of the camera's own per-shot balance drifting with whatever's in
+  the frame.
 - **Exports** — 16-bit TIFF master, JPEG master, and a JPEG reading positive
   (three rendering modes), generated in the background. The reading
   positive also automatically excludes the negative's unexposed border
@@ -170,6 +174,10 @@ et interruptibles.
 - **Recadrage automatique** — détection du cadre par OpenCV avec un score
   de confiance (fiable / à vérifier / impossible), et correction manuelle
   rapide si besoin.
+- **Balance des blancs fixe** — choisie une fois en début de séance, elle
+  s'applique ensuite à chaque capture, aperçu compris, plutôt que la
+  balance propre à chaque prise du boîtier qui dérive selon ce qui se
+  trouve dans le cadre.
 - **Exports** — TIFF maître 16 bits, JPEG maître, et un JPEG positif de
   lecture (trois modes de rendu), générés en arrière-plan. Le positif de
   lecture exclut aussi automatiquement la bordure non exposée du négatif

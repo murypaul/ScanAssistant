@@ -115,6 +115,7 @@ a time.
 | Tab | Pause / resume |
 | Space | Trigger a remote capture (tethered camera only, see [Tethered capture](#tethered-capture-live-view--remote-trigger) below) |
 | L | Toggle live view on/off (tethered camera only) |
+| W | Pick white balance from a neutral point in the preview (click after pressing W) — applies to the rest of the session, both the preview and the exports; Esc cancels |
 | F11 | Full screen |
 | Esc | Stop capture (returns to preparation; exports keep processing) |
 
@@ -136,6 +137,20 @@ Every edit settles into a single export after you pause for a moment (or
 immediately, on mouse release) — no need to confirm or cancel anything. If
 an edit goes wrong, drag it back or press `C` to fall back to the
 automatic detection.
+
+### White balance
+
+The camera's own automatic white balance drifts from shot to shot
+depending on what's in the frame — but the light table underneath stays
+the same for the whole session, so a fixed balance chosen once reads more
+consistently than a fresh guess on every negative.
+
+Press `W` on the first capture of the session (a shot of the bare light
+table works well) — the cursor becomes a crosshair — then click a neutral
+point in the preview. That balance applies from then on to both the
+on-screen preview and every export, for the rest of the time the campaign
+stays open (stopping and restarting capture mode doesn't reset it). `W`
+again or `Esc` cancels the pick without changing anything.
 
 ### Name conflict panel
 
