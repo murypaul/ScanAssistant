@@ -153,12 +153,8 @@ STRINGS: dict[str, str] = {
         " installed yet. Install it now? This downloads it from PyPI into"
         " ScanAssistant's own virtual environment — nothing else changes."
     ),
-    "preferences.camera_install_success": (
-        "Installed. Tethered camera support is now enabled."
-    ),
-    "preferences.camera_install_failed": (
-        "Could not install the camera package: {error}"
-    ),
+    "preferences.camera_install_success": ("Installed. Tethered camera support is now enabled."),
+    "preferences.camera_install_failed": ("Could not install the camera package: {error}"),
     "preferences.export_settings": "Export settings…",
     "preferences.import_settings": "Import settings…",
     "preferences.restart_notice": "Settings imported. Restart ScanAssistant to fully apply them.",
@@ -319,6 +315,14 @@ STRINGS: dict[str, str] = {
     "wizard.step1.operator": "Operator",
     "wizard.step1.institution": "Institution",
     "wizard.step1.negative_format": "Negative format (documentary label)",
+    "wizard.step1.mode": "Capture mode",
+    "wizard.step1.mode_full": "Full processing",
+    "wizard.step1.mode_simple": "Simple (RAW only)",
+    "wizard.step1.mode_hint": (
+        "Simple mode only renames and files incoming RAWs — no crop detection, "
+        "no positive, no TIFF/JPEG exports. The Framing and Exports steps are "
+        "skipped."
+    ),
     "wizard.step1.clone_button": "Clone settings from an existing campaign…",
     "wizard.step1.clone_browse_title": "Select an existing campaign folder",
     "wizard.step1.clone_failed_title": "Could not clone settings",

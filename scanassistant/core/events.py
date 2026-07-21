@@ -83,6 +83,14 @@ class ImageRejected:
 
 
 @dataclass(frozen=True)
+class ImageRenamed:
+    """The current image's assigned name changed (`CaptureSession.rename_current`)."""
+
+    old: str
+    new: str
+
+
+@dataclass(frozen=True)
 class Warning:
     code: str
     details: dict[str, object] = field(default_factory=dict)
@@ -121,6 +129,7 @@ SessionEvent = (
     | RotationChanged
     | FramingApplied
     | ImageRejected
+    | ImageRenamed
     | Warning
     | CriticalError
     | CriticalResolved

@@ -308,7 +308,6 @@ class MainWindow(QMainWindow):
         self.action_rename = self._add_action(
             self.capture_menu, t("menu.capture_rename"), None, None
         )
-        self.action_rename.setEnabled(False)  # Capture ▸ Rename current image: not implemented yet
         self.action_go_to_name = self._add_action(
             self.capture_menu, t("menu.capture_go_to_name"), None, None
         )
@@ -321,6 +320,7 @@ class MainWindow(QMainWindow):
             self.action_pause_resume,
             self.action_finalize,
             self.action_reject,
+            self.action_rename,
             self.action_go_to_name,
             self.action_release_camera,
         ):
@@ -809,6 +809,7 @@ class MainWindow(QMainWindow):
         "action_pause_resume",
         "action_finalize",
         "action_reject",
+        "action_rename",
         "action_go_to_name",
     )
 
@@ -895,6 +896,7 @@ class MainWindow(QMainWindow):
                 self.capture_screen.toggle_pause,
                 self.capture_screen.finalize_current,
                 self.capture_screen.reject_current_image,
+                self.capture_screen.rename_current_image,
                 self.capture_screen.open_go_to_name,
             ),
             strict=True,
@@ -940,6 +942,7 @@ class MainWindow(QMainWindow):
                 self.capture_screen.toggle_pause,
                 self.capture_screen.finalize_current,
                 self.capture_screen.reject_current_image,
+                self.capture_screen.rename_current_image,
                 self.capture_screen.open_go_to_name,
             ),
             strict=True,

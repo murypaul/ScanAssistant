@@ -30,6 +30,7 @@ from scanassistant.core.events import (
     ImageErrored,
     ImageIngested,
     ImageRejected,
+    ImageRenamed,
     ImageStabilized,
     ImageStateChanged,
     NameConflictDetected,
@@ -913,6 +914,147 @@ class CaptureSession:
                     self.fs.remove(entry)
                     deleted.append(str(entry))
         return deleted
+
+    # --- rename (menu-only in full mode; primary interaction in simple mode) ---
+
+    def rename_current(self, new_name: str) -> list[SessionEvent]:
+        """Renames the current in-review image (RAW + sidecar + any already-
+        produced derivatives, all moved in place — never modified in
+        content). Raises `IllegalTransitionError` if there is no current
+        image or it isn't `IN_REVIEW`; `ValueError` for every operator-input
+        problem (identical name, invalid name, name already in use)."""
+        current = self.state.current_image
+        if current is None or current.state != "IN_REVIEW":
+            raise IllegalTransitionError(current.state if current else "NONE", "renamed")
+
+        old_name = current.assigned_name
+        if new_name == old_name:
+            raise ValueError("new name is identical to the current name")
+        validate_name(new_name, max_name_length=self._max_name_length)
+        if find_conflicting_path(new_name, self.paths, self.fs) is not None:
+            raise ValueError(f"Name already in use: {new_name!r}")
+
+        events: list[SessionEvent] = []
+
+        # Neutralize in-flight/queued exports for `old_name` — identical to
+        # `reject_current`'s handling, and always a no-op in simple mode
+        # (nothing is ever queued there).
+        exports_were_ready = old_name in self._exports_ready
+        cancelled = self.export_queue.cancel(old_name)
+        in_flight = self.export_queue.in_flight_count(old_name)
+        if in_flight:
+            self._stale_completions[old_name] = max(
+                self._stale_completions.get(old_name, 0), in_flight
+            )
+            self._stale_completions_cleanup.add(old_name)
+        self._export_pending_kinds.pop(old_name, None)
+        self._exports_ready.discard(old_name)
+        self._awaiting_export.discard(old_name)
+        self.state.export_queue = self.export_queue.to_state_entries()
+
+        # RAW + sidecar: always a move, never a modification of content.
+        self.fs.rename(
+            self.paths.raw_dir / f"{old_name}{current.extension}",
+            self.paths.raw_dir / f"{new_name}{current.extension}",
+        )
+        old_sidecar = self.paths.raw_dir / f"{old_name}.xmp"
+        if self.fs.exists(old_sidecar):
+            self.fs.rename(old_sidecar, self.paths.raw_dir / f"{new_name}.xmp")
+
+        renamed_outputs = self._rename_derivatives(old_name, new_name)
+
+        # Old row: vacated, exactly like a rejection (F-11) — the document
+        # hasn't actually been captured under this name after all.
+        old_row = self.inventory.row(old_name)
+        if old_row is not None:
+            before_status = old_row[STATUS_COLUMN]
+            if before_status != "todo":
+                self.inventory.set_status(old_name, "todo")
+                self.journal.log(
+                    "CSV",
+                    "status",
+                    image=old_name,
+                    details={"row": old_name, "before": before_status, "after": "todo"},
+                )
+            self.inventory.set_source_file(old_name, "")
+            before_cursor = self.inventory.cursor
+            self.inventory.go_to_name(old_name)
+            self.state.csv_cursor = self.inventory.cursor
+            self.journal.log(
+                "CSV",
+                "cursor",
+                details={
+                    "before": before_cursor,
+                    "after": self.inventory.cursor,
+                    "cause": "renamed",
+                },
+            )
+
+        # Target row: consumed like a normal ingestion if it's a pending
+        # inventory row (same fork as `_resolve_conflict_rename_incoming`),
+        # otherwise added as a free name — the CSV must end up reflecting
+        # what was actually digitized, not left out of sync.
+        target_row = self.inventory.row(new_name)
+        if target_row is not None and target_row[STATUS_COLUMN] == "todo":
+            self.inventory.set_source_file(new_name, current.source_file)
+            before_cursor = self.inventory.cursor
+            self.inventory.go_to_name(new_name)
+            self.inventory.advance_to_next_todo()
+            self.state.csv_cursor = self.inventory.cursor
+            self.journal.log(
+                "CSV",
+                "cursor",
+                details={
+                    "before": before_cursor,
+                    "after": self.inventory.cursor,
+                    "cause": "renamed",
+                },
+            )
+        else:
+            self.inventory.add_free_name(new_name, current.source_file)
+            self.journal.log("CSV", "row_added_live", details={"name": new_name})
+
+        current.assigned_name = new_name
+        if exports_were_ready:
+            self._exports_ready.add(new_name)
+
+        self.journal.log(
+            "NAMING",
+            "renamed",
+            image=new_name,
+            details={
+                "old": old_name,
+                "new": new_name,
+                "outputs_renamed": renamed_outputs,
+                "cancelled_tasks": [c.kind for c in cancelled],
+            },
+        )
+        events.append(ImageRenamed(old=old_name, new=new_name))
+
+        events.extend(self._save_inventory())
+        self._persist_state()
+        return events
+
+    def _rename_derivatives(self, old_name: str, new_name: str) -> list[str]:
+        """Moves already-produced (never regenerated) derivatives for
+        `old_name` to `new_name` — not `_delete_derivatives`'s simpler
+        `entry.stem == name` match: `JPEG_POSITIVE/<name><suffix>.jpg`'s stem
+        is `<name><suffix>`, never `== name`, so that directory needs the
+        suffix-aware form too."""
+        suffix = self.campaign.exports.jpeg_positive.suffix
+        renamed: list[str] = []
+        for attr in _DERIVATIVE_DIRS:
+            directory: Path = getattr(self.paths, attr)
+            for entry in self.fs.list_dir(directory):
+                if entry.stem == old_name:
+                    destination = directory / f"{new_name}{entry.suffix}"
+                elif attr == "jpeg_positive_dir" and entry.stem == f"{old_name}{suffix}":
+                    destination = directory / f"{new_name}{suffix}{entry.suffix}"
+                else:
+                    continue
+                self.fs.rename(entry, destination)
+                renamed.append(str(destination))
+        return renamed
 
     # --- rotation (V key) --------------------------------------------------
 
