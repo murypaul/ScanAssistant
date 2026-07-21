@@ -45,6 +45,15 @@ _CONNECT_RETRY_DELAYS_S: tuple[float | None, ...] = (0.5, 1.0, 2.0, None)
 _IDLE_POLL_INTERVAL_S = 0.05  # while connected but live view is off
 _LIVE_VIEW_POLL_INTERVAL_S = 0.01  # while live view is on, between frame attempts
 
+# How long a run of consecutive frame-read failures is tolerated before
+# actually disconnecting. Confirmed on the real D750: the read right after
+# a trigger_capture() (mirror cycling, the event-driven download wait)
+# fails outright a few times before the stream picks back up on its own —
+# indistinguishable, from a single failure, from the camera having actually
+# left the USB port. A short grace window rides out the former without
+# meaningfully delaying detection of the latter.
+_READ_FAILURE_GRACE_S = 3.0
+
 
 class _Command(Enum):
     CONNECT = auto()
@@ -83,6 +92,7 @@ class CameraController:
         self._fps_lock = threading.Lock()
         self._fps: int | None = None
         self._last_frame_at = 0.0
+        self._read_failures_since: float | None = None
         self._download_folder_lock = threading.Lock()
         self._download_folder: Path | None = None
         self._zoom_level_lock = threading.Lock()
@@ -309,8 +319,9 @@ class CameraController:
             self._on_capture_downloaded(downloaded)
 
     def _read_and_emit_frame(self) -> bool:
-        """Returns whether live view is still active — a frame read that
-        fails outright ends it (see below), everything else keeps it going."""
+        """Returns whether live view is still active — a run of failures
+        sustained past `_READ_FAILURE_GRACE_S` ends it (see below),
+        everything else keeps it going."""
         with self._fps_lock:
             fps = self._fps
         interval = 0.0 if fps is None else 1.0 / fps
@@ -321,19 +332,25 @@ class CameraController:
             frame = self._backend.read_preview_frame()
         except CameraIOError as exc:
             self._emit_error(CODE_LIVE_VIEW_FAILED, {"reason": str(exc)})
-            # Unlike the ~1 s mirror-up glitch during a real capture (that
-            # path never reaches here — `trigger_capture` and frame reads
-            # share one command queue, never overlap), a frame read that
-            # fails outright means the camera itself is gone from the USB
-            # port (unplugged, re-enumerated to a new address, put itself
-            # to sleep...). Retrying forever at the live-view poll rate
-            # left the controller stuck believing it was still connected —
-            # actually dropping the connection here lets the existing
-            # reconnect poll (`CaptureScreen._camera_reconnect_timer`) pick
-            # it back up on its own once the device is reachable again,
-            # instead of requiring the operator to restart the app.
-            self._safe_disconnect()
-            return False
+            now = time.monotonic()
+            if self._read_failures_since is None:
+                self._read_failures_since = now
+            elif now - self._read_failures_since >= _READ_FAILURE_GRACE_S:
+                # Sustained failure, not a momentary blip right after a
+                # trigger — the camera itself is gone from the USB port
+                # (unplugged, re-enumerated to a new address, put itself to
+                # sleep...). Retrying forever at the live-view poll rate
+                # left the controller stuck believing it was still
+                # connected — actually dropping the connection here lets
+                # the existing reconnect poll
+                # (`CaptureScreen._camera_reconnect_timer`) pick it back up
+                # on its own once the device is reachable again, instead of
+                # requiring the operator to restart the app.
+                self._read_failures_since = None
+                self._safe_disconnect()
+                return False
+            return True
+        self._read_failures_since = None
         self._last_frame_at = time.monotonic()
         if self._on_frame is not None:
             self._on_frame(frame)

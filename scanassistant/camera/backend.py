@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from scanassistant.camera.errors import CameraBusyError, CameraNotFoundError
+from scanassistant.camera.errors import CameraBusyError, CameraIOError, CameraNotFoundError
 
 
 def is_available() -> bool:
@@ -112,6 +112,7 @@ class FakeCameraBackend:
         captured_file_names: tuple[str, ...] = (),
         download_error: Exception | None = None,
         read_error: Exception | None = None,
+        reads_to_fail_after_trigger: int = 0,
     ) -> None:
         self.connect_error = connect_error
         self.busy_count = busy_count
@@ -120,6 +121,12 @@ class FakeCameraBackend:
         self.captured_file_names = captured_file_names
         self.download_error = download_error
         self.read_error = read_error
+        # Real D750 behavior: the read right after a trigger_capture()
+        # (mirror cycling, the event-driven download wait) fails outright a
+        # few times before the live view stream picks back up on its own —
+        # simulates that without a fixed `read_error` masking every read.
+        self.reads_to_fail_after_trigger = reads_to_fail_after_trigger
+        self._reads_to_fail = 0
         self.connected = False
         self.live_view_active = False
         self.triggered_count = 0
@@ -161,6 +168,9 @@ class FakeCameraBackend:
             raise CameraNotFoundError("live view not active")
         if self.read_error is not None:
             raise self.read_error
+        if self._reads_to_fail > 0:
+            self._reads_to_fail -= 1
+            raise CameraIOError("[-110] Could not claim the USB device")
         self.frames_read += 1
         shade = self.frames_read % 256
         return LiveViewFrame(width=4, height=4, rgb_bytes=bytes([shade]) * (4 * 4 * 3))
@@ -171,6 +181,7 @@ class FakeCameraBackend:
         if self.trigger_error is not None:
             raise self.trigger_error
         self.triggered_count += 1
+        self._reads_to_fail = self.reads_to_fail_after_trigger
 
     def download_captured_files(self, destination_dir: Path) -> list[Path]:
         if not self.connected:
