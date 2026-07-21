@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.11.0 — 2026-07-21
+
+### New / Changed
+**Project & Campaign**
+- New "Reset campaign…" button (Project ▸ Summary, confirmation required)
+  to start a campaign over: every row goes back to todo, the cursor
+  returns to the start, and TIFF/JPEG exports produced so far are
+  deleted. Captured negatives are never deleted — they're archived into a
+  dated backup folder instead, so the campaign becomes ready to restart
+  under the same names without losing anything.
+- The positive crop review screen is now part of the main window, the
+  same way capture mode is, instead of a separate popup window — Esc
+  returns to the project screen.
+
+**Interface**
+- A small, translucent luminance histogram now sits in a corner of the
+  capture preview for a quick read on exposure.
+- The live view vignette can now be dragged anywhere over the preview
+  (a plain click still expands it as before) and stays where it's put
+  across restarts, instead of always sitting in the bottom-right corner.
+
+### Bug Fixes
+**Capture**
+- Session white balance could compute a badly wrong correction — a
+  strong pink cast instead of a neutral result — because it measured the
+  correction on already color-processed pixels instead of the camera's
+  raw sensor data. It's now measured correctly and matches the camera's
+  own calibrated white balance.
+- The crop frame actually applied to exports (not just the on-screen
+  overlay) could land at roughly half its intended position and size
+  once a white balance had been set for the session, squeezing the
+  negative into a corner of the exported image. Fixed.
+- A remote-triggered capture could silently disconnect the camera and
+  cut live view instead of completing normally — a brief, expected pause
+  in the live feed right after the shutter fires was being mistaken for
+  the camera having been unplugged.
+- A remote-triggered download that received no file is now recorded in
+  the technical log instead of leaving no trace at all.
+
 ## 1.10.0 — 2026-07-20
 
 ### New / Changed
