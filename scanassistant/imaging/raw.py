@@ -131,6 +131,13 @@ class RawpyDecoder:
         import rawpy
 
         with rawpy.imread(str(path)) as raw:
+            # Read before `postprocess`: `half_size=True` mutates `raw.sizes`
+            # in place to the halved output dimensions, so reading it after
+            # the call silently collapses `reference_width`/`reference_height`
+            # to the half-size preview's own dimensions instead of the
+            # sensor's full reference size.
+            reference_width, reference_height = _reference_size(raw)
+            flip = raw.sizes.flip
             rgb = raw.postprocess(
                 half_size=True,
                 output_bps=8,
@@ -141,13 +148,12 @@ class RawpyDecoder:
                 # without this, `user_flip=None` (default) would rotate the image twice.
             )
             height, width = rgb.shape[:2]
-            reference_width, reference_height = _reference_size(raw)
             return RawThumbnail(
                 format="bitmap",
                 data=rgb.tobytes(),
                 width=width,
                 height=height,
-                flip=raw.sizes.flip,
+                flip=flip,
                 reference_width=reference_width,
                 reference_height=reference_height,
             )
