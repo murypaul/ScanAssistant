@@ -72,10 +72,17 @@ _MIN_OPACITY_PERCENT = 15
 # drives both at once rather than adding a separate control for the
 # hardware side, so the vignette stays exactly as small as before while
 # still asking the camera itself for real extra detail as the operator
-# zooms in further. A body without hardware zoom support just no-ops on
-# every level past 0, leaving the existing digital zoom/pan as the only
-# effect — never a regression on an unconfirmed body.
+# zooms in further.
 _HARDWARE_ZOOM_THRESHOLDS = (1.0, 2.0, 3.0, 4.5)
+
+# Once a hardware level is engaged, the *additional* digital crop on top of
+# it (see `_LiveViewStage._digital_crop_factor`) is capped to this — a
+# small in-band fine-tune rather than the full `_ZOOM_MAX` stacked on top of
+# an already-tighter camera-side crop, confirmed on the real D750 to bury
+# the jump in real detail under a much blurrier digital blow-up otherwise.
+# Trade-off accepted (DECISIONS.md I-154): on a body where the hardware
+# request silently no-ops, this is less digital zoom range than before.
+_LOCAL_DIGITAL_ZOOM_MAX = 1.5
 
 
 def _hardware_zoom_level(zoom: float) -> int:
@@ -182,8 +189,8 @@ class _LiveViewStage(QWidget):
 
     def reset_view(self) -> None:
         self._zoom = 1.0
+        self._update_hardware_zoom_level()
         self._pan = QPointF(0.5, 0.5)
-        self._emit_hardware_zoom_level()
 
     def zoom_in(self) -> None:
         self._set_zoom(self._zoom * _ZOOM_STEP)
@@ -193,18 +200,41 @@ class _LiveViewStage(QWidget):
 
     def _set_zoom(self, zoom: float) -> None:
         self._zoom = max(_ZOOM_MIN, min(_ZOOM_MAX, zoom))
+        # Level must be current *before* clamping the pan below —
+        # `_clamp_pan`/`source_rect` size the crop off `_hardware_zoom_level`
+        # (see `_digital_crop_factor`), so clamping against the previous
+        # level here would use a stale (about-to-change) band boundary.
+        self._update_hardware_zoom_level()
         self._clamp_pan()
         self.update()
-        self._emit_hardware_zoom_level()
 
-    def _emit_hardware_zoom_level(self) -> None:
+    def _update_hardware_zoom_level(self) -> None:
         level = _hardware_zoom_level(self._zoom)
         if level != self._hardware_zoom_level:
             self._hardware_zoom_level = level
             self.hardwareZoomLevelChanged.emit(level)
 
+    def _digital_crop_factor(self) -> float:
+        """How much *additional* digital cropping to layer on top of
+        whatever the camera itself already delivered — `self._zoom`
+        directly at level 0 (nothing requested camera-side yet), otherwise
+        just the fraction of progress through the current hardware band,
+        capped to `_LOCAL_DIGITAL_ZOOM_MAX` (see its own comment)."""
+        level = self._hardware_zoom_level
+        if level <= 0:
+            return self._zoom
+        band_lo = _HARDWARE_ZOOM_THRESHOLDS[level - 1]
+        band_hi = (
+            _HARDWARE_ZOOM_THRESHOLDS[level]
+            if level < len(_HARDWARE_ZOOM_THRESHOLDS)
+            else _ZOOM_MAX
+        )
+        fraction = (self._zoom - band_lo) / (band_hi - band_lo) if band_hi > band_lo else 0.0
+        fraction = max(0.0, min(1.0, fraction))
+        return 1.0 + fraction * (_LOCAL_DIGITAL_ZOOM_MAX - 1.0)
+
     def _clamp_pan(self) -> None:
-        half = 0.5 / self._zoom
+        half = 0.5 / self._digital_crop_factor()
         x = min(max(self._pan.x(), half), 1 - half) if half < 0.5 else 0.5
         y = min(max(self._pan.y(), half), 1 - half) if half < 0.5 else 0.5
         self._pan = QPointF(x, y)
@@ -213,7 +243,8 @@ class _LiveViewStage(QWidget):
         """Visible crop of `_pixmap`, in its own pixel coordinates."""
         assert self._pixmap is not None
         width, height = self._pixmap.width(), self._pixmap.height()
-        crop_w, crop_h = width / self._zoom, height / self._zoom
+        crop_factor = self._digital_crop_factor()
+        crop_w, crop_h = width / crop_factor, height / crop_factor
         cx, cy = self._pan.x() * width, self._pan.y() * height
         return QRectF(cx - crop_w / 2, cy - crop_h / 2, crop_w, crop_h)
 

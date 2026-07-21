@@ -86,7 +86,9 @@ class CameraController:
         self._last_frame_at = 0.0
         self._download_folder_lock = threading.Lock()
         self._download_folder: Path | None = None
+        self._zoom_level_lock = threading.Lock()
         self._zoom_level_requested = 0
+        self._zoom_level_pending = False
         self._zoom_area_lock = threading.Lock()
         self._zoom_area_delta = [0, 0]
         self._zoom_area_pending = False
@@ -109,13 +111,19 @@ class CameraController:
         self._commands.put(_Command.STOP_LIVE_VIEW)
 
     def set_live_view_zoom_level(self, level: int) -> None:
-        # Plain attribute, not queued data: only the latest request ever
-        # matters (a rapid succession of wheel notches only needs the
-        # backend to end up at the last level asked for), and this only
-        # ever writes a primitive int the GIL already makes a single
-        # command-queue slot's worth of same-thread synchronization
-        # unnecessary for.
-        self._zoom_level_requested = level
+        # Only the latest request ever matters (a rapid succession of wheel
+        # notches only needs the backend to end up at the last level asked
+        # for) — `_zoom_level_pending` keeps a fast scroll from piling up
+        # redundant queue entries once one is already in flight, same
+        # reasoning as `_zoom_area_pending` below. Matters more here than it
+        # first looks: each of these is a real PTP round trip (get_config +
+        # set_config), slow enough over USB2 to noticeably stall live view
+        # frame delivery if several pile up back-to-back.
+        with self._zoom_level_lock:
+            self._zoom_level_requested = level
+            if self._zoom_level_pending:
+                return
+            self._zoom_level_pending = True
         self._commands.put(_Command.SET_LIVE_VIEW_ZOOM)
 
     def move_live_view_zoom_area(self, dx: int, dy: int) -> None:
@@ -202,7 +210,9 @@ class CameraController:
                     self._safe_call(self._backend.stop_live_view)
                 return False
             if command is _Command.SET_LIVE_VIEW_ZOOM:
-                level = self._zoom_level_requested
+                with self._zoom_level_lock:
+                    level = self._zoom_level_requested
+                    self._zoom_level_pending = False
                 if self._connected:
                     self._safe_call(lambda: self._backend.set_live_view_zoom_level(level))
                 return live_view_active
