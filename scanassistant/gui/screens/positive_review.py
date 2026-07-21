@@ -2,10 +2,11 @@
 frame the automatic detector (`imaging.content_framing`) wasn't confident
 enough to apply on its own.
 
-Standalone window (like `StatisticsScreen`/the shortcuts help), not part of
-the home/project/capture stack: a deliberate, separate stop for an operator
-reviewing flagged images at the end of a session — usable outside of an
-active capture (loads a session the same way `StatisticsScreen` does).
+Part of the main window's screen stack, alongside Project/Capture (a full
+takeover, not a floating utility window like `StatisticsScreen`/the
+shortcuts help) — a deliberate, separate stop for an operator reviewing
+flagged images at the end of a session — usable outside of an active
+capture (loads a session the same way `StatisticsScreen` does).
 
 Keyboard-first for the single most frequent action — confirm this image and
 move to the next — with mouse-drag (`PreviewArea`, reused as-is: the
@@ -21,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -35,7 +36,6 @@ from PySide6.QtWidgets import (
 
 from scanassistant.core.positive_review import list_deferred_positives
 from scanassistant.core.session import CaptureSession
-from scanassistant.gui.widgets.pin_checkbox import make_pin_checkbox
 from scanassistant.gui.widgets.positive_settings_panel import PositiveSettingsPanel
 from scanassistant.gui.widgets.preview_area import PreviewArea
 from scanassistant.i18n import t
@@ -50,10 +50,10 @@ _ZERO_COMPONENTS = ConfidenceComponents(0.0, 0.0, 0.0, 0.0, 0.0)
 
 
 class PositiveReviewScreen(QWidget):
+    closed = Signal()  # Escape — back to the Project screen (`MainWindow`)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(t("positive_review.title"))
-        self.resize(960, 640)
 
         self._session: CaptureSession | None = None
         self._names: list[str] = []
@@ -92,6 +92,9 @@ class PositiveReviewScreen(QWidget):
         self.status_label.setProperty("role", "secondary")
         self.status_label.setWordWrap(True)
 
+        self.back_hint_label = QLabel(t("positive_review.back_hint"))
+        self.back_hint_label.setProperty("role", "secondary")
+
         list_column = QVBoxLayout()
         list_column.addWidget(self.category_deferred_checkbox)
         list_column.addWidget(self.list_widget, 1)
@@ -111,7 +114,7 @@ class PositiveReviewScreen(QWidget):
         splitter.setStretchFactor(1, 1)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(make_pin_checkbox(self))
+        layout.addWidget(self.back_hint_label)
         layout.addWidget(splitter, 1)
         layout.addWidget(self.status_label)
 
@@ -231,6 +234,10 @@ class PositiveReviewScreen(QWidget):
         self.refresh_list()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self.closed.emit()
+            event.accept()
+            return
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.confirm_current()
             event.accept()

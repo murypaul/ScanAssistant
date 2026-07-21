@@ -68,6 +68,7 @@ STRINGS: dict[str, str] = {
     "statistics.no_gaps": "No gaps found — every completed image has all its files.",
     "statistics.unavailable": "Statistics are unavailable: no campaign is open.",
     "positive_review.title": "Positive crop review",
+    "positive_review.back_hint": "Positive crop review — Esc: back to the project",
     "positive_review.category_deferred": "Needs review — content frame",
     "positive_review.confirm_and_next": "Confirm && next (Enter)",
     "positive_review.nothing_to_review": "Nothing to review.",
