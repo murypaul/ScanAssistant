@@ -113,11 +113,10 @@ _CAMERA_RECONNECT_POLL_MS = 5000
 # expanded (see `GphotoCameraBackend.set_live_view_zoom_level`) — a fixed
 # "tight enough to actually judge focus by" step, not something the
 # operator picks: expanding is already the deliberate "let me check this"
-# gesture. 200% on the reference D750, not 100%: confirmed on real
-# hardware that 100% anchors its crop off-center (a fixed corner of the
-# frame, not the sensor center) with no PTP field found to recenter it —
-# 200% doesn't show that offset in the same tests.
-_FOCUS_CHECK_ZOOM_LEVEL = 4
+# gesture. Both 100% and 200% were confirmed off-center on the reference
+# D750 (operator report); kept at 100% (the original I-142 behavior) since
+# switching to 200% didn't fix it and only tightened the crop further.
+_FOCUS_CHECK_ZOOM_LEVEL = 3
 
 _LEVEL_LABELS = {
     "reliable": ("capture.confidence_reliable", "ok"),
