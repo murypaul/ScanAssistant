@@ -64,11 +64,22 @@ class RawDecoder(Protocol):
         fact)."""
         ...
 
-    def develop(self, path: Path, *, user_wb: list[float] | None = None) -> RawDevelopment:
-        """Full 16-bit development (`rawpy.postprocess`).
+    def develop(
+        self, path: Path, *, user_wb: list[float] | None = None, linear: bool = False
+    ) -> RawDevelopment:
+        """Full development (`rawpy.postprocess`).
 
         `user_wb`: `[R, G1, B, G2]` multipliers overriding the camera's own
         white balance (`use_camera_wb=True`) when given.
+
+        `linear`: skips the camera-to-sRGB color matrix and the display
+        gamma curve (`output_color=raw`, `gamma=(1,1)`) instead of the
+        normal sRGB/gamma-encoded output. A channel ratio measured on the
+        normal output isn't a valid `user_wb` multiplier — the color matrix
+        mixes channels and the gamma curve is non-linear, so a ratio taken
+        after either one doesn't correspond to the linear-domain scaling
+        `user_wb` actually applies. Only `imaging.white_balance` needs this;
+        real exports (`imaging.master`) always want the normal output.
         """
         ...
 
@@ -158,7 +169,9 @@ class RawpyDecoder:
                 reference_height=reference_height,
             )
 
-    def develop(self, path: Path, *, user_wb: list[float] | None = None) -> RawDevelopment:
+    def develop(
+        self, path: Path, *, user_wb: list[float] | None = None, linear: bool = False
+    ) -> RawDevelopment:
         import rawpy
 
         with rawpy.imread(str(path)) as raw:
@@ -167,6 +180,7 @@ class RawpyDecoder:
                 user_wb=user_wb,
                 no_auto_bright=True,
                 output_bps=16,
-                output_color=rawpy.ColorSpace.sRGB,
+                output_color=rawpy.ColorSpace.raw if linear else rawpy.ColorSpace.sRGB,
+                **({"gamma": (1, 1)} if linear else {}),
             )
             return RawDevelopment(pixels=rgb)

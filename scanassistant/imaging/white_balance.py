@@ -24,6 +24,13 @@ def sample_white_balance(decoder: RawDecoder, raw_path: Path, x: int, y: int) ->
     first captured image, and reused as-is for the rest of the session: the
     illuminant doesn't change, only what's photographed against it.
 
+    Sampled from a linear, color-matrix-free development (`develop(...,
+    linear=True)`), not the normal sRGB/gamma-encoded one: a channel ratio
+    measured on gamma-encoded, color-matrixed pixels doesn't correspond to
+    the linear-domain scaling `user_wb` actually applies, so a multiplier
+    derived that way overshoots substantially instead of neutralizing the
+    patch.
+
     The patch is deliberately wide at full sensor resolution: the operator
     aims on a preview that is itself downscaled (and, depending on which
     pick this is, downscaled by very different amounts — an embedded
@@ -33,7 +40,7 @@ def sample_white_balance(decoder: RawDecoder, raw_path: Path, x: int, y: int) ->
     keeps that wide patch from being thrown off by a stray dust speck, film
     grain, or a hot pixel caught inside it.
     """
-    development = decoder.develop(raw_path, user_wb=[1.0, 1.0, 1.0, 1.0])
+    development = decoder.develop(raw_path, user_wb=[1.0, 1.0, 1.0, 1.0], linear=True)
     pixels = development.pixels.astype(np.float64)
     height, width = pixels.shape[:2]
     # Clamped, not just clipped: a point outside the image entirely (preview
