@@ -120,8 +120,8 @@ _CAMERA_RECONNECT_POLL_MS = 5000
 _FOCUS_CHECK_ZOOM_LEVEL = 3
 # Small and out of the way — a quick exposure/contrast glance, not a
 # precision tool worth more screen real estate.
-_HISTOGRAM_WIDTH_FRACTION = 0.16
-_HISTOGRAM_ASPECT = 2.0  # width / height
+_HISTOGRAM_WIDTH_FRACTION = 0.09
+_HISTOGRAM_ASPECT = 2.2  # width / height
 
 _LEVEL_LABELS = {
     "reliable": ("capture.confidence_reliable", "ok"),

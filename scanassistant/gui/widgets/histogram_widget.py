@@ -15,7 +15,9 @@ from scanassistant.gui.theme import PREVIEW_BACKGROUND, TEXT_PRIMARY
 
 _BIN_COUNT = 64
 _BACKGROUND_COLOR = QColor(PREVIEW_BACKGROUND)
+_BACKGROUND_COLOR.setAlpha(120)
 _BAR_COLOR = QColor(TEXT_PRIMARY)
+_BAR_COLOR.setAlpha(200)
 
 
 class HistogramWidget(QWidget):
@@ -24,6 +26,7 @@ class HistogramWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._bins: np.ndarray | None = None
 
     def set_pixels(self, pixels: np.ndarray | None) -> None:
