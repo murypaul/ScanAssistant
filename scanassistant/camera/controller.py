@@ -315,7 +315,16 @@ class CameraController:
             # existing watched-folder deadline already covers both.
             get_logger().warning("download after capture failed: %s", exc)
             return
-        if downloaded and self._on_capture_downloaded is not None:
+        if not downloaded:
+            # No exception, but nothing arrived either — the camera never
+            # sent a FILE_ADDED event within the wait budget. Same
+            # non-banner treatment as the exception case above, but this
+            # silent-timeout path previously logged nothing at all, making
+            # it indistinguishable after the fact from a download that
+            # simply never got attempted.
+            get_logger().warning("download after capture received no files")
+            return
+        if self._on_capture_downloaded is not None:
             self._on_capture_downloaded(downloaded)
 
     def _read_and_emit_frame(self) -> bool:
