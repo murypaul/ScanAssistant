@@ -161,6 +161,17 @@ def _build_qss(brightness: str) -> str:
         border-color: {border_strong};
         color: {text_secondary};
     }}
+    QPushButton[role="destructive"] {{
+        background-color: {surface};
+        color: {ACCENT_CRITICAL};
+        border: 1px solid {ACCENT_CRITICAL};
+    }}
+    QPushButton[role="destructive"]:hover {{
+        background-color: {ACCENT_CRITICAL_BG};
+    }}
+    QPushButton[role="destructive"]:pressed {{
+        background-color: {ACCENT_CRITICAL_BG};
+    }}
     QPushButton[role="live-view-icon"] {{
         background-color: {surface};
         border: 1px solid {border_strong};
