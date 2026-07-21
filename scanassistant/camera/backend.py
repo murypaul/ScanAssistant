@@ -117,6 +117,7 @@ class FakeCameraBackend:
         reported_capture_target: str | None = None,
         captured_file_names: tuple[str, ...] = (),
         download_error: Exception | None = None,
+        read_error: Exception | None = None,
     ) -> None:
         self.connect_error = connect_error
         self.busy_count = busy_count
@@ -124,6 +125,7 @@ class FakeCameraBackend:
         self.reported_capture_target = reported_capture_target
         self.captured_file_names = captured_file_names
         self.download_error = download_error
+        self.read_error = read_error
         self.connected = False
         self.live_view_active = False
         self.triggered_count = 0
@@ -167,6 +169,8 @@ class FakeCameraBackend:
     def read_preview_frame(self) -> LiveViewFrame:
         if not self.connected or not self.live_view_active:
             raise CameraNotFoundError("live view not active")
+        if self.read_error is not None:
+            raise self.read_error
         self.frames_read += 1
         shade = self.frames_read % 256
         return LiveViewFrame(width=4, height=4, rgb_bytes=bytes([shade]) * (4 * 4 * 3))

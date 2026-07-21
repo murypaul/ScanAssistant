@@ -188,7 +188,7 @@ class CameraController:
                     continue
 
                 if live_view_active:
-                    self._read_and_emit_frame()
+                    live_view_active = self._read_and_emit_frame()
                 else:
                     time.sleep(_IDLE_POLL_INTERVAL_S)
         finally:
@@ -337,21 +337,36 @@ class CameraController:
         if downloaded and self._on_capture_downloaded is not None:
             self._on_capture_downloaded(downloaded)
 
-    def _read_and_emit_frame(self) -> None:
+    def _read_and_emit_frame(self) -> bool:
+        """Returns whether live view is still active — a frame read that
+        fails outright ends it (see below), everything else keeps it going."""
         with self._fps_lock:
             fps = self._fps
         interval = 0.0 if fps is None else 1.0 / fps
         now = time.monotonic()
         if now - self._last_frame_at < interval:
-            return
+            return True
         try:
             frame = self._backend.read_preview_frame()
         except CameraIOError as exc:
             self._emit_error(CODE_LIVE_VIEW_FAILED, {"reason": str(exc)})
-            return
+            # Unlike the ~1 s mirror-up glitch during a real capture (that
+            # path never reaches here — `trigger_capture` and frame reads
+            # share one command queue, never overlap), a frame read that
+            # fails outright means the camera itself is gone from the USB
+            # port (unplugged, re-enumerated to a new address, put itself
+            # to sleep...). Retrying forever at the live-view poll rate
+            # left the controller stuck believing it was still connected —
+            # actually dropping the connection here lets the existing
+            # reconnect poll (`CaptureScreen._camera_reconnect_timer`) pick
+            # it back up on its own once the device is reachable again,
+            # instead of requiring the operator to restart the app.
+            self._safe_disconnect()
+            return False
         self._last_frame_at = time.monotonic()
         if self._on_frame is not None:
             self._on_frame(frame)
+        return True
 
     def _safe_disconnect(self) -> None:
         self._safe_call(self._backend.disconnect)
