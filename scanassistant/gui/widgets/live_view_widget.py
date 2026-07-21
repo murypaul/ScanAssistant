@@ -347,7 +347,13 @@ class LiveViewWidget(QWidget):
         )
         self.close_button.clicked.connect(self.closeRequested.emit)
 
+        # No backing band: the global QSS fills every plain QWidget with
+        # the app's opaque background, which would otherwise paint a grey
+        # bar over the top of the video — floating text/icons carry their
+        # own shadow or rond instead (see `_floating_text_shadow`,
+        # `close_button`), so nothing is lost by making this transparent.
         top_overlay = QWidget()
+        top_overlay.setStyleSheet("background: transparent;")
         top_row = QHBoxLayout(top_overlay)
         top_row.setContentsMargins(6, 3, 6, 3)
         top_row.addWidget(self.live_badge)
