@@ -177,6 +177,7 @@ STRINGS: dict[str, str] = {
     "preferences.shortcut_master_preview": "Master preview",
     "preferences.shortcut_cycle_preview": "Cycle preview (negative → positive → master)",
     "preferences.shortcut_go_to_name": "Go to name",
+    "preferences.shortcut_rename_current": "Rename current image (simple capture mode)",
     "preferences.shortcut_trigger_capture": "Trigger the camera remotely",
     "preferences.shortcut_pause_resume": "Pause / Resume",
     "preferences.shortcut_toggle_live_view": "Toggle live view",
