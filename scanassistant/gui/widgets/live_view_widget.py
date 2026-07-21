@@ -218,20 +218,20 @@ class _LiveViewStage(QWidget):
         """How much *additional* digital cropping to layer on top of
         whatever the camera itself already delivered — `self._zoom`
         directly at level 0 (nothing requested camera-side yet), otherwise
-        just the fraction of progress through the current hardware band,
-        capped to `_LOCAL_DIGITAL_ZOOM_MAX` (see its own comment)."""
-        level = self._hardware_zoom_level
-        if level <= 0:
+        capped to `_LOCAL_DIGITAL_ZOOM_MAX` (see its own comment).
+
+        Deliberately a plain `min()`, not a fraction *within* the current
+        band: a version that reset to 1.0 at the start of every band and
+        climbed back up to the cap made this a sawtooth of `_zoom` —
+        falling back to 1.0 at every threshold crossing while the camera's
+        own crop hadn't caught up yet, which read as the view suddenly
+        jumping wider and then snapping back in. `min()` only ever rises,
+        then flatlines at the cap — continuous, no jump, and no collapse
+        of `_clamp_pan`'s usable range back toward a single point right
+        after a crossing."""
+        if self._hardware_zoom_level <= 0:
             return self._zoom
-        band_lo = _HARDWARE_ZOOM_THRESHOLDS[level - 1]
-        band_hi = (
-            _HARDWARE_ZOOM_THRESHOLDS[level]
-            if level < len(_HARDWARE_ZOOM_THRESHOLDS)
-            else _ZOOM_MAX
-        )
-        fraction = (self._zoom - band_lo) / (band_hi - band_lo) if band_hi > band_lo else 0.0
-        fraction = max(0.0, min(1.0, fraction))
-        return 1.0 + fraction * (_LOCAL_DIGITAL_ZOOM_MAX - 1.0)
+        return min(self._zoom, _LOCAL_DIGITAL_ZOOM_MAX)
 
     def _clamp_pan(self) -> None:
         half = 0.5 / self._digital_crop_factor()
@@ -266,9 +266,15 @@ class _LiveViewStage(QWidget):
             return
         delta = event.position() - self._drag_start
         # Dragging right/down should reveal what's to the left/above —
-        # panning the crop the opposite way of the mouse motion.
-        dx = -delta.x() / max(1, self.width()) / self._zoom
-        dy = -delta.y() / max(1, self.height()) / self._zoom
+        # panning the crop the opposite way of the mouse motion. Divides by
+        # the *actual* crop factor (`source_rect`'s, capped once a hardware
+        # level is engaged — see `_digital_crop_factor`), not the raw wheel
+        # value: using `_zoom` here again would move the pan far more than
+        # the visible crop can actually show, straight back out to
+        # `_clamp_pan`'s limit on the very first pixel of drag.
+        crop_factor = self._digital_crop_factor()
+        dx = -delta.x() / max(1, self.width()) / crop_factor
+        dy = -delta.y() / max(1, self.height()) / crop_factor
         self._pan = QPointF(self._drag_start_pan.x() + dx, self._drag_start_pan.y() + dy)
         self._clamp_pan()
         self.update()
