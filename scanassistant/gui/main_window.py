@@ -173,11 +173,13 @@ class MainWindow(QMainWindow):
 
         self.statistics_screen = StatisticsScreen()
         self.positive_review_screen = PositiveReviewScreen()
+        self.positive_review_screen.closed.connect(self._show_project)
 
         self._stack = QStackedWidget()
         self._stack.addWidget(self.home_screen)
         self._stack.addWidget(self.project_screen)
         self._stack.addWidget(self.capture_screen)
+        self._stack.addWidget(self.positive_review_screen)
         self.setCentralWidget(self._stack)
 
         # `setVisible(False)`, not the `QDockWidget` default of visible: a
@@ -476,6 +478,15 @@ class MainWindow(QMainWindow):
         self._set_capture_docks_available(True)
         self.capture_screen.setFocus()
 
+    def _show_positive_review(self) -> None:
+        self._stack.setCurrentWidget(self.positive_review_screen)
+        self.project_menu.setEnabled(False)
+        self.action_start_capture.setEnabled(False)
+        self.action_check_updates.setEnabled(False)
+        self.action_preferences.setEnabled(False)
+        self._set_capture_docks_available(False)
+        self.positive_review_screen.setFocus()
+
     def _set_capture_docks_available(self, available: bool) -> None:
         """Export queue / Session history / Positive settings only belong on
         the capture screen. Elsewhere they're hidden and their View menu
@@ -656,9 +667,7 @@ class MainWindow(QMainWindow):
             )
             return
         self.positive_review_screen.load(session)
-        self.positive_review_screen.show()
-        self.positive_review_screen.raise_()
-        self.positive_review_screen.activateWindow()
+        self._show_positive_review()
 
     def _build_offline_session(self) -> CaptureSession | None:
         campaign = self.project_screen.campaign

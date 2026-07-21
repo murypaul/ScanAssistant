@@ -63,6 +63,15 @@ filtrables, avec un raccourci vers le dossier de logs).
 Chaque changement de réglage est appliqué et enregistré immédiatement — il
 n'y a pas d'étape de sauvegarde séparée.
 
+L'onglet **Summary** propose un bouton **Reset campaign…** (confirmation
+obligatoire) pour repartir de zéro : chaque ligne repasse à todo, le
+curseur revient au début, et les exports TIFF/JPEG déjà produits sont
+supprimés (toujours régénérables depuis les RAW). Les négatifs capturés ne
+sont jamais supprimés — ils sont déplacés dans un dossier horodaté sous
+`BACKUP/`, de sorte que le dossier RAW redevienne vide et prêt pour de
+nouvelles prises sous les mêmes noms, sans jamais rien perdre. Les
+paramètres de la campagne eux-mêmes ne sont pas touchés.
+
 ## Mode capture
 
 Utilisable en plein écran, une image à la fois :
@@ -91,6 +100,10 @@ entière) ; il porte un liseré sombre des deux côtés de sa couleur pour
 rester visible quelle que soit la teinte propre du négatif. `T` bascule
 vers l'aperçu du cadre réellement appliqué (plutôt que le cadre brut
 avec surimpression) ; `P` bascule vers l'aperçu positif.
+
+Un petit histogramme de luminance, translucide, se trouve dans un coin de
+l'aperçu — un repère rapide sur l'exposition. Il ne suit que la vue
+négatif, pas les basculements aperçu positif/maître ci-dessus.
 
 ## Raccourcis clavier
 
@@ -229,6 +242,9 @@ Une fois activé et l'appareil connecté :
   utilisez la molette/le glissement de la souris pour zoomer et vous
   déplacer et vérifier la mise au point de près, cliquez à nouveau (ou
   sur l'icône de réduction) pour revenir à la petite vignette.
+- Faites glisser la vignette repliée elle-même pour la repositionner où
+  vous voulez sur l'aperçu (un simple clic l'agrandit toujours) — elle
+  reste à sa place d'une session à l'autre.
 - Le réglage de fréquence est un plafond, pas une garantie : le live view
   en USB 2.0 plafonne en général autour de 10-20 fps quel que soit le
   réglage choisi ; la vignette affiche la fréquence réellement atteinte à
@@ -280,11 +296,12 @@ Quand la confiance n'est pas suffisante pour tracer ce rognage
 supplémentaire tout seul, l'image reste simplement le négatif entier
 recadré au cadre support — jamais de coupe décidée sur une estimation peu
 fiable. **Project ▸ Positive crop review** (aussi accessible en dehors de
-la capture) liste chaque image laissée ainsi, affiche l'image déjà
-exportée avec un rectangle de recadrage déplaçable à la souris, et permet
-de confirmer ou d'ajuster le cadrage et l'exposition pour cette image
-précise — `Enter` confirme et passe à la suivante ; seul le positif de
-lecture est régénéré.
+la capture) prend toute la fenêtre principale — comme le mode capture,
+plus une fenêtre à part — et liste chaque image laissée ainsi, affiche
+l'image déjà exportée avec un rectangle de recadrage déplaçable à la
+souris, et permet de confirmer ou d'ajuster le cadrage et l'exposition
+pour cette image précise — `Enter` confirme et passe à la suivante ; seul
+le positif de lecture est régénéré ; `Échap` revient à l'écran projet.
 
 Le TIFF et le JPEG maîtres ne sont jamais affectés par tout cela — seul le
 positif de lecture change.

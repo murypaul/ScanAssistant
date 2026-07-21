@@ -68,6 +68,7 @@ STRINGS: dict[str, str] = {
     "statistics.no_gaps": "No gaps found — every completed image has all its files.",
     "statistics.unavailable": "Statistics are unavailable: no campaign is open.",
     "positive_review.title": "Positive crop review",
+    "positive_review.back_hint": "Positive crop review — Esc: back to the project",
     "positive_review.category_deferred": "Needs review — content frame",
     "positive_review.confirm_and_next": "Confirm && next (Enter)",
     "positive_review.nothing_to_review": "Nothing to review.",
@@ -153,12 +154,8 @@ STRINGS: dict[str, str] = {
         " installed yet. Install it now? This downloads it from PyPI into"
         " ScanAssistant's own virtual environment — nothing else changes."
     ),
-    "preferences.camera_install_success": (
-        "Installed. Tethered camera support is now enabled."
-    ),
-    "preferences.camera_install_failed": (
-        "Could not install the camera package: {error}"
-    ),
+    "preferences.camera_install_success": ("Installed. Tethered camera support is now enabled."),
+    "preferences.camera_install_failed": ("Could not install the camera package: {error}"),
     "preferences.export_settings": "Export settings…",
     "preferences.import_settings": "Import settings…",
     "preferences.restart_notice": "Settings imported. Restart ScanAssistant to fully apply them.",
@@ -402,6 +399,15 @@ STRINGS: dict[str, str] = {
     "project.invalid_setting_title": "Invalid setting",
     "project.summary_counts": "{done} done · {remaining} remaining · {total} total",
     "project.summary_root": "Campaign folder: {root}",
+    "project.reset_campaign_button": "Reset campaign…",
+    "project.reset_campaign_title": "Reset this campaign?",
+    "project.reset_campaign_confirm": (
+        "Every row goes back to todo and the cursor returns to the start. "
+        "TIFF/JPEG exports produced so far are deleted (they can always be "
+        "regenerated). Captured negatives are never deleted — they're moved "
+        "into a dated folder under BACKUP/ instead. Campaign settings are "
+        "not affected. This cannot be undone from within the app."
+    ),
     "project.open_campaign_folder": "Open campaign folder",
     "project.open_watched_folder": "Open watched folder",
     "project.export_group": "Export copies",

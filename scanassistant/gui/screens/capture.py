@@ -68,6 +68,7 @@ from scanassistant.gui.shortcuts import (
     matches_shifted,
     merge_with_defaults,
 )
+from scanassistant.gui.widgets.histogram_widget import HistogramWidget
 from scanassistant.gui.widgets.live_view_widget import LiveViewWidget
 from scanassistant.gui.widgets.preview_area import PreviewArea
 from scanassistant.i18n import t
@@ -109,6 +110,18 @@ _CAPTURE_TRIGGER_TIMEOUT_S = 15.0
 # just needs to be short enough that plugging in/powering on the camera
 # feels like it "just works" without a wait that feels stuck.
 _CAMERA_RECONNECT_POLL_MS = 5000
+# Camera-side zoom level requested as soon as the live view vignette is
+# expanded (see `GphotoCameraBackend.set_live_view_zoom_level`) — a fixed
+# "tight enough to actually judge focus by" step, not something the
+# operator picks: expanding is already the deliberate "let me check this"
+# gesture. Both 100% and 200% were confirmed off-center on the reference
+# D750 (operator report); kept at 100% (the original I-142 behavior) since
+# switching to 200% didn't fix it and only tightened the crop further.
+_FOCUS_CHECK_ZOOM_LEVEL = 3
+# Small and out of the way — a quick exposure/contrast glance, not a
+# precision tool worth more screen real estate.
+_HISTOGRAM_WIDTH_FRACTION = 0.09
+_HISTOGRAM_ASPECT = 2.2  # width / height
 
 _LEVEL_LABELS = {
     "reliable": ("capture.confidence_reliable", "ok"),
@@ -237,7 +250,9 @@ def _canonical_point_from_display(
         level="manual",
         components=ConfidenceComponents(0, 0, 0, 0, 0),
     )
-    canonical = _canonical_frame_from_display(dummy, rotation_deg, canonical_height, canonical_width)
+    canonical = _canonical_frame_from_display(
+        dummy, rotation_deg, canonical_height, canonical_width
+    )
     return canonical.x, canonical.y
 
 
@@ -333,6 +348,8 @@ class CaptureScreen(QWidget):
         self.preview_area.frame_dragged.connect(self._on_frame_dragged)
         self.preview_area.frame_drag_finished.connect(self._on_frame_drag_finished)
         self.preview_area.point_picked.connect(self._on_white_balance_point_picked)
+
+        self.histogram_widget = HistogramWidget(parent=self)
 
         self._camera_config = camera_config
         self._persist_camera_config = persist_camera_config
@@ -505,6 +522,7 @@ class CaptureScreen(QWidget):
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._reposition_live_view()
+        self._reposition_histogram()
 
     def _build_camera(
         self, camera_config: CameraConfig, camera_backend: CameraBackend | None
@@ -547,6 +565,7 @@ class CaptureScreen(QWidget):
         self.live_view_widget.opacityChanged.connect(self._on_live_view_opacity_changed)
         self.live_view_widget.expandedChanged.connect(self._on_live_view_expanded_changed)
         self.live_view_widget.closeRequested.connect(self.toggle_live_view_panel_visibility)
+        self.live_view_widget.positionChanged.connect(self._on_live_view_position_changed)
         self.live_view_widget.show()
 
         # Automatic: a tethered camera that's on and plugged in connects
@@ -884,6 +903,7 @@ class CaptureScreen(QWidget):
 
         self._loaded_preview_for = None
         self._current_frame_result = None
+        self.histogram_widget.set_pixels(None)
         if self._stabilizing:
             name = next(iter(self._stabilizing)).name
             self.preview_area.show_stabilizing(name)
@@ -959,6 +979,7 @@ class CaptureScreen(QWidget):
         if not shiboken6.isValid(self):
             return  # see `_on_preview_ready`
         self.preview_area.show_message(t("capture.preview_unavailable", error=error))
+        self.histogram_widget.set_pixels(None)
 
     def _load_preview_known_frame(self, name: str, extension: str, framing: FramingState) -> None:
         """Loads the preview for a reopened image (history panel) without re-detecting.
@@ -1105,6 +1126,10 @@ class CaptureScreen(QWidget):
             )
             self.preview_area.show_image(rotated_pixels)
             self.preview_area.set_frame_overlay(rotated_frame)
+            # Negative view only — deliberately not refreshed when toggled to
+            # positive/master (P/T), a differently-toned rendering the
+            # histogram isn't meant to track.
+            self.histogram_widget.set_pixels(rotated_pixels)
 
     def _render_master_preview(
         self, preview_pixels: np.ndarray, *, frame_override: FrameResult | None = None
@@ -1523,7 +1548,9 @@ class CaptureScreen(QWidget):
         # immediately, not only from the next capture onwards.
         current = self.session.state.current_image
         if current is not None and current.assigned_name == picked_on:
-            self._load_preview_known_frame(current.assigned_name, current.extension, current.framing)
+            self._load_preview_known_frame(
+                current.assigned_name, current.extension, current.framing
+            )
 
     def _effective_rotation_deg(self) -> int:
         """The rotation currently reflected on screen: the not-yet-committed
@@ -1809,13 +1836,19 @@ class CaptureScreen(QWidget):
         if self._persist_camera_config is not None:
             self._persist_camera_config()
 
+    def _on_live_view_position_changed(self) -> None:
+        if self._persist_camera_config is not None:
+            self._persist_camera_config()
+
     def _on_live_view_expanded_changed(self, expanded: bool) -> None:
         self._reposition_live_view()
         if self._camera_controller is not None:
             # Camera-side zoom (real detail, not this app's own digital
             # zoom/pan re-scaling the same pixels) while checking focus —
-            # see `GphotoCameraBackend.set_live_view_zoomed`.
-            self._camera_controller.set_live_view_zoomed(expanded)
+            # see `GphotoCameraBackend.set_live_view_zoom_level`.
+            self._camera_controller.set_live_view_zoom_level(
+                _FOCUS_CHECK_ZOOM_LEVEL if expanded else 0
+            )
 
     def _reposition_live_view(self) -> None:
         if self.live_view_widget is None:
@@ -1824,9 +1857,26 @@ class CaptureScreen(QWidget):
         self.live_view_widget.setGeometry(self.live_view_widget.size_for(container).toRect())
         self.live_view_widget.raise_()
 
+    def _reposition_histogram(self) -> None:
+        # Bottom-left, opposite corner from the live view vignette
+        # (bottom-right) — small and out of the way of both the frame
+        # overlay and the live view widget.
+        container = self.preview_area.geometry()
+        width = container.width() * _HISTOGRAM_WIDTH_FRACTION
+        height = width / _HISTOGRAM_ASPECT
+        margin = 10
+        self.histogram_widget.setGeometry(
+            round(container.left() + margin),
+            round(container.bottom() - height - margin),
+            round(width),
+            round(height),
+        )
+        self.histogram_widget.raise_()
+
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._reposition_live_view()
+        self._reposition_histogram()
 
     # --- session history (correction side panel) ---------------------------
 

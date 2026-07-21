@@ -58,6 +58,14 @@ filterable, with a shortcut to the log folder).
 Every setting change is applied and saved immediately — there's no separate
 save step.
 
+The **Summary** tab has a **Reset campaign…** button (confirmation
+required) to start the campaign over: every row goes back to todo, the
+cursor returns to the start, and the TIFF/JPEG exports produced so far are
+deleted (they're always regenerable from the RAW). Captured negatives are
+never deleted — they're moved into a dated folder under `BACKUP/` instead,
+so the RAW folder becomes empty and ready for new captures under the same
+names without losing anything. Campaign settings themselves aren't touched.
+
 ## Capture mode
 
 Full-screen-capable, one image at a time:
@@ -86,6 +94,10 @@ a dark keyline on both sides of its color so it stays visible whatever
 the negative's own cast happens to be. Press `T` to preview the crop
 actually applied instead of the raw frame with an overlay; press `P` to
 preview the positive rendering instead.
+
+A small, translucent luminance histogram sits in a corner of the preview
+— a quick read on exposure at a glance. It follows the plain negative
+view only, not the positive/master preview toggles above.
 
 ## Keyboard shortcuts
 
@@ -217,6 +229,8 @@ Once enabled and the camera is connected:
   preview through it; click the vignette to expand it and use the mouse
   wheel/drag to zoom and pan for a close look at focus, click again (or
   the shrink icon) to go back to the small vignette.
+- Drag the collapsed vignette itself to reposition it anywhere over the
+  preview (a plain click still expands it) — it stays put across restarts.
 - The fps setting is a ceiling, not a guarantee — USB 2.0 live view
   typically tops out around 10-20 fps regardless of what's selected; the
   vignette shows the fps actually being achieved next to the setting.
@@ -260,10 +274,12 @@ that border either way, whether or not the extra crop above succeeds.
 When it isn't confident enough to draw that extra crop on its own, the
 image is simply left as the full framed negative — nothing is ever cut
 into by a low-confidence guess. **Project ▸ Positive crop review**
-(also available outside capture) lists every image left that way, shows
-the already-exported image with a draggable crop rectangle, and lets you
-confirm or adjust the crop and the exposure for that one image — `Enter`
-confirms and moves to the next, only the reading positive is regenerated.
+(also available outside capture) takes over the main window — same as
+capture mode, not a separate window — and lists every image left that
+way, shows the already-exported image with a draggable crop rectangle,
+and lets you confirm or adjust the crop and the exposure for that one
+image — `Enter` confirms and moves to the next, only the reading positive
+is regenerated, `Esc` returns to the project screen.
 
 The master TIFF and JPEG are never touched by any of this — only the
 reading positive is affected.

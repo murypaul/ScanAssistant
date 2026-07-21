@@ -45,6 +45,15 @@ _CONNECT_RETRY_DELAYS_S: tuple[float | None, ...] = (0.5, 1.0, 2.0, None)
 _IDLE_POLL_INTERVAL_S = 0.05  # while connected but live view is off
 _LIVE_VIEW_POLL_INTERVAL_S = 0.01  # while live view is on, between frame attempts
 
+# How long a run of consecutive frame-read failures is tolerated before
+# actually disconnecting. Confirmed on the real D750: the read right after
+# a trigger_capture() (mirror cycling, the event-driven download wait)
+# fails outright a few times before the stream picks back up on its own —
+# indistinguishable, from a single failure, from the camera having actually
+# left the USB port. A short grace window rides out the former without
+# meaningfully delaying detection of the latter.
+_READ_FAILURE_GRACE_S = 3.0
+
 
 class _Command(Enum):
     CONNECT = auto()
@@ -83,9 +92,12 @@ class CameraController:
         self._fps_lock = threading.Lock()
         self._fps: int | None = None
         self._last_frame_at = 0.0
+        self._read_failures_since: float | None = None
         self._download_folder_lock = threading.Lock()
         self._download_folder: Path | None = None
-        self._zoom_requested = False
+        self._zoom_level_lock = threading.Lock()
+        self._zoom_level_requested = 0
+        self._zoom_level_pending = False
         self._thread = threading.Thread(target=self._run, name="scanassistant-camera", daemon=True)
         self._thread.start()
 
@@ -104,14 +116,20 @@ class CameraController:
     def stop_live_view(self) -> None:
         self._commands.put(_Command.STOP_LIVE_VIEW)
 
-    def set_live_view_zoomed(self, zoomed: bool) -> None:
-        # Plain attribute, not queued data: only the latest request ever
-        # matters (a rapid expand/collapse/expand only needs the backend
-        # to end up in the last state asked for), and this only ever
-        # writes an `Enum`-eligible primitive the GIL already makes a
-        # single command-queue slot's worth of same-thread synchronization
-        # unnecessary for.
-        self._zoom_requested = zoomed
+    def set_live_view_zoom_level(self, level: int) -> None:
+        # Only the latest request ever matters (a rapid succession of wheel
+        # notches only needs the backend to end up at the last level asked
+        # for) — `_zoom_level_pending` keeps a fast scroll from piling up
+        # redundant queue entries once one is already in flight. Matters
+        # more here than it first looks: each of these is a real PTP round
+        # trip (get_config + set_config), slow enough over USB2 to
+        # noticeably stall live view frame delivery if several pile up
+        # back-to-back.
+        with self._zoom_level_lock:
+            self._zoom_level_requested = level
+            if self._zoom_level_pending:
+                return
+            self._zoom_level_pending = True
         self._commands.put(_Command.SET_LIVE_VIEW_ZOOM)
 
     def trigger_capture(self) -> None:
@@ -160,7 +178,7 @@ class CameraController:
                     continue
 
                 if live_view_active:
-                    self._read_and_emit_frame()
+                    live_view_active = self._read_and_emit_frame()
                 else:
                     time.sleep(_IDLE_POLL_INTERVAL_S)
         finally:
@@ -182,9 +200,11 @@ class CameraController:
                     self._safe_call(self._backend.stop_live_view)
                 return False
             if command is _Command.SET_LIVE_VIEW_ZOOM:
-                zoomed = self._zoom_requested
+                with self._zoom_level_lock:
+                    level = self._zoom_level_requested
+                    self._zoom_level_pending = False
                 if self._connected:
-                    self._safe_call(lambda: self._backend.set_live_view_zoomed(zoomed))
+                    self._safe_call(lambda: self._backend.set_live_view_zoom_level(level))
                 return live_view_active
             if command is _Command.TRIGGER_CAPTURE:
                 self._handle_trigger()
@@ -295,24 +315,55 @@ class CameraController:
             # existing watched-folder deadline already covers both.
             get_logger().warning("download after capture failed: %s", exc)
             return
-        if downloaded and self._on_capture_downloaded is not None:
+        if not downloaded:
+            # No exception, but nothing arrived either — the camera never
+            # sent a FILE_ADDED event within the wait budget. Same
+            # non-banner treatment as the exception case above, but this
+            # silent-timeout path previously logged nothing at all, making
+            # it indistinguishable after the fact from a download that
+            # simply never got attempted.
+            get_logger().warning("download after capture received no files")
+            return
+        if self._on_capture_downloaded is not None:
             self._on_capture_downloaded(downloaded)
 
-    def _read_and_emit_frame(self) -> None:
+    def _read_and_emit_frame(self) -> bool:
+        """Returns whether live view is still active — a run of failures
+        sustained past `_READ_FAILURE_GRACE_S` ends it (see below),
+        everything else keeps it going."""
         with self._fps_lock:
             fps = self._fps
         interval = 0.0 if fps is None else 1.0 / fps
         now = time.monotonic()
         if now - self._last_frame_at < interval:
-            return
+            return True
         try:
             frame = self._backend.read_preview_frame()
         except CameraIOError as exc:
             self._emit_error(CODE_LIVE_VIEW_FAILED, {"reason": str(exc)})
-            return
+            now = time.monotonic()
+            if self._read_failures_since is None:
+                self._read_failures_since = now
+            elif now - self._read_failures_since >= _READ_FAILURE_GRACE_S:
+                # Sustained failure, not a momentary blip right after a
+                # trigger — the camera itself is gone from the USB port
+                # (unplugged, re-enumerated to a new address, put itself to
+                # sleep...). Retrying forever at the live-view poll rate
+                # left the controller stuck believing it was still
+                # connected — actually dropping the connection here lets
+                # the existing reconnect poll
+                # (`CaptureScreen._camera_reconnect_timer`) pick it back up
+                # on its own once the device is reachable again, instead of
+                # requiring the operator to restart the app.
+                self._read_failures_since = None
+                self._safe_disconnect()
+                return False
+            return True
+        self._read_failures_since = None
         self._last_frame_at = time.monotonic()
         if self._on_frame is not None:
             self._on_frame(frame)
+        return True
 
     def _safe_disconnect(self) -> None:
         self._safe_call(self._backend.disconnect)

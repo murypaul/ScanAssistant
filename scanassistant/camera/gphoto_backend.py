@@ -47,11 +47,12 @@ _DEVICE_BUSY_MARKERS = ("0x2019", "device busy")
 # (confirmed identical ordering in both English and French), so every
 # lookup here goes through it instead of any label text.
 _CAPTURE_TARGET_CHOICE_INDEX = {"sdram": 0, "card": 1}  # Internal RAM, Memory card
-# "100%" is a large jump in effective detail over the full-frame view
-# without cropping so tight the frame is hard to relocate in — a
-# reasonable default focus-check zoom, not the maximum available.
-_LIVE_VIEW_UNZOOM_INDEX = 0  # Entire Display
-_LIVE_VIEW_ZOOM_INDEX = 6  # 100%
+# Confirmed against the real D750: `liveviewimagezoomratio` offers more
+# than a plain on/off toggle — "Entire Display", 25 %, 50 %, 100 %, 200 %
+# at choice positions 0/2/4/6/7 (1/3/5 are reserved values this body lists
+# but never actually offers). Level 0 here means unzoomed; each further
+# level asks the camera for a progressively tighter camera-side crop.
+_LIVE_VIEW_ZOOM_CHOICE_INDEX = (0, 2, 4, 6, 7)
 
 
 def _find_choice_index(widget: gphoto2.CameraWidget, value: str) -> int | None:
@@ -59,6 +60,7 @@ def _find_choice_index(widget: gphoto2.CameraWidget, value: str) -> int | None:
         if widget.get_choice(i) == value:
             return i
     return None
+
 
 # GNOME/Nemo auto-mounts any PTP-mode camera the instant it's plugged in
 # (Nemo ▸ Devices, desktop notifications...); the resulting exclusive USB
@@ -85,6 +87,7 @@ def release_gvfs_claim() -> None:
             capture_output=True,
             timeout=_RELEASE_TIMEOUT_S,
         )
+
 
 # How long `download_captured_files` waits, in total, for the RAW produced
 # by the trigger just sent — comfortably under the GUI's own 15 s
@@ -184,20 +187,21 @@ class GphotoCameraBackend:
         except gphoto2.GPhoto2Error:
             pass  # best-effort: about to disconnect or already torn down
 
-    def set_live_view_zoomed(self, zoomed: bool) -> None:
-        # Confirmed against the real D750: `liveviewimagezoomratio`
-        # (choices include "Entire Display" and this percentage set) is
-        # the same property the body's own rear-screen zoom button
-        # drives — genuinely crops/zooms at the sensor/ISP level rather
-        # than this app blowing up the same low-res preview pixels.
-        # Best-effort and silent: a body without this widget, or not
-        # currently in live view, just keeps showing the un-zoomed frame,
-        # not worth its own error banner for a focus-check convenience.
+    def set_live_view_zoom_level(self, level: int) -> None:
+        # `liveviewimagezoomratio` — the same property the body's own
+        # rear-screen zoom button drives — genuinely crops/zooms at the
+        # sensor/ISP level rather than this app blowing up the same
+        # low-res preview pixels. Best-effort and silent: a body without
+        # this widget, an out-of-range level, or not currently in live
+        # view, just keeps showing whatever it last had, not worth its
+        # own error banner for a focus-check convenience.
         try:
             camera = self._require_camera()
             config = camera.get_config(self._context)
             widget = config.get_child_by_name("liveviewimagezoomratio")
-            index = _LIVE_VIEW_ZOOM_INDEX if zoomed else _LIVE_VIEW_UNZOOM_INDEX
+            if not 0 <= level < len(_LIVE_VIEW_ZOOM_CHOICE_INDEX):
+                return
+            index = _LIVE_VIEW_ZOOM_CHOICE_INDEX[level]
             if index < widget.count_choices():
                 widget.set_value(widget.get_choice(index))
                 camera.set_config(config, self._context)

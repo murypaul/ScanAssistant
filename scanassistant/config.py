@@ -104,6 +104,13 @@ class CameraConfig:
     # only ever affects the on-screen live view image, never the RAW
     # itself (the body writes that the same way regardless).
     live_view_rotate_180: bool = False
+    # Where the collapsed vignette sits, as a fraction of the space it can
+    # slide within (0.0 = flush against the left/top edge, 1.0 = flush
+    # against the right/bottom) — `None` (default) means "the built-in
+    # bottom-right corner", never overwritten until the operator actually
+    # drags it once. Expanded mode is always centered regardless.
+    live_view_x_fraction: float | None = None
+    live_view_y_fraction: float | None = None
 
 
 LIVE_VIEW_FPS_CHOICES: tuple[int, ...] = (10, 15, 20, 25, 30)

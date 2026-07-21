@@ -35,6 +35,8 @@ from PySide6.QtWidgets import (
 )
 
 from scanassistant.core.bulk_export import export_derivatives
+from scanassistant.core.campaign_reset import reset_campaign
+from scanassistant.core.fs import RealFileSystem
 from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.widgets.csv_table import CsvTableWidget
 from scanassistant.gui.widgets.log_table import LogTableWidget
@@ -167,12 +169,18 @@ class ProjectScreen(QWidget):
         identity_form.addRow(t("wizard.step1.institution"), self.institution_edit)
         identity_form.addRow(t("wizard.step1.negative_format"), self.negative_format_edit)
 
+        reset_button = QPushButton(t("project.reset_campaign_button"))
+        reset_button.setProperty("role", "destructive")
+        reset_button.clicked.connect(self._reset_campaign)
+
         layout = QVBoxLayout()
         layout.addWidget(self._summary_name_label)
         layout.addWidget(self._summary_counts_label)
         layout.addWidget(self._summary_paths_label)
         layout.addSpacing(16)
         layout.addLayout(identity_form)
+        layout.addSpacing(16)
+        layout.addWidget(reset_button)
         layout.addStretch(1)
         widget = QWidget()
         widget.setLayout(layout)
@@ -208,6 +216,31 @@ class ProjectScreen(QWidget):
         """Project ▸ Campaign settings… (06 §12)."""
         self._tabs.setCurrentIndex(0)
         self.description_edit.setFocus()
+
+    def _reset_campaign(self) -> None:
+        """Wipes all progress on the campaign back to a just-created state.
+
+        Never deletes a captured negative: RAW/REJECTED are archived into a
+        timestamped BACKUP/ subfolder, never removed outright — only the
+        fully regenerable TIFF/JPEG_MASTER/JPEG_POSITIVE exports are.
+        Campaign settings are untouched. Preparation mode only: there is no
+        running capture session to coordinate with here.
+        """
+        if self.campaign is None or self.paths is None or self.journal is None:
+            return
+        if self.inventory is None or self.state is None:
+            return
+        answer = QMessageBox.question(
+            self, t("project.reset_campaign_title"), t("project.reset_campaign_confirm")
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            reset_campaign(self.paths, self.inventory, self.state, self.journal, RealFileSystem())
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._refresh_all()
 
     def _commit_identity_field(self, attr: str, after: str) -> None:
         if self.campaign is None:
