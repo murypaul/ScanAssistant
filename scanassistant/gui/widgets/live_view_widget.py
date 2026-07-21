@@ -66,31 +66,6 @@ _ZOOM_STEP = 1.15
 _LIVE_DOT_COLOR = QColor("#e2685c")
 _MIN_OPACITY_PERCENT = 15
 
-# Buckets the continuous digital zoom (wheel, `_ZOOM_MIN`-`_ZOOM_MAX`) into
-# the camera's own discrete hardware zoom steps (level 0 = unzoomed; see
-# `GphotoCameraBackend.set_live_view_zoom_level`) — the same wheel gesture
-# drives both at once rather than adding a separate control for the
-# hardware side, so the vignette stays exactly as small as before while
-# still asking the camera itself for real extra detail as the operator
-# zooms in further.
-_HARDWARE_ZOOM_THRESHOLDS = (1.0, 2.0, 3.0, 4.5)
-
-# Once a hardware level is engaged, the *additional* digital crop on top of
-# it (see `_LiveViewStage._digital_crop_factor`) is capped to this — a
-# small in-band fine-tune rather than the full `_ZOOM_MAX` stacked on top of
-# an already-tighter camera-side crop, confirmed on the real D750 to bury
-# the jump in real detail under a much blurrier digital blow-up otherwise.
-# Trade-off accepted (DECISIONS.md I-154): on a body where the hardware
-# request silently no-ops, this is less digital zoom range than before.
-_LOCAL_DIGITAL_ZOOM_MAX = 1.5
-
-
-def _hardware_zoom_level(zoom: float) -> int:
-    for level, threshold in enumerate(_HARDWARE_ZOOM_THRESHOLDS):
-        if zoom <= threshold:
-            return level
-    return len(_HARDWARE_ZOOM_THRESHOLDS)
-
 
 def image_from_live_view_frame(frame: LiveViewFrame) -> QImage:
     """`QImage` copy of a `LiveViewFrame` — copied immediately: `rgb_bytes`
@@ -131,7 +106,6 @@ class _LiveViewStage(QWidget):
     zoom (wheel) and pan (drag) — collapsed mode is display-only."""
 
     clicked = Signal()
-    hardwareZoomLevelChanged = Signal(int)  # 0 = unzoomed, see `_hardware_zoom_level`
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -141,7 +115,6 @@ class _LiveViewStage(QWidget):
         self._pan = QPointF(0.5, 0.5)  # normalized center of the visible crop
         self._drag_start: QPointF | None = None
         self._drag_start_pan: QPointF | None = None
-        self._hardware_zoom_level = 0
         self._top_overlay: QWidget | None = None
         self._center_overlay: QWidget | None = None
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -187,7 +160,6 @@ class _LiveViewStage(QWidget):
 
     def reset_view(self) -> None:
         self._zoom = 1.0
-        self._update_hardware_zoom_level()
         self._pan = QPointF(0.5, 0.5)
 
     def zoom_in(self) -> None:
@@ -198,41 +170,11 @@ class _LiveViewStage(QWidget):
 
     def _set_zoom(self, zoom: float) -> None:
         self._zoom = max(_ZOOM_MIN, min(_ZOOM_MAX, zoom))
-        # Level must be current *before* clamping the pan below —
-        # `_clamp_pan`/`source_rect` size the crop off `_hardware_zoom_level`
-        # (see `_digital_crop_factor`), so clamping against the previous
-        # level here would use a stale (about-to-change) band boundary.
-        self._update_hardware_zoom_level()
         self._clamp_pan()
         self.update()
 
-    def _update_hardware_zoom_level(self) -> None:
-        level = _hardware_zoom_level(self._zoom)
-        if level != self._hardware_zoom_level:
-            self._hardware_zoom_level = level
-            self.hardwareZoomLevelChanged.emit(level)
-
-    def _digital_crop_factor(self) -> float:
-        """How much *additional* digital cropping to layer on top of
-        whatever the camera itself already delivered — `self._zoom`
-        directly at level 0 (nothing requested camera-side yet), otherwise
-        capped to `_LOCAL_DIGITAL_ZOOM_MAX` (see its own comment).
-
-        Deliberately a plain `min()`, not a fraction *within* the current
-        band: a version that reset to 1.0 at the start of every band and
-        climbed back up to the cap made this a sawtooth of `_zoom` —
-        falling back to 1.0 at every threshold crossing while the camera's
-        own crop hadn't caught up yet, which read as the view suddenly
-        jumping wider and then snapping back in. `min()` only ever rises,
-        then flatlines at the cap — continuous, no jump, and no collapse
-        of `_clamp_pan`'s usable range back toward a single point right
-        after a crossing."""
-        if self._hardware_zoom_level <= 0:
-            return self._zoom
-        return min(self._zoom, _LOCAL_DIGITAL_ZOOM_MAX)
-
     def _clamp_pan(self) -> None:
-        half = 0.5 / self._digital_crop_factor()
+        half = 0.5 / self._zoom
         x = min(max(self._pan.x(), half), 1 - half) if half < 0.5 else 0.5
         y = min(max(self._pan.y(), half), 1 - half) if half < 0.5 else 0.5
         self._pan = QPointF(x, y)
@@ -241,8 +183,7 @@ class _LiveViewStage(QWidget):
         """Visible crop of `_pixmap`, in its own pixel coordinates."""
         assert self._pixmap is not None
         width, height = self._pixmap.width(), self._pixmap.height()
-        crop_factor = self._digital_crop_factor()
-        crop_w, crop_h = width / crop_factor, height / crop_factor
+        crop_w, crop_h = width / self._zoom, height / self._zoom
         cx, cy = self._pan.x() * width, self._pan.y() * height
         return QRectF(cx - crop_w / 2, cy - crop_h / 2, crop_w, crop_h)
 
@@ -263,15 +204,9 @@ class _LiveViewStage(QWidget):
             return
         delta = event.position() - self._drag_start
         # Dragging right/down should reveal what's to the left/above —
-        # panning the crop the opposite way of the mouse motion. Divides by
-        # the *actual* crop factor (`source_rect`'s, capped once a hardware
-        # level is engaged — see `_digital_crop_factor`), not the raw wheel
-        # value: using `_zoom` here again would move the pan far more than
-        # the visible crop can actually show, straight back out to
-        # `_clamp_pan`'s limit on the very first pixel of drag.
-        crop_factor = self._digital_crop_factor()
-        dx = -delta.x() / max(1, self.width()) / crop_factor
-        dy = -delta.y() / max(1, self.height()) / crop_factor
+        # panning the crop the opposite way of the mouse motion.
+        dx = -delta.x() / max(1, self.width()) / self._zoom
+        dy = -delta.y() / max(1, self.height()) / self._zoom
         self._pan = QPointF(self._drag_start_pan.x() + dx, self._drag_start_pan.y() + dy)
         self._clamp_pan()
         self.update()
@@ -327,7 +262,6 @@ class LiveViewWidget(QWidget):
     # unrelated resize happens to trigger one.
     expandedChanged = Signal(bool)
     closeRequested = Signal()  # × button — panel hidden until View menu / shortcut
-    hardwareZoomLevelChanged = Signal(int)  # forwarded from `_LiveViewStage`
 
     def __init__(self, camera_config: CameraConfig, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -339,7 +273,6 @@ class LiveViewWidget(QWidget):
         self.stage = _LiveViewStage()
         self.stage.setToolTip(t("live_view.expand_tooltip"))
         self.stage.clicked.connect(self._on_stage_clicked)
-        self.stage.hardwareZoomLevelChanged.connect(self.hardwareZoomLevelChanged.emit)
         # Applied to the whole widget, not just `stage`: this is a plain
         # child overlay sitting on top of `PreviewArea`, not a top-level
         # window (`setWindowOpacity` wouldn't apply here) — fading the

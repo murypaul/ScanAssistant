@@ -109,6 +109,12 @@ _CAPTURE_TRIGGER_TIMEOUT_S = 15.0
 # just needs to be short enough that plugging in/powering on the camera
 # feels like it "just works" without a wait that feels stuck.
 _CAMERA_RECONNECT_POLL_MS = 5000
+# Camera-side zoom level requested as soon as the live view vignette is
+# expanded (see `GphotoCameraBackend.set_live_view_zoom_level`) — a fixed
+# "tight enough to actually judge focus by" step (100% on the reference
+# D750), not something the operator picks: expanding is already the
+# deliberate "let me check this" gesture.
+_FOCUS_CHECK_ZOOM_LEVEL = 3
 
 _LEVEL_LABELS = {
     "reliable": ("capture.confidence_reliable", "ok"),
@@ -548,9 +554,6 @@ class CaptureScreen(QWidget):
         self.live_view_widget.fpsChanged.connect(self._on_live_view_fps_changed)
         self.live_view_widget.opacityChanged.connect(self._on_live_view_opacity_changed)
         self.live_view_widget.expandedChanged.connect(self._on_live_view_expanded_changed)
-        self.live_view_widget.hardwareZoomLevelChanged.connect(
-            self._on_live_view_hardware_zoom_level_changed
-        )
         self.live_view_widget.closeRequested.connect(self.toggle_live_view_panel_visibility)
         self.live_view_widget.show()
 
@@ -1816,16 +1819,15 @@ class CaptureScreen(QWidget):
         if self._persist_camera_config is not None:
             self._persist_camera_config()
 
-    def _on_live_view_expanded_changed(self, _expanded: bool) -> None:
+    def _on_live_view_expanded_changed(self, expanded: bool) -> None:
         self._reposition_live_view()
-
-    def _on_live_view_hardware_zoom_level_changed(self, level: int) -> None:
-        # Camera-side zoom (real detail, not this app's own digital
-        # zoom/pan re-scaling the same pixels) — the wheel already drives
-        # the digital zoom in `LiveViewWidget`, this rides along on the
-        # same gesture. See `GphotoCameraBackend.set_live_view_zoom_level`.
         if self._camera_controller is not None:
-            self._camera_controller.set_live_view_zoom_level(level)
+            # Camera-side zoom (real detail, not this app's own digital
+            # zoom/pan re-scaling the same pixels) while checking focus —
+            # see `GphotoCameraBackend.set_live_view_zoom_level`.
+            self._camera_controller.set_live_view_zoom_level(
+                _FOCUS_CHECK_ZOOM_LEVEL if expanded else 0
+            )
 
     def _reposition_live_view(self) -> None:
         if self.live_view_widget is None:
