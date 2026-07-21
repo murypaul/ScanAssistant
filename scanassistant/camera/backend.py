@@ -69,12 +69,6 @@ class CameraBackend(Protocol):
         keeps showing whatever it last had."""
         ...
 
-    def move_live_view_zoom_area(self, dx: int, dy: int) -> None:
-        """Best-effort camera-side pan of the current zoom crop, `dx`/`dy`
-        in on-screen drag pixels — meaningless (and safely ignored) at
-        zoom level `0`. Never raises."""
-        ...
-
     def read_preview_frame(self) -> LiveViewFrame:
         """Blocking call — throughput is dictated by the camera/USB link."""
         ...
@@ -132,7 +126,6 @@ class FakeCameraBackend:
         self.frames_read = 0
         self.downloaded_files: list[Path] = []
         self.zoom_level_requests: list[int] = []
-        self.zoom_area_moves: list[tuple[int, int]] = []
         self._start_live_view_attempts = 0
 
     def connect(self) -> None:
@@ -162,9 +155,6 @@ class FakeCameraBackend:
 
     def set_live_view_zoom_level(self, level: int) -> None:
         self.zoom_level_requests.append(level)
-
-    def move_live_view_zoom_area(self, dx: int, dy: int) -> None:
-        self.zoom_area_moves.append((dx, dy))
 
     def read_preview_frame(self) -> LiveViewFrame:
         if not self.connected or not self.live_view_active:

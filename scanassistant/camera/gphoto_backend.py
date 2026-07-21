@@ -54,15 +54,6 @@ _CAPTURE_TARGET_CHOICE_INDEX = {"sdram": 0, "card": 1}  # Internal RAM, Memory c
 # level asks the camera for a progressively tighter camera-side crop.
 _LIVE_VIEW_ZOOM_CHOICE_INDEX = (0, 2, 4, 6, 7)
 
-# Empirical scale from dragging against the real D750 (light table, 200 %
-# crop): converts on-screen drag pixels into `changeafarea` units. Small
-# values already move the crop noticeably (200 units shifted visible dust
-# specks on the light table by a large fraction of the frame; 1000 units
-# reached the edge of the holder) — this constant is a first approximation
-# for a controllable drag feel, not a measured physical distance, and may
-# need adjusting after real capture sessions.
-_ZOOM_AREA_UNITS_PER_PIXEL = 3
-
 
 def _find_choice_index(widget: gphoto2.CameraWidget, value: str) -> int | None:
     for i in range(widget.count_choices()):
@@ -214,28 +205,6 @@ class GphotoCameraBackend:
             if index < widget.count_choices():
                 widget.set_value(widget.get_choice(index))
                 camera.set_config(config, self._context)
-        except (gphoto2.GPhoto2Error, CameraNotFoundError):
-            pass
-
-    def move_live_view_zoom_area(self, dx: int, dy: int) -> None:
-        # `changeafarea` — the Nikon AF-area coordinate field, repurposed
-        # here for panning the zoom crop while it's engaged — behaves as a
-        # nudge rather than an absolute position: confirmed against the
-        # real D750, it reads back "0x0" right after being applied, and
-        # setting it while unzoomed raises rather than silently no-oping
-        # (hence the same best-effort/silent handling as the zoom level
-        # above). No-op for a (0, 0) delta: not worth a round trip to the
-        # camera for a drag event that didn't actually move the pointer.
-        if dx == 0 and dy == 0:
-            return
-        try:
-            camera = self._require_camera()
-            config = camera.get_config(self._context)
-            widget = config.get_child_by_name("changeafarea")
-            area_x = round(dx * _ZOOM_AREA_UNITS_PER_PIXEL)
-            area_y = round(dy * _ZOOM_AREA_UNITS_PER_PIXEL)
-            widget.set_value(f"{area_x}x{area_y}")
-            camera.set_config(config, self._context)
         except (gphoto2.GPhoto2Error, CameraNotFoundError):
             pass
 

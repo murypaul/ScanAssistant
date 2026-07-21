@@ -132,7 +132,6 @@ class _LiveViewStage(QWidget):
 
     clicked = Signal()
     hardwareZoomLevelChanged = Signal(int)  # 0 = unzoomed, see `_hardware_zoom_level`
-    zoomAreaDragged = Signal(int, int)  # (dx, dy) screen pixels since the last move event
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -142,7 +141,6 @@ class _LiveViewStage(QWidget):
         self._pan = QPointF(0.5, 0.5)  # normalized center of the visible crop
         self._drag_start: QPointF | None = None
         self._drag_start_pan: QPointF | None = None
-        self._last_drag_pos: QPointF | None = None
         self._hardware_zoom_level = 0
         self._top_overlay: QWidget | None = None
         self._center_overlay: QWidget | None = None
@@ -255,7 +253,6 @@ class _LiveViewStage(QWidget):
         if self.expanded and self._zoom > 1.0:
             self._drag_start = event.position()
             self._drag_start_pan = QPointF(self._pan)
-            self._last_drag_pos = event.position()
             event.accept()
             return
         event.accept()
@@ -278,22 +275,9 @@ class _LiveViewStage(QWidget):
         self._pan = QPointF(self._drag_start_pan.x() + dx, self._drag_start_pan.y() + dy)
         self._clamp_pan()
         self.update()
-
-        # Hardware pan (see `GphotoCameraBackend.move_live_view_zoom_area`)
-        # needs the step since the *last* event, not the cumulative delta
-        # from drag start above — it's a nudge on the camera side, not an
-        # absolute position. Same "opposite of mouse motion" direction as
-        # the digital pan for a consistent feel between the two.
-        if self._last_drag_pos is not None and self._hardware_zoom_level > 0:
-            step = event.position() - self._last_drag_pos
-            if step.x() or step.y():
-                self.zoomAreaDragged.emit(round(-step.x()), round(-step.y()))
-        self._last_drag_pos = event.position()
-
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        self._last_drag_pos = None
         was_dragging = self._drag_start is not None
         self._drag_start = None
         self._drag_start_pan = None
@@ -344,7 +328,6 @@ class LiveViewWidget(QWidget):
     expandedChanged = Signal(bool)
     closeRequested = Signal()  # × button — panel hidden until View menu / shortcut
     hardwareZoomLevelChanged = Signal(int)  # forwarded from `_LiveViewStage`
-    zoomAreaDragged = Signal(int, int)  # forwarded from `_LiveViewStage`
 
     def __init__(self, camera_config: CameraConfig, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -357,7 +340,6 @@ class LiveViewWidget(QWidget):
         self.stage.setToolTip(t("live_view.expand_tooltip"))
         self.stage.clicked.connect(self._on_stage_clicked)
         self.stage.hardwareZoomLevelChanged.connect(self.hardwareZoomLevelChanged.emit)
-        self.stage.zoomAreaDragged.connect(self.zoomAreaDragged.emit)
         # Applied to the whole widget, not just `stage`: this is a plain
         # child overlay sitting on top of `PreviewArea`, not a top-level
         # window (`setWindowOpacity` wouldn't apply here) — fading the

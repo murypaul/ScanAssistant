@@ -237,7 +237,9 @@ def _canonical_point_from_display(
         level="manual",
         components=ConfidenceComponents(0, 0, 0, 0, 0),
     )
-    canonical = _canonical_frame_from_display(dummy, rotation_deg, canonical_height, canonical_width)
+    canonical = _canonical_frame_from_display(
+        dummy, rotation_deg, canonical_height, canonical_width
+    )
     return canonical.x, canonical.y
 
 
@@ -549,7 +551,6 @@ class CaptureScreen(QWidget):
         self.live_view_widget.hardwareZoomLevelChanged.connect(
             self._on_live_view_hardware_zoom_level_changed
         )
-        self.live_view_widget.zoomAreaDragged.connect(self._on_live_view_zoom_area_dragged)
         self.live_view_widget.closeRequested.connect(self.toggle_live_view_panel_visibility)
         self.live_view_widget.show()
 
@@ -1527,7 +1528,9 @@ class CaptureScreen(QWidget):
         # immediately, not only from the next capture onwards.
         current = self.session.state.current_image
         if current is not None and current.assigned_name == picked_on:
-            self._load_preview_known_frame(current.assigned_name, current.extension, current.framing)
+            self._load_preview_known_frame(
+                current.assigned_name, current.extension, current.framing
+            )
 
     def _effective_rotation_deg(self) -> int:
         """The rotation currently reflected on screen: the not-yet-committed
@@ -1823,13 +1826,6 @@ class CaptureScreen(QWidget):
         # same gesture. See `GphotoCameraBackend.set_live_view_zoom_level`.
         if self._camera_controller is not None:
             self._camera_controller.set_live_view_zoom_level(level)
-
-    def _on_live_view_zoom_area_dragged(self, dx: int, dy: int) -> None:
-        # See `GphotoCameraBackend.move_live_view_zoom_area` — a no-op on a
-        # body without this feature, or while the hardware zoom is at
-        # level 0 (`LiveViewWidget` only emits this while actually zoomed).
-        if self._camera_controller is not None:
-            self._camera_controller.move_live_view_zoom_area(dx, dy)
 
     def _reposition_live_view(self) -> None:
         if self.live_view_widget is None:
