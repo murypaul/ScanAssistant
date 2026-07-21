@@ -103,9 +103,12 @@ class _MeasuredFps:
 
 class _LiveViewStage(QWidget):
     """The image itself: displays the latest frame, handles expanded-mode
-    zoom (wheel) and pan (drag) — collapsed mode is display-only."""
+    zoom (wheel) and pan (drag), and — collapsed only — a drag anywhere on
+    it moves the whole vignette instead (a plain click still expands it)."""
 
     clicked = Signal()
+    panelDragMoved = Signal(QPointF)  # delta from the press point, global pixels
+    panelDragFinished = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -115,6 +118,8 @@ class _LiveViewStage(QWidget):
         self._pan = QPointF(0.5, 0.5)  # normalized center of the visible crop
         self._drag_start: QPointF | None = None
         self._drag_start_pan: QPointF | None = None
+        self._move_drag_start_global: QPointF | None = None
+        self._move_dragged = False
         self._top_overlay: QWidget | None = None
         self._center_overlay: QWidget | None = None
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -196,28 +201,43 @@ class _LiveViewStage(QWidget):
             self._drag_start_pan = QPointF(self._pan)
             event.accept()
             return
+        if not self.expanded:
+            self._move_drag_start_global = event.globalPosition()
+            self._move_dragged = False
         event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if self._drag_start is None or self._drag_start_pan is None or self._pixmap is None:
-            super().mouseMoveEvent(event)
+        if self._drag_start is not None and self._drag_start_pan is not None and self._pixmap:
+            delta = event.position() - self._drag_start
+            # Dragging right/down should reveal what's to the left/above —
+            # panning the crop the opposite way of the mouse motion.
+            dx = -delta.x() / max(1, self.width()) / self._zoom
+            dy = -delta.y() / max(1, self.height()) / self._zoom
+            self._pan = QPointF(self._drag_start_pan.x() + dx, self._drag_start_pan.y() + dy)
+            self._clamp_pan()
+            self.update()
+            event.accept()
             return
-        delta = event.position() - self._drag_start
-        # Dragging right/down should reveal what's to the left/above —
-        # panning the crop the opposite way of the mouse motion.
-        dx = -delta.x() / max(1, self.width()) / self._zoom
-        dy = -delta.y() / max(1, self.height()) / self._zoom
-        self._pan = QPointF(self._drag_start_pan.x() + dx, self._drag_start_pan.y() + dy)
-        self._clamp_pan()
-        self.update()
-        event.accept()
+        if self._move_drag_start_global is not None:
+            delta = event.globalPosition() - self._move_drag_start_global
+            if abs(delta.x()) + abs(delta.y()) > 3:
+                self._move_dragged = True
+            self.panelDragMoved.emit(delta)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        was_dragging = self._drag_start is not None
+        was_panning = self._drag_start is not None
+        was_moving = self._move_dragged
         self._drag_start = None
         self._drag_start_pan = None
-        if event.button() == Qt.MouseButton.LeftButton and not was_dragging:
+        self._move_drag_start_global = None
+        self._move_dragged = False
+        if event.button() == Qt.MouseButton.LeftButton and not was_panning and not was_moving:
             self.clicked.emit()
+        if was_moving:
+            self.panelDragFinished.emit()
         event.accept()
 
     def wheelEvent(self, event: QWheelEvent) -> None:
@@ -262,6 +282,7 @@ class LiveViewWidget(QWidget):
     # unrelated resize happens to trigger one.
     expandedChanged = Signal(bool)
     closeRequested = Signal()  # × button — panel hidden until View menu / shortcut
+    positionChanged = Signal()  # dragged to a new spot, already persisted to `camera_config`
 
     def __init__(self, camera_config: CameraConfig, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -269,10 +290,13 @@ class LiveViewWidget(QWidget):
         self._measured_fps = _MeasuredFps()
         self._live = False
         self._capturing = False
+        self._drag_start_widget_pos: QPointF | None = None
 
         self.stage = _LiveViewStage()
         self.stage.setToolTip(t("live_view.expand_tooltip"))
         self.stage.clicked.connect(self._on_stage_clicked)
+        self.stage.panelDragMoved.connect(self._on_panel_drag_moved)
+        self.stage.panelDragFinished.connect(self._on_panel_drag_finished)
         # Applied to the whole widget, not just `stage`: this is a plain
         # child overlay sitting on top of `PreviewArea`, not a top-level
         # window (`setWindowOpacity` wouldn't apply here) — fading the
@@ -456,6 +480,32 @@ class LiveViewWidget(QWidget):
         else:
             self.expand()
 
+    def _on_panel_drag_moved(self, delta: QPointF) -> None:
+        if self._drag_start_widget_pos is None:
+            self._drag_start_widget_pos = QPointF(self.pos())
+        parent = self.parentWidget()
+        target = self._drag_start_widget_pos + delta
+        x, y = target.x(), target.y()
+        if parent is not None:
+            x = max(0.0, min(parent.width() - self.width(), x))
+            y = max(0.0, min(parent.height() - self.height(), y))
+        self.move(round(x), round(y))
+
+    def _on_panel_drag_finished(self) -> None:
+        self._drag_start_widget_pos = None
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        available_w = parent.width() - self.width()
+        available_h = parent.height() - self.height()
+        self._camera_config.live_view_x_fraction = (
+            self.x() / available_w if available_w > 0 else 0.0
+        )
+        self._camera_config.live_view_y_fraction = (
+            self.y() / available_h if available_h > 0 else 0.0
+        )
+        self.positionChanged.emit()
+
     def expand(self) -> None:
         self.expanded = True
         self.stage.expanded = True
@@ -473,18 +523,24 @@ class LiveViewWidget(QWidget):
 
     def size_for(self, container: QRectF) -> QRectF:
         """This widget's target geometry within `container` (the preview
-        area's rect, in the same parent coordinate space): a small
-        bottom-right vignette when collapsed, most of the area when
-        expanded — both aspect-ratio-correct."""
+        area's rect, in the same parent coordinate space): a small vignette
+        when collapsed — the operator's last dragged-to spot if there is
+        one, the bottom-right corner otherwise — most of the area, always
+        centered, when expanded (both aspect-ratio-correct)."""
         fraction = _EXPANDED_SIZE_FRACTION if self.expanded else _COLLAPSED_WIDTH_FRACTION
         width = container.width() * fraction
         height = width / _ASPECT
         if height > container.height() * fraction:
             height = container.height() * fraction
             width = height * _ASPECT
+        x_fraction = self._camera_config.live_view_x_fraction
+        y_fraction = self._camera_config.live_view_y_fraction
         if self.expanded:
             x = container.x() + (container.width() - width) / 2
             y = container.y() + (container.height() - height) / 2
+        elif x_fraction is not None and y_fraction is not None:
+            x = container.x() + (container.width() - width) * x_fraction
+            y = container.y() + (container.height() - height) * y_fraction
         else:
             margin = 10
             x = container.right() - width - margin

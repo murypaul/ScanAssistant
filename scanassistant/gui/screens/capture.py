@@ -565,6 +565,7 @@ class CaptureScreen(QWidget):
         self.live_view_widget.opacityChanged.connect(self._on_live_view_opacity_changed)
         self.live_view_widget.expandedChanged.connect(self._on_live_view_expanded_changed)
         self.live_view_widget.closeRequested.connect(self.toggle_live_view_panel_visibility)
+        self.live_view_widget.positionChanged.connect(self._on_live_view_position_changed)
         self.live_view_widget.show()
 
         # Automatic: a tethered camera that's on and plugged in connects
@@ -1832,6 +1833,10 @@ class CaptureScreen(QWidget):
             self._persist_camera_config()
 
     def _on_live_view_opacity_changed(self, _opacity: float) -> None:
+        if self._persist_camera_config is not None:
+            self._persist_camera_config()
+
+    def _on_live_view_position_changed(self) -> None:
         if self._persist_camera_config is not None:
             self._persist_camera_config()
 
