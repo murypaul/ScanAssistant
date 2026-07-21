@@ -68,6 +68,7 @@ from scanassistant.gui.shortcuts import (
     matches_shifted,
     merge_with_defaults,
 )
+from scanassistant.gui.widgets.histogram_widget import HistogramWidget
 from scanassistant.gui.widgets.live_view_widget import LiveViewWidget
 from scanassistant.gui.widgets.preview_area import PreviewArea
 from scanassistant.i18n import t
@@ -117,6 +118,10 @@ _CAMERA_RECONNECT_POLL_MS = 5000
 # D750 (operator report); kept at 100% (the original I-142 behavior) since
 # switching to 200% didn't fix it and only tightened the crop further.
 _FOCUS_CHECK_ZOOM_LEVEL = 3
+# Small and out of the way — a quick exposure/contrast glance, not a
+# precision tool worth more screen real estate.
+_HISTOGRAM_WIDTH_FRACTION = 0.16
+_HISTOGRAM_ASPECT = 2.0  # width / height
 
 _LEVEL_LABELS = {
     "reliable": ("capture.confidence_reliable", "ok"),
@@ -344,6 +349,8 @@ class CaptureScreen(QWidget):
         self.preview_area.frame_drag_finished.connect(self._on_frame_drag_finished)
         self.preview_area.point_picked.connect(self._on_white_balance_point_picked)
 
+        self.histogram_widget = HistogramWidget(parent=self)
+
         self._camera_config = camera_config
         self._persist_camera_config = persist_camera_config
         self._camera_controller: CameraController | None = None
@@ -515,6 +522,7 @@ class CaptureScreen(QWidget):
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._reposition_live_view()
+        self._reposition_histogram()
 
     def _build_camera(
         self, camera_config: CameraConfig, camera_backend: CameraBackend | None
@@ -894,6 +902,7 @@ class CaptureScreen(QWidget):
 
         self._loaded_preview_for = None
         self._current_frame_result = None
+        self.histogram_widget.set_pixels(None)
         if self._stabilizing:
             name = next(iter(self._stabilizing)).name
             self.preview_area.show_stabilizing(name)
@@ -969,6 +978,7 @@ class CaptureScreen(QWidget):
         if not shiboken6.isValid(self):
             return  # see `_on_preview_ready`
         self.preview_area.show_message(t("capture.preview_unavailable", error=error))
+        self.histogram_widget.set_pixels(None)
 
     def _load_preview_known_frame(self, name: str, extension: str, framing: FramingState) -> None:
         """Loads the preview for a reopened image (history panel) without re-detecting.
@@ -1115,6 +1125,10 @@ class CaptureScreen(QWidget):
             )
             self.preview_area.show_image(rotated_pixels)
             self.preview_area.set_frame_overlay(rotated_frame)
+            # Negative view only — deliberately not refreshed when toggled to
+            # positive/master (P/T), a differently-toned rendering the
+            # histogram isn't meant to track.
+            self.histogram_widget.set_pixels(rotated_pixels)
 
     def _render_master_preview(
         self, preview_pixels: np.ndarray, *, frame_override: FrameResult | None = None
@@ -1838,9 +1852,26 @@ class CaptureScreen(QWidget):
         self.live_view_widget.setGeometry(self.live_view_widget.size_for(container).toRect())
         self.live_view_widget.raise_()
 
+    def _reposition_histogram(self) -> None:
+        # Bottom-left, opposite corner from the live view vignette
+        # (bottom-right) — small and out of the way of both the frame
+        # overlay and the live view widget.
+        container = self.preview_area.geometry()
+        width = container.width() * _HISTOGRAM_WIDTH_FRACTION
+        height = width / _HISTOGRAM_ASPECT
+        margin = 10
+        self.histogram_widget.setGeometry(
+            round(container.left() + margin),
+            round(container.bottom() - height - margin),
+            round(width),
+            round(height),
+        )
+        self.histogram_widget.raise_()
+
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._reposition_live_view()
+        self._reposition_histogram()
 
     # --- session history (correction side panel) ---------------------------
 
