@@ -58,13 +58,21 @@ class CameraBackend(Protocol):
 
     def stop_live_view(self) -> None: ...
 
-    def set_live_view_zoomed(self, zoomed: bool) -> None:
-        """Best-effort camera-side live view zoom/crop (the same feature a
-        Nikon body's own rear-screen zoom button drives) — genuinely more
-        detail to judge focus by, not this app's own digital zoom/pan
-        blowing up the same low-res preview pixels. Never raises: a body
-        that doesn't support it, or isn't in live view yet, just keeps
-        showing the un-zoomed frame."""
+    def set_live_view_zoom_level(self, level: int) -> None:
+        """Best-effort camera-side live view zoom/crop step (the same
+        feature a Nikon body's own rear-screen zoom button drives) —
+        genuinely more detail to judge focus by, not this app's own
+        digital zoom/pan blowing up the same low-res preview pixels. `0`
+        is unzoomed; higher levels ask for progressively tighter crops, up
+        to whatever the body actually offers. Never raises: a body that
+        doesn't support a given level, or isn't in live view yet, just
+        keeps showing whatever it last had."""
+        ...
+
+    def move_live_view_zoom_area(self, dx: int, dy: int) -> None:
+        """Best-effort camera-side pan of the current zoom crop, `dx`/`dy`
+        in on-screen drag pixels — meaningless (and safely ignored) at
+        zoom level `0`. Never raises."""
         ...
 
     def read_preview_frame(self) -> LiveViewFrame:
@@ -121,7 +129,8 @@ class FakeCameraBackend:
         self.triggered_count = 0
         self.frames_read = 0
         self.downloaded_files: list[Path] = []
-        self.zoom_requests: list[bool] = []
+        self.zoom_level_requests: list[int] = []
+        self.zoom_area_moves: list[tuple[int, int]] = []
         self._start_live_view_attempts = 0
 
     def connect(self) -> None:
@@ -149,8 +158,11 @@ class FakeCameraBackend:
     def stop_live_view(self) -> None:
         self.live_view_active = False
 
-    def set_live_view_zoomed(self, zoomed: bool) -> None:
-        self.zoom_requests.append(zoomed)
+    def set_live_view_zoom_level(self, level: int) -> None:
+        self.zoom_level_requests.append(level)
+
+    def move_live_view_zoom_area(self, dx: int, dy: int) -> None:
+        self.zoom_area_moves.append((dx, dy))
 
     def read_preview_frame(self) -> LiveViewFrame:
         if not self.connected or not self.live_view_active:

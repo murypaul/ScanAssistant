@@ -52,6 +52,7 @@ class _Command(Enum):
     START_LIVE_VIEW = auto()
     STOP_LIVE_VIEW = auto()
     SET_LIVE_VIEW_ZOOM = auto()
+    MOVE_LIVE_VIEW_ZOOM_AREA = auto()
     TRIGGER_CAPTURE = auto()
     SHUTDOWN = auto()
 
@@ -85,7 +86,10 @@ class CameraController:
         self._last_frame_at = 0.0
         self._download_folder_lock = threading.Lock()
         self._download_folder: Path | None = None
-        self._zoom_requested = False
+        self._zoom_level_requested = 0
+        self._zoom_area_lock = threading.Lock()
+        self._zoom_area_delta = [0, 0]
+        self._zoom_area_pending = False
         self._thread = threading.Thread(target=self._run, name="scanassistant-camera", daemon=True)
         self._thread.start()
 
@@ -104,15 +108,31 @@ class CameraController:
     def stop_live_view(self) -> None:
         self._commands.put(_Command.STOP_LIVE_VIEW)
 
-    def set_live_view_zoomed(self, zoomed: bool) -> None:
+    def set_live_view_zoom_level(self, level: int) -> None:
         # Plain attribute, not queued data: only the latest request ever
-        # matters (a rapid expand/collapse/expand only needs the backend
-        # to end up in the last state asked for), and this only ever
-        # writes an `Enum`-eligible primitive the GIL already makes a
-        # single command-queue slot's worth of same-thread synchronization
+        # matters (a rapid succession of wheel notches only needs the
+        # backend to end up at the last level asked for), and this only
+        # ever writes a primitive int the GIL already makes a single
+        # command-queue slot's worth of same-thread synchronization
         # unnecessary for.
-        self._zoom_requested = zoomed
+        self._zoom_level_requested = level
         self._commands.put(_Command.SET_LIVE_VIEW_ZOOM)
+
+    def move_live_view_zoom_area(self, dx: int, dy: int) -> None:
+        # Unlike the zoom level above, a drag's deltas must all land —
+        # `changeafarea` is a relative nudge on the camera side, so
+        # coalescing to "only the latest" would silently drop most of a
+        # fast drag's movement. Accumulated under a lock and drained by
+        # the camera thread in one shot; `_zoom_area_pending` keeps a fast
+        # drag from piling up redundant queue entries once one is already
+        # in flight.
+        with self._zoom_area_lock:
+            self._zoom_area_delta[0] += dx
+            self._zoom_area_delta[1] += dy
+            if self._zoom_area_pending:
+                return
+            self._zoom_area_pending = True
+        self._commands.put(_Command.MOVE_LIVE_VIEW_ZOOM_AREA)
 
     def trigger_capture(self) -> None:
         self._commands.put(_Command.TRIGGER_CAPTURE)
@@ -182,9 +202,18 @@ class CameraController:
                     self._safe_call(self._backend.stop_live_view)
                 return False
             if command is _Command.SET_LIVE_VIEW_ZOOM:
-                zoomed = self._zoom_requested
+                level = self._zoom_level_requested
                 if self._connected:
-                    self._safe_call(lambda: self._backend.set_live_view_zoomed(zoomed))
+                    self._safe_call(lambda: self._backend.set_live_view_zoom_level(level))
+                return live_view_active
+            if command is _Command.MOVE_LIVE_VIEW_ZOOM_AREA:
+                with self._zoom_area_lock:
+                    dx, dy = self._zoom_area_delta
+                    self._zoom_area_delta[0] = 0
+                    self._zoom_area_delta[1] = 0
+                    self._zoom_area_pending = False
+                if self._connected and (dx or dy):
+                    self._safe_call(lambda: self._backend.move_live_view_zoom_area(dx, dy))
                 return live_view_active
             if command is _Command.TRIGGER_CAPTURE:
                 self._handle_trigger()

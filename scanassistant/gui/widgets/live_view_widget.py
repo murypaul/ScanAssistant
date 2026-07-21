@@ -55,6 +55,7 @@ def _floating_text_shadow() -> QGraphicsDropShadowEffect:
     effect.setColor(QColor(0, 0, 0, 220))
     return effect
 
+
 _COLLAPSED_WIDTH_FRACTION = 0.32
 _EXPANDED_SIZE_FRACTION = 0.9
 _ASPECT = 4 / 3
@@ -64,6 +65,24 @@ _ZOOM_MIN, _ZOOM_MAX = 1.0, 6.0
 _ZOOM_STEP = 1.15
 _LIVE_DOT_COLOR = QColor("#e2685c")
 _MIN_OPACITY_PERCENT = 15
+
+# Buckets the continuous digital zoom (wheel, `_ZOOM_MIN`-`_ZOOM_MAX`) into
+# the camera's own discrete hardware zoom steps (level 0 = unzoomed; see
+# `GphotoCameraBackend.set_live_view_zoom_level`) — the same wheel gesture
+# drives both at once rather than adding a separate control for the
+# hardware side, so the vignette stays exactly as small as before while
+# still asking the camera itself for real extra detail as the operator
+# zooms in further. A body without hardware zoom support just no-ops on
+# every level past 0, leaving the existing digital zoom/pan as the only
+# effect — never a regression on an unconfirmed body.
+_HARDWARE_ZOOM_THRESHOLDS = (1.0, 2.0, 3.0, 4.5)
+
+
+def _hardware_zoom_level(zoom: float) -> int:
+    for level, threshold in enumerate(_HARDWARE_ZOOM_THRESHOLDS):
+        if zoom <= threshold:
+            return level
+    return len(_HARDWARE_ZOOM_THRESHOLDS)
 
 
 def image_from_live_view_frame(frame: LiveViewFrame) -> QImage:
@@ -105,6 +124,8 @@ class _LiveViewStage(QWidget):
     zoom (wheel) and pan (drag) — collapsed mode is display-only."""
 
     clicked = Signal()
+    hardwareZoomLevelChanged = Signal(int)  # 0 = unzoomed, see `_hardware_zoom_level`
+    zoomAreaDragged = Signal(int, int)  # (dx, dy) screen pixels since the last move event
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -114,6 +135,8 @@ class _LiveViewStage(QWidget):
         self._pan = QPointF(0.5, 0.5)  # normalized center of the visible crop
         self._drag_start: QPointF | None = None
         self._drag_start_pan: QPointF | None = None
+        self._last_drag_pos: QPointF | None = None
+        self._hardware_zoom_level = 0
         self._top_overlay: QWidget | None = None
         self._center_overlay: QWidget | None = None
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -160,6 +183,7 @@ class _LiveViewStage(QWidget):
     def reset_view(self) -> None:
         self._zoom = 1.0
         self._pan = QPointF(0.5, 0.5)
+        self._emit_hardware_zoom_level()
 
     def zoom_in(self) -> None:
         self._set_zoom(self._zoom * _ZOOM_STEP)
@@ -171,6 +195,13 @@ class _LiveViewStage(QWidget):
         self._zoom = max(_ZOOM_MIN, min(_ZOOM_MAX, zoom))
         self._clamp_pan()
         self.update()
+        self._emit_hardware_zoom_level()
+
+    def _emit_hardware_zoom_level(self) -> None:
+        level = _hardware_zoom_level(self._zoom)
+        if level != self._hardware_zoom_level:
+            self._hardware_zoom_level = level
+            self.hardwareZoomLevelChanged.emit(level)
 
     def _clamp_pan(self) -> None:
         half = 0.5 / self._zoom
@@ -193,6 +224,7 @@ class _LiveViewStage(QWidget):
         if self.expanded and self._zoom > 1.0:
             self._drag_start = event.position()
             self._drag_start_pan = QPointF(self._pan)
+            self._last_drag_pos = event.position()
             event.accept()
             return
         event.accept()
@@ -209,9 +241,22 @@ class _LiveViewStage(QWidget):
         self._pan = QPointF(self._drag_start_pan.x() + dx, self._drag_start_pan.y() + dy)
         self._clamp_pan()
         self.update()
+
+        # Hardware pan (see `GphotoCameraBackend.move_live_view_zoom_area`)
+        # needs the step since the *last* event, not the cumulative delta
+        # from drag start above — it's a nudge on the camera side, not an
+        # absolute position. Same "opposite of mouse motion" direction as
+        # the digital pan for a consistent feel between the two.
+        if self._last_drag_pos is not None and self._hardware_zoom_level > 0:
+            step = event.position() - self._last_drag_pos
+            if step.x() or step.y():
+                self.zoomAreaDragged.emit(round(-step.x()), round(-step.y()))
+        self._last_drag_pos = event.position()
+
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        self._last_drag_pos = None
         was_dragging = self._drag_start is not None
         self._drag_start = None
         self._drag_start_pan = None
@@ -261,6 +306,8 @@ class LiveViewWidget(QWidget):
     # unrelated resize happens to trigger one.
     expandedChanged = Signal(bool)
     closeRequested = Signal()  # × button — panel hidden until View menu / shortcut
+    hardwareZoomLevelChanged = Signal(int)  # forwarded from `_LiveViewStage`
+    zoomAreaDragged = Signal(int, int)  # forwarded from `_LiveViewStage`
 
     def __init__(self, camera_config: CameraConfig, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -272,6 +319,8 @@ class LiveViewWidget(QWidget):
         self.stage = _LiveViewStage()
         self.stage.setToolTip(t("live_view.expand_tooltip"))
         self.stage.clicked.connect(self._on_stage_clicked)
+        self.stage.hardwareZoomLevelChanged.connect(self.hardwareZoomLevelChanged.emit)
+        self.stage.zoomAreaDragged.connect(self.zoomAreaDragged.emit)
         # Applied to the whole widget, not just `stage`: this is a plain
         # child overlay sitting on top of `PreviewArea`, not a top-level
         # window (`setWindowOpacity` wouldn't apply here) — fading the

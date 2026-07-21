@@ -546,6 +546,10 @@ class CaptureScreen(QWidget):
         self.live_view_widget.fpsChanged.connect(self._on_live_view_fps_changed)
         self.live_view_widget.opacityChanged.connect(self._on_live_view_opacity_changed)
         self.live_view_widget.expandedChanged.connect(self._on_live_view_expanded_changed)
+        self.live_view_widget.hardwareZoomLevelChanged.connect(
+            self._on_live_view_hardware_zoom_level_changed
+        )
+        self.live_view_widget.zoomAreaDragged.connect(self._on_live_view_zoom_area_dragged)
         self.live_view_widget.closeRequested.connect(self.toggle_live_view_panel_visibility)
         self.live_view_widget.show()
 
@@ -1809,13 +1813,23 @@ class CaptureScreen(QWidget):
         if self._persist_camera_config is not None:
             self._persist_camera_config()
 
-    def _on_live_view_expanded_changed(self, expanded: bool) -> None:
+    def _on_live_view_expanded_changed(self, _expanded: bool) -> None:
         self._reposition_live_view()
+
+    def _on_live_view_hardware_zoom_level_changed(self, level: int) -> None:
+        # Camera-side zoom (real detail, not this app's own digital
+        # zoom/pan re-scaling the same pixels) — the wheel already drives
+        # the digital zoom in `LiveViewWidget`, this rides along on the
+        # same gesture. See `GphotoCameraBackend.set_live_view_zoom_level`.
         if self._camera_controller is not None:
-            # Camera-side zoom (real detail, not this app's own digital
-            # zoom/pan re-scaling the same pixels) while checking focus —
-            # see `GphotoCameraBackend.set_live_view_zoomed`.
-            self._camera_controller.set_live_view_zoomed(expanded)
+            self._camera_controller.set_live_view_zoom_level(level)
+
+    def _on_live_view_zoom_area_dragged(self, dx: int, dy: int) -> None:
+        # See `GphotoCameraBackend.move_live_view_zoom_area` — a no-op on a
+        # body without this feature, or while the hardware zoom is at
+        # level 0 (`LiveViewWidget` only emits this while actually zoomed).
+        if self._camera_controller is not None:
+            self._camera_controller.move_live_view_zoom_area(dx, dy)
 
     def _reposition_live_view(self) -> None:
         if self.live_view_widget is None:
