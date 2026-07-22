@@ -177,7 +177,11 @@ def _rebuild_pending_export_queue(
     rebuilt: list[str] = []
     for entry in stale_entries:
         context = rebuild_export_context(
-            entry.name, session.paths, session.fs, entries=journal_entries
+            entry.name,
+            session.paths,
+            session.fs,
+            session.campaign.capture.extensions,
+            entries=journal_entries,
         )
         if context is None:
             continue  # nothing to rebuild: task lost, but no corruption either
@@ -202,7 +206,13 @@ def _requeue_incomplete_done_rows(
         missing = missing_export_kinds(session, name)
         if not missing:
             continue
-        context = rebuild_export_context(name, session.paths, session.fs, entries=journal_entries)
+        context = rebuild_export_context(
+            name,
+            session.paths,
+            session.fs,
+            session.campaign.capture.extensions,
+            entries=journal_entries,
+        )
         if context is None:
             continue
         session.enqueue_export_context(name, missing, context)

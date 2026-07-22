@@ -43,14 +43,29 @@ def read_journal_entries(paths: CampaignPaths, fs: FileSystem) -> list[dict]:
 
 
 def rebuild_export_context(
-    name: str, paths: CampaignPaths, fs: FileSystem, *, entries: list[dict] | None = None
+    name: str,
+    paths: CampaignPaths,
+    fs: FileSystem,
+    extensions: list[str],
+    *,
+    entries: list[dict] | None = None,
 ) -> ExportContext | None:
     """Rebuilds `name`'s export context from the journal.
 
     Returns `None` if the RAW is no longer in `RAW/` or if no frame was
     ever logged for this image (nothing to rebuild).
+
+    `extensions` (`campaign.capture.extensions`) restricts the `RAW/`
+    lookup to actual RAW files: a sidecar (`.xmp`…) shares the same stem
+    as its RAW and directory listing order isn't alphabetical, so matching
+    on stem alone could silently pick the sidecar instead.
     """
-    raw_candidates = [p for p in fs.list_dir(paths.raw_dir) if p.is_file() and p.stem == name]
+    allowed = {e.lower() for e in extensions}
+    raw_candidates = [
+        p
+        for p in fs.list_dir(paths.raw_dir)
+        if p.is_file() and p.stem == name and p.suffix.lower() in allowed
+    ]
     if not raw_candidates:
         return None
     raw_path = raw_candidates[0]

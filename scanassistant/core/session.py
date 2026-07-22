@@ -595,6 +595,16 @@ class CaptureSession:
             if isinstance(result, ExportFailure):
                 events.extend(self._flag_export_failure(task, result))
                 continue
+            # A successful export makes a previously recorded error for
+            # this exact (name, kind) stale — matched by kind too, unlike
+            # `_flag_export_failure`'s name-only clear, so a tiff failure
+            # from the same capture batch isn't wiped out by an unrelated
+            # jpeg_positive success completing right after it.
+            self.state.error_images = [
+                e
+                for e in self.state.error_images
+                if not (e.name == task.name and e.kind == task.kind)
+            ]
             self._log_export(task, result)
             remaining = self._export_pending_kinds.get(task.name)
             if remaining is None:
@@ -633,7 +643,9 @@ class CaptureSession:
         (empty list) if the RAW or its frame can't be reconstructed — the
         `error_images` entry is kept as-is.
         """
-        context = rebuild_export_context(name, self.paths, self.fs)
+        context = rebuild_export_context(
+            name, self.paths, self.fs, self.campaign.capture.extensions
+        )
         if context is None:
             return []
         self.state.error_images = [e for e in self.state.error_images if e.name != name]
@@ -661,7 +673,9 @@ class CaptureSession:
         current image. Does nothing (empty list) if the RAW or its frame
         can't be reconstructed.
         """
-        context = rebuild_export_context(name, self.paths, self.fs)
+        context = rebuild_export_context(
+            name, self.paths, self.fs, self.campaign.capture.extensions
+        )
         if context is None:
             return []
         self.enqueue_export_context(name, ["jpeg_positive"], context)
@@ -691,7 +705,9 @@ class CaptureSession:
         `regenerate_positive`; does nothing (empty list) if the RAW or its
         support frame can't be reconstructed.
         """
-        context = rebuild_export_context(name, self.paths, self.fs)
+        context = rebuild_export_context(
+            name, self.paths, self.fs, self.campaign.capture.extensions
+        )
         if context is None:
             return []
         set_positive_override(
