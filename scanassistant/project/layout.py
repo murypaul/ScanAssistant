@@ -35,6 +35,10 @@ class CampaignPaths:
         return self.root / ".lock"
 
     @property
+    def positive_overrides_json(self) -> Path:
+        return self.root / "positive_overrides.json"
+
+    @property
     def raw_dir(self) -> Path:
         return self.root / "RAW"
 
@@ -66,8 +70,9 @@ class CampaignPaths:
 def create_campaign_tree(root: Path) -> CampaignPaths:
     """Creates a campaign's full directory layout.
 
-    `.lock` (acquired on open) and `inventory.csv.bak` (created before the
-    first rewrite) are deliberately not created here.
+    `.lock` (acquired on open), `inventory.csv.bak` (created before the
+    first rewrite), and `positive_overrides.json` (created on the first
+    manual positive override) are deliberately not created here.
     """
     paths = CampaignPaths(Path(root))
     paths.root.mkdir(parents=True, exist_ok=True)

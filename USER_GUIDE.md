@@ -275,11 +275,15 @@ When it isn't confident enough to draw that extra crop on its own, the
 image is simply left as the full framed negative — nothing is ever cut
 into by a low-confidence guess. **Project ▸ Positive crop review**
 (also available outside capture) takes over the main window — same as
-capture mode, not a separate window — and lists every image left that
-way, shows the already-exported image with a draggable crop rectangle,
-and lets you confirm or adjust the crop and the exposure for that one
-image — `Enter` confirms and moves to the next, only the reading positive
-is regenerated, `Esc` returns to the project screen.
+capture mode, not a separate window — and lists images by checkable
+category: flagged for review by default, but also already auto-cropped
+confidently or already confirmed manually, if you want to double-check
+either. The preview shows the actual reading positive (not the raw
+negative), with a luminance histogram and a draggable crop rectangle,
+updated live as you adjust exposure; `Enter` confirms and moves to the
+next, only the reading positive is regenerated, `Esc` returns to the
+project screen. A confirmed crop/exposure choice sticks even if the image
+is reprocessed later (after a crash, a retry).
 
 The master TIFF and JPEG are never touched by any of this — only the
 reading positive is affected.

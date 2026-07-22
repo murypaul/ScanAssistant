@@ -129,7 +129,12 @@ def _detect_duplicate_leftovers(session: CaptureSession) -> list[str]:
 
 
 def _finalize_in_review_image(session: CaptureSession) -> str | None:
-    """IN_REVIEW at crash time, RAW present, `todo` row → validated by default."""
+    """IN_REVIEW at crash time, RAW present, `todo` row → validated by default.
+
+    Builds its `ExportContext` straight from `current.framing`, not
+    `core.recovery.rebuild_export_context` — no positive-review override can
+    exist for this image yet, since it was still `IN_REVIEW` (never
+    exported once, let alone manually reviewed) when the crash happened."""
     current = session.state.current_image
     if current is None or current.state != "IN_REVIEW":
         return None

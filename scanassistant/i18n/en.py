@@ -70,6 +70,8 @@ STRINGS: dict[str, str] = {
     "positive_review.title": "Positive crop review",
     "positive_review.back_hint": "Positive crop review — Esc: back to the project",
     "positive_review.category_deferred": "Needs review — content frame",
+    "positive_review.category_applied": "Applied automatically — content frame",
+    "positive_review.category_manual": "Already confirmed manually — content frame",
     "positive_review.confirm_and_next": "Confirm && next (Enter)",
     "positive_review.nothing_to_review": "Nothing to review.",
     "positive_review.reviewing": "{name} — {index}/{total}",

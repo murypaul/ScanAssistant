@@ -297,11 +297,16 @@ supplémentaire tout seul, l'image reste simplement le négatif entier
 recadré au cadre support — jamais de coupe décidée sur une estimation peu
 fiable. **Project ▸ Positive crop review** (aussi accessible en dehors de
 la capture) prend toute la fenêtre principale — comme le mode capture,
-plus une fenêtre à part — et liste chaque image laissée ainsi, affiche
-l'image déjà exportée avec un rectangle de recadrage déplaçable à la
-souris, et permet de confirmer ou d'ajuster le cadrage et l'exposition
-pour cette image précise — `Enter` confirme et passe à la suivante ; seul
-le positif de lecture est régénéré ; `Échap` revient à l'écran projet.
+pas une fenêtre à part — et liste les images par catégorie à cocher :
+celles à vérifier par défaut, mais aussi celles déjà recadrées
+automatiquement avec confiance ou déjà confirmées manuellement, si vous
+voulez les revérifier. L'aperçu affiche le vrai positif de lecture (pas le
+négatif brut), avec un histogramme de luminance et un rectangle de
+recadrage déplaçable à la souris, mis à jour en direct pendant l'ajustement
+de l'exposition ; `Enter` confirme et passe à la suivante ; seul le
+positif de lecture est régénéré ; `Échap` revient à l'écran projet. Un
+choix de cadrage/exposition confirmé reste valable même si l'image est
+retraitée plus tard (après une coupure, une nouvelle tentative).
 
 Le TIFF et le JPEG maîtres ne sont jamais affectés par tout cela — seul le
 positif de lecture change.

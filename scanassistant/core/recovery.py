@@ -5,7 +5,10 @@ doesn't describe it anymore), the JSONL journal is the only durable
 source of the applied frame/orientation: this module replays the events
 for an image to rebuild a complete `ExportContext`, used to regenerate a
 failed export (`CaptureSession.retry_error_image`) or recover after an
-unclean shutdown (`core.crash_recovery`).
+unclean shutdown (`core.crash_recovery`). Also re-applies a positive-review
+manual override (`project.positive_overrides`) if one was ever confirmed
+for this image, so a rebuild never silently reverts to the automatic
+content frame.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import json
 from scanassistant.core.fs import FileSystem
 from scanassistant.core.queue import ExportContext
 from scanassistant.project.layout import CampaignPaths
+from scanassistant.project.positive_overrides import load_positive_overrides
 
 # A FRAMING journal entry carries all these fields in `details` when it
 # describes an effective frame. Checked together with `type == "FRAMING"`
@@ -74,6 +78,8 @@ def rebuild_export_context(
     if frame is None:
         return None
 
+    override = load_positive_overrides(paths, fs).get(name)
+
     return ExportContext(
         raw_path=raw_path,
         extension=raw_path.suffix,
@@ -84,4 +90,6 @@ def rebuild_export_context(
         width=int(frame["width"]),  # type: ignore[call-overload]
         height=int(frame["height"]),  # type: ignore[call-overload]
         angle_deg=float(frame["angle_deg"]),  # type: ignore[arg-type]
+        content_frame_override=override.content_frame if override else None,
+        manual_positive_settings=override.settings if override else None,
     )

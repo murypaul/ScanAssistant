@@ -57,9 +57,10 @@ class ExportContext:
     angle_deg: float
     # `jpeg_positive` only, both `None` by default (automatic): an operator's
     # manual choice from the "Recadrage des positifs" screen, applied for
-    # this one regeneration — not replayed from the journal by
-    # `core.recovery` on a later, unrelated regeneration (accepted
-    # simplification; see `core.session.apply_manual_positive_override`).
+    # this one regeneration — `core.recovery.rebuild_export_context` also
+    # replays it from `project.positive_overrides` on any later, unrelated
+    # regeneration, so an explicit value passed here (this one call) still
+    # wins if it ever diverges from what's persisted.
     # Fractions of `master.pixels`' own width/height (each in [0, 1]), not
     # absolute pixels: the review screen displays an already-exported JPEG
     # that may be a different resolution (`exports.jpeg_master.long_edge_px`)
@@ -85,6 +86,11 @@ class ContentFrameOutcome:
     fill: float
     area_ratio: float
     source: str = "auto"  # auto | manual — mirrors `project.state.FramingState.source`
+    # Same crop as x/y/width/height, as fractions of `master.pixels`' own
+    # width/height — lets a reviewer re-open this exact crop later without
+    # knowing what resolution `master.pixels` was at this particular export
+    # (see `ExportContext.content_frame_override` above for why fractions).
+    fraction: tuple[float, float, float, float] | None = None
 
 
 @dataclass(frozen=True)

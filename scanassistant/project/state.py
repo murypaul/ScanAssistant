@@ -36,7 +36,13 @@ class ContentFramingState:
     height: int = 0
     fill: float = 0.0
     area_ratio: float = 0.0
-    outcome: str = "deferred"  # applied | deferred
+    outcome: str = "deferred"  # applied | deferred | manual
+    # Same crop as x/y/width/height, as fractions of `master.pixels`' own
+    # width/height — resolution-independent, so a reviewer can re-open this
+    # exact crop later regardless of what resolution `master.pixels` was at
+    # this particular export. `None` for entries recorded before this field
+    # existed.
+    content_frame_fraction: tuple[float, float, float, float] | None = None
 
 
 @dataclass

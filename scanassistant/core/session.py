@@ -66,6 +66,7 @@ from scanassistant.project.inventory import (
     validate_name,
 )
 from scanassistant.project.layout import CampaignPaths
+from scanassistant.project.positive_overrides import set_positive_override
 from scanassistant.project.state import (
     ContentFramingState,
     CurrentImageState,
@@ -681,10 +682,10 @@ class CaptureSession:
         own dimensions — resolution-independent, so the screen doesn't need
         to know `master.pixels`' actual size to build this) always wins over
         automatic detection; `settings` (exposure_ev, contrast, shadows,
-        highlights) always wins over the campaign's own exposure settings —
-        for this one regeneration only. Not durably replayed by a later,
-        unrelated regeneration of the same image (accepted simplification:
-        see `ExportContext.content_frame_override`).
+        highlights) always wins over the campaign's own exposure settings.
+        Also persisted (`project.positive_overrides`), so a later, unrelated
+        regeneration of the same image (crash recovery, `retry_error_image`)
+        reapplies it too instead of reverting to automatic detection.
 
         Same journal-rebuild + jpeg_positive-only scope as
         `regenerate_positive`; does nothing (empty list) if the RAW or its
@@ -693,6 +694,9 @@ class CaptureSession:
         context = rebuild_export_context(name, self.paths, self.fs)
         if context is None:
             return []
+        set_positive_override(
+            self.paths, self.fs, name, content_frame=content_frame, settings=settings
+        )
         if content_frame is not None:
             context = replace(context, content_frame_override=content_frame)
         if settings is not None:
@@ -746,6 +750,7 @@ class CaptureSession:
                 fill=content_frame.fill,
                 area_ratio=content_frame.area_ratio,
                 outcome=outcome,
+                content_frame_fraction=content_frame.fraction,
             )
         else:
             state = ContentFramingState(outcome="deferred")
@@ -762,6 +767,7 @@ class CaptureSession:
                 "height": state.height,
                 "fill": state.fill,
                 "area_ratio": state.area_ratio,
+                "content_frame_fraction": state.content_frame_fraction,
             },
         )
 

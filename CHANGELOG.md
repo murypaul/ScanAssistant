@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.12.0 — 2026-07-22
+
+### New / Changed
+**Positive review**
+- The positive crop review screen can now also show images the automatic
+  detector already cropped confidently, or already confirmed manually —
+  not just the ones flagged for review — via two new checkboxes, so a
+  crop can be double-checked or corrected even when it wasn't flagged.
+  Reopening one of those starts from its actual crop, not a generic
+  centered guess.
+- A manual crop or exposure choice confirmed on this screen now survives
+  a later reprocessing of the same image (after a crash, a retry)
+  instead of silently reverting to the automatic result.
+- The preview now shows the actual positive (inverted, exposure-corrected)
+  instead of the raw negative, updated live as exposure settings change.
+- A small luminance histogram, matching the one already in capture mode,
+  now sits in a corner of this preview too.
+
+### Bug Fixes
+**Positive review**
+- Confirming an image whose new status was still shown by the checked
+  filters (e.g. "Applied" and "Already confirmed manually" both checked)
+  could get stuck re-confirming the very same image over and over
+  instead of moving on to the next one.
+- Re-rendering the preview on every settings change or image change could
+  take several seconds on a full-resolution negative, making it look
+  frozen — now near-instant.
+
 ## 1.11.0 — 2026-07-21
 
 ### New / Changed

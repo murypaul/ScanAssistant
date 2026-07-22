@@ -179,8 +179,8 @@ class MasterExportRunner:
         content-frame choice (`context.content_frame_override`, from the
         "Recadrage des positifs" screen) always wins over automatic
         detection for this one regeneration — never recomputed against it."""
+        master_height, master_width = master.pixels.shape[:2]
         if context.content_frame_override is not None:
-            master_height, master_width = master.pixels.shape[:2]
             x_frac, y_frac, w_frac, h_frac = context.content_frame_override
             x = round(x_frac * master_width)
             y = round(y_frac * master_height)
@@ -195,6 +195,7 @@ class MasterExportRunner:
                 fill=1.0,
                 area_ratio=(width * height) / support_area if support_area > 0 else 0.0,
                 source="manual",
+                fraction=(x_frac, y_frac, w_frac, h_frac),
             )
             return master.pixels[y : y + height, x : x + width], outcome
 
@@ -209,6 +210,12 @@ class MasterExportRunner:
             fill=content_frame.fill,
             area_ratio=content_frame.area_ratio,
             source="auto",
+            fraction=(
+                content_frame.x / master_width,
+                content_frame.y / master_height,
+                content_frame.width / master_width,
+                content_frame.height / master_height,
+            ),
         )
         source_pixels = master.pixels[
             content_frame.y : content_frame.y + content_frame.height,
