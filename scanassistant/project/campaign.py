@@ -105,6 +105,14 @@ class JpegPositiveExportConfig:
     horizontal_flip: bool = True
     suffix: str = "-POS"  # appended to <NAME> in JPEG_POSITIVE/<NAME><suffix>.jpg
     manual_settings: ManualPositiveSettings = field(default_factory=ManualPositiveSettings)
+    engine: str = "legacy"  # legacy (imaging.positive, `mode` above) |
+    # print_engine (imaging.print_engine, density-domain — specifications/
+    # 13_INVERSION_NEGATIFS.md). Never on by default: an existing campaign's
+    # positives never change render engine without an explicit, conscious
+    # choice (DECISIONS.md I-172/I-176 — no cutover without validation).
+    # `mode`/`manual_settings` above are ignored when this is "print_engine";
+    # that engine has no manual override yet (specifications/
+    # 13_INVERSION_NEGATIFS.md §9, calibration screen, not built).
 
 
 @dataclass
@@ -248,6 +256,10 @@ class Campaign:
         if self.exports.jpeg_positive.mode not in {"simple", "auto", "manual"}:
             raise InvalidCampaignError(
                 "exports.jpeg_positive.mode", "must be one of simple, auto, manual"
+            )
+        if self.exports.jpeg_positive.engine not in {"legacy", "print_engine"}:
+            raise InvalidCampaignError(
+                "exports.jpeg_positive.engine", "must be one of legacy, print_engine"
             )
         if _INVALID_FOLDER_NAME_CHARS.search(self.exports.jpeg_positive.suffix):
             raise InvalidCampaignError(

@@ -67,7 +67,7 @@ class PrintResult:
     """16-bit monochrome positive, plus the diagnostics the calibration
     screen and the journal need — never silently dropped (I-176)."""
 
-    pixels: np.ndarray  # (H, W) uint16, monochrome
+    pixels: np.ndarray  # (H, W) uint16, monochrome, already cropped to `content_frame`
     dmin: tuple[float, float, float]
     dmax: float
     contrast: float
@@ -76,6 +76,11 @@ class PrintResult:
     flagged: bool
     content_mask_source: str  # "grabcut" | "inset_fallback"
     local_contrast_applied: bool
+    content_frame: tuple[int, int, int, int]  # x, y, w, h in the geometry
+    # (post support-frame-crop) coordinate space `render_print_from_linear`
+    # received — same space `imaging.content_framing.ContentFrameResult`
+    # already uses elsewhere, so callers can build a `ContentFrameOutcome`
+    # from it exactly like the existing `imaging.positive` pipeline does.
 
 
 def render_print(
@@ -115,7 +120,7 @@ def render_print_from_linear(
         if dmin_override is not None
         else _sample_dmin(linear, frame_in_output)
     )
-    mask, mask_source = _content_mask(linear, frame_in_output, dmin)
+    mask, mask_source, content_frame = _content_mask(linear, frame_in_output, dmin)
 
     density = np.log10(dmin[None, None, :] / np.maximum(linear, _THRESHOLD))
     density = np.clip(density, 0.0, None)
@@ -156,6 +161,8 @@ def render_print_from_linear(
     luminance = np.clip(luminance, 0.0, 1.0)
 
     pixels16 = np.clip(np.round(luminance * 65535.0), 0, 65535).astype(np.uint16)
+    cx, cy, cw, ch = content_frame
+    pixels16 = pixels16[cy : cy + ch, cx : cx + cw]
 
     return PrintResult(
         pixels=pixels16,
@@ -167,6 +174,7 @@ def render_print_from_linear(
         flagged=flagged,
         content_mask_source=mask_source,
         local_contrast_applied=local_contrast_applied,
+        content_frame=content_frame,
     )
 
 
@@ -218,38 +226,41 @@ def _sample_dmin(linear: np.ndarray, frame: FrameGeometry) -> np.ndarray:
 
 def _content_mask(
     linear: np.ndarray, frame: FrameGeometry, dmin: np.ndarray
-) -> tuple[np.ndarray, str]:
-    """Content region for the density statistics — GrabCut
-    (`imaging.content_framing`, same detector already in production) when
-    confident, else a rectangular inset. Either way, a second pass removes
-    any pixel whose density clips to 0 on every channel: brighter than the
-    measured Dmin everywhere, so by definition not exposed content — found
-    on a real sample where the inset fallback let 30% of a support frame's
-    own unexposed border leak into the "content" statistics (I-177)."""
+) -> tuple[np.ndarray, str, tuple[int, int, int, int]]:
+    """Content region for the density statistics *and* the final crop —
+    GrabCut (`imaging.content_framing`, same detector already in
+    production) when confident, else a rectangular inset. Either way, a
+    second pass removes any pixel whose density clips to 0 on every
+    channel from the *statistics* mask only (never the crop rectangle,
+    which stays a clean rectangle): brighter than the measured Dmin
+    everywhere, so by definition not exposed content — found on a real
+    sample where the inset fallback let 30% of a support frame's own
+    unexposed border leak into the "content" statistics (I-177)."""
     preview8 = np.clip(np.sqrt(np.clip(linear, 0, 1)) * 255, 0, 255).astype(np.uint8)
     result = detect_content_frame(preview8, frame)
     shape = linear.shape[:2]
     source: str | None = None
+    rect: tuple[int, int, int, int] | None = None
     if result is not None:
         candidate = _rect_mask(shape, result.x, result.y, result.width, result.height)
         if candidate.sum() >= 1000:
             mask, source = candidate, "grabcut"
+            rect = (result.x, result.y, result.width, result.height)
     if source is None:
-        mask = _rect_mask(
-            shape,
-            round(frame.x + frame.width * _CONTENT_INSET_FRACTION),
-            round(frame.y + frame.height * _CONTENT_INSET_FRACTION),
-            round(frame.width * (1 - 2 * _CONTENT_INSET_FRACTION)),
-            round(frame.height * (1 - 2 * _CONTENT_INSET_FRACTION)),
-        )
+        x = round(frame.x + frame.width * _CONTENT_INSET_FRACTION)
+        y = round(frame.y + frame.height * _CONTENT_INSET_FRACTION)
+        w = round(frame.width * (1 - 2 * _CONTENT_INSET_FRACTION))
+        h = round(frame.height * (1 - 2 * _CONTENT_INSET_FRACTION))
+        mask = _rect_mask(shape, x, y, w, h)
         source = "inset_fallback"
+        rect = (x, y, w, h)
 
     density = np.log10(dmin[None, None, :] / np.maximum(linear, _THRESHOLD))
     not_border = (density > 0.0).any(axis=-1)
     refined = mask & not_border
-    if refined.sum() >= 1000:
-        return refined, source
-    return mask, source  # refinement too aggressive: keep the coarse mask
+    # refinement too aggressive on a degenerate case: keep the coarse mask
+    stats_mask = refined if refined.sum() >= 1000 else mask
+    return stats_mask, source, rect
 
 
 def _local_contrast_bilateral(luminance: np.ndarray) -> np.ndarray:

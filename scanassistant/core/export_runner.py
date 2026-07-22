@@ -24,6 +24,7 @@ from scanassistant.core.queue import (
 )
 from scanassistant.imaging import master as master_pipeline
 from scanassistant.imaging import positive as positive_pipeline
+from scanassistant.imaging import print_engine
 from scanassistant.imaging.content_framing import detect_content_frame
 from scanassistant.imaging.geometry import FrameGeometry
 from scanassistant.imaging.raw import RawDecoder
@@ -154,6 +155,9 @@ class MasterExportRunner:
         if kind == "jpeg_positive":
             positive_cfg = self._campaign.exports.jpeg_positive
             path = self._paths.jpeg_positive_dir / f"{name}{positive_cfg.suffix}.jpg"
+            if positive_cfg.engine == "print_engine":
+                outcome = self._write_jpeg_positive_print_engine(path, master, context)
+                return path, outcome
             source_pixels, outcome = self._positive_source_pixels(master, context)
             mode, manual_settings = self._positive_render_settings(positive_cfg, context)
             positive16 = positive_pipeline.render_positive(
@@ -222,6 +226,61 @@ class MasterExportRunner:
             content_frame.x : content_frame.x + content_frame.width,
         ]
         return source_pixels, outcome
+
+    def _write_jpeg_positive_print_engine(
+        self, path: Path, master: master_pipeline.DevelopedMaster, context: ExportContext
+    ) -> ContentFrameOutcome:
+        """`exports.jpeg_positive.engine == "print_engine"` (I-172/I-178):
+        density-domain render, own linear RAW development — never derived
+        from `master.pixels` (already gamma-encoded/sRGB, geometry only).
+        `master` is used solely for its already-computed output dimensions,
+        to express the content crop as the same x/y/width/height/fraction
+        shape `_positive_source_pixels` already produces — the geometry
+        step (crop/rotate/scale) depends only on `frame`/`rotation_deg`/
+        `size_mode`/`final_dimensions_px`, identical for both engines, so
+        `master.pixels.shape` is a valid stand-in without a second geometry
+        pass."""
+        positive_cfg = self._campaign.exports.jpeg_positive
+        framing = self._campaign.framing
+        frame = FrameGeometry(
+            x=context.x,
+            y=context.y,
+            width=context.width,
+            height=context.height,
+            angle_deg=context.angle_deg,
+        )
+        result = print_engine.render_print(
+            self._decoder,
+            context.raw_path,
+            frame,
+            rotation_deg=context.rotation_deg,
+            size_mode=framing.size_mode,
+            final_dimensions_px=_final_dimensions(framing.final_dimensions_px),
+            user_wb=self._campaign.imaging.white_balance,
+        )
+        positive_pipeline.write_jpeg_positive(
+            result.pixels,
+            path,
+            quality=positive_cfg.quality,
+            long_edge_px=positive_cfg.long_edge_px,
+        )
+        x, y, w, h = result.content_frame
+        master_height, master_width = master.pixels.shape[:2]
+        support_area = master_width * master_height
+        return ContentFrameOutcome(
+            x=x,
+            y=y,
+            width=w,
+            height=h,
+            fill=1.0,
+            area_ratio=(w * h) / support_area if support_area > 0 else 0.0,
+            source="auto",
+            fraction=(
+                (x / master_width, y / master_height, w / master_width, h / master_height)
+                if master_width > 0 and master_height > 0
+                else None
+            ),
+        )
 
     def _positive_render_settings(
         self, positive_cfg: JpegPositiveExportConfig, context: ExportContext
