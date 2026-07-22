@@ -49,6 +49,11 @@ class UiConfig:
 class ProcessingConfig:
     workers: int = 1  # [1;4]
     drain_on_exit: bool = True
+    positive_finalize_workers: int = 3  # [1;4] — separate pool from
+    # `workers`: the positive-finalize pass (imaging.print_engine, run
+    # after capture rather than during it) must never compete with or slow
+    # down the TIFF/JPEG master export path, which must never fall behind
+    # capture (DECISIONS.md I-179).
 
 
 @dataclass
@@ -138,6 +143,8 @@ class GlobalConfig:
         """Checks the normative bounds. Raises `ValueError` otherwise."""
         if not 1 <= self.processing.workers <= 4:
             raise ValueError("processing.workers must be within [1, 4]")
+        if not 1 <= self.processing.positive_finalize_workers <= 4:
+            raise ValueError("processing.positive_finalize_workers must be within [1, 4]")
         if not 1 <= self.thresholds.disk_warn_gb <= 500:
             raise ValueError("thresholds.disk_warn_gb must be within [1, 500]")
         if not 1 <= self.thresholds.disk_critical_gb <= 100:

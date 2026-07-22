@@ -260,6 +260,91 @@ class ThreadedExportExecutor:
         self._thread.join()
 
 
+class PooledExportExecutor:
+    """Runs tasks on `worker_count` background threads sharing one inbox —
+    unlike `ThreadedExportExecutor`, which is deliberately capped at one
+    (see its docstring: `MasterExportRunner` caches state on `self` across
+    a single image's tasks, safe only under a single caller thread).
+
+    The `ExportRunner` given to `submit()` must therefore be safe to call
+    concurrently from multiple threads — `core.positive_finalize_runner
+    .PositiveFinalizeRunner` is (holds no cross-call state on `self`);
+    `MasterExportRunner` is not, and must never be submitted here.
+
+    Built for the positive-finalize pass (DECISIONS.md I-179): a separate
+    pool from the single-worker master/quick-positive export path, so a
+    deliberately more expensive finalize pass can never slow down the
+    TIFF/JPEG master export, which must never fall behind capture.
+    """
+
+    def __init__(self, worker_count: int = 3) -> None:
+        if worker_count < 1:
+            raise ValueError("worker_count must be at least 1")
+        self._inbox: queue_module.Queue[tuple[ExportTask, ExportRunner] | None] = (
+            queue_module.Queue()
+        )
+        self._outbox: queue_module.Queue[tuple[ExportTask, ExportResult | ExportFailure | None]] = (
+            queue_module.Queue()
+        )
+        self._idle = threading.Condition()
+        self._pending = 0
+        self._threads = [
+            threading.Thread(
+                target=self._worker_loop, name=f"scanassistant-positive-finalize-{i}", daemon=True
+            )
+            for i in range(worker_count)
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def submit(self, task: ExportTask, runner: ExportRunner) -> None:
+        with self._idle:
+            self._pending += 1
+        self._inbox.put((task, runner))
+
+    def _worker_loop(self) -> None:
+        while True:
+            item = self._inbox.get()
+            if item is None:
+                return
+            task, runner = item
+            try:
+                result = runner.run(task)
+            except Exception as exc:  # defensive, same contract as `ThreadedExportExecutor`
+                get_logger().exception(
+                    "positive-finalize task %s/%s crashed unexpectedly", task.name, task.kind
+                )
+                result = ExportFailure(code="E-06", message=str(exc))
+            self._outbox.put((task, result))
+            with self._idle:
+                self._pending -= 1
+                if self._pending == 0:
+                    self._idle.notify_all()
+
+    def collect_completed(
+        self,
+    ) -> list[tuple[ExportTask, ExportResult | ExportFailure | None]]:
+        completed: list[tuple[ExportTask, ExportResult | ExportFailure | None]] = []
+        while True:
+            try:
+                completed.append(self._outbox.get_nowait())
+            except queue_module.Empty:
+                break
+        return completed
+
+    def wait_idle(self) -> None:
+        with self._idle:
+            while self._pending > 0:
+                self._idle.wait()
+
+    def shutdown(self) -> None:
+        self.wait_idle()
+        for _ in self._threads:
+            self._inbox.put(None)
+        for thread in self._threads:
+            thread.join()
+
+
 @dataclass
 class ExportQueue:
     """FIFO queue, persisted by the caller in `state.json:export_queue`.
