@@ -318,18 +318,24 @@ filter). The right-hand panel depends on the campaign's engine:
 - **Legacy engine**: the same exposure/shadows/highlights/contrast
   controls as capture-time manual mode, plus a draggable crop rectangle on
   the preview, live-updated as you adjust.
-- **Density-domain engine**: four groups — film base (Dmin), scan
-  exposure, film model (fixed, shown for reference, not adjustable — it's
-  a property of the film stock, not a per-image choice), and paper model
+- **Density-domain engine**: a draggable crop rectangle too, on the full
+  (uncropped) preview, and four tone groups — film base (Dmin), scan
+  exposure, film model (fixed, shown for reference only — not adjustable
+  here, it's a single response curve applied to every image regardless of
+  film stock, not a per-image or per-campaign choice), and paper model
   (contrast, with black point/soft-clip under an **Advanced** toggle that
   stays open or closed as you move between images). Each group starts on
-  **Auto**; its own switch takes it to **Manual** without disturbing the
-  others. There's no crop rectangle here yet — the density-domain engine
-  doesn't have a manual crop override, only the tone groups. Because a
-  real render is expensive, the preview only updates once a group's value
-  is committed (released a slider, pressed Enter in a field), not while
-  dragging — the window shows a wait cursor for that one render rather
-  than freezing silently.
+  **Auto** — its own switch (labeled *Auto*, on by default) takes it to
+  **Manual** when switched off, without disturbing the others. Because a
+  real render is expensive, the preview only updates once a change is
+  committed (released a slider or the crop handle, toggled a switch,
+  pressed Enter in a field), not continuously while dragging — the screen
+  locks with a status message for that one render, but the window itself
+  stays responsive throughout rather than freezing. The first RAW decode
+  of a given image is the only genuinely slow step; revisiting an image
+  already opened earlier in this screen session, or committing a further
+  change to it, reuses that decode and only re-runs the much cheaper tone
+  math.
 
 `Enter` (or **Confirm & next**) applies the current image's settings and
 moves to the next one in the filtered list. For the density-domain
@@ -338,7 +344,9 @@ current image's tone settings to every other selected image at once —
 useful for a whole roll shot under the same conditions. Dmin is excluded
 from that propagation by default (tick **Include Dmin** to override): it's
 a physical measurement specific to that one negative's own border, not an
-aesthetic choice to copy blindly across a whole selection. A confirmation
+aesthetic choice to copy blindly across a whole selection. The crop is
+never propagated either way — it's specific to each negative's own
+physical framing, not something to copy across images. A confirmation
 shows how many images are affected before anything is regenerated.
 
 `Ctrl+Z` / `Ctrl+Y` undo and redo the last confirmed change or

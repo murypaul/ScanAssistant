@@ -87,6 +87,9 @@ STRINGS: dict[str, str] = {
     "positive_review.propagation_empty": "Select at least one other image first.",
     "positive_review.undo": "Undo (Ctrl+Z)",
     "positive_review.redo": "Redo (Ctrl+Y)",
+    "positive_review.loading": "Loading {name}…",
+    "positive_review.rendering": "Updating preview for {name}…",
+    "positive_review.regenerating": "Regenerating {name}…",
     "positive_calibration.auto": "Auto",
     "positive_calibration.group_dmin": "Film base (Dmin)",
     "positive_calibration.dmin_r": "Red",
@@ -96,8 +99,9 @@ STRINGS: dict[str, str] = {
     "positive_calibration.exposure_shift": "Exposure shift",
     "positive_calibration.group_film_model": "Film model",
     "positive_calibration.film_model_caption": (
-        "Fixed toe/shoulder response curve — a property of the film stock,"
-        " not adjustable per image."
+        "Not configurable yet: every image uses the same fixed toe/shoulder"
+        " response curve, regardless of film stock — there is currently no"
+        " per-campaign or per-image film selection."
     ),
     "positive_calibration.group_paper": "Paper model",
     "positive_calibration.contrast": "Contrast",

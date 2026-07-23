@@ -35,6 +35,11 @@ class PositiveOverride:
     print_contrast: float | None = None
     print_paper_black: float | None = None
     print_paper_soft_clip: float | None = None
+    # x, y, w, h fractions of the geometry-cropped support frame (same
+    # convention as `content_frame` above, but never shared with it — the
+    # legacy engine's crop is relative to `master.pixels`, print_engine's
+    # own support-frame array is a separate decode at a separate size).
+    print_content_frame: tuple[float, float, float, float] | None = None
 
 
 def load_positive_overrides(paths: CampaignPaths, fs: FileSystem) -> dict[str, PositiveOverride]:
@@ -47,6 +52,7 @@ def load_positive_overrides(paths: CampaignPaths, fs: FileSystem) -> dict[str, P
         content_frame = entry.get("content_frame")
         settings = entry.get("settings")
         print_dmin = entry.get("print_dmin")
+        print_content_frame = entry.get("print_content_frame")
         overrides[name] = PositiveOverride(
             content_frame=tuple(content_frame) if content_frame is not None else None,  # type: ignore[arg-type]
             settings=tuple(settings) if settings is not None else None,  # type: ignore[arg-type]
@@ -55,6 +61,9 @@ def load_positive_overrides(paths: CampaignPaths, fs: FileSystem) -> dict[str, P
             print_contrast=entry.get("print_contrast"),
             print_paper_black=entry.get("print_paper_black"),
             print_paper_soft_clip=entry.get("print_paper_soft_clip"),
+            print_content_frame=(
+                tuple(print_content_frame) if print_content_frame is not None else None  # type: ignore[arg-type]
+            ),
         )
     return overrides
 
@@ -115,10 +124,16 @@ def set_positive_print_overrides(
     contrast: float | None,
     paper_black: float | None,
     paper_soft_clip: float | None,
+    content_frame: tuple[float, float, float, float] | None,
 ) -> None:
     """Records (or replaces) the print_engine override for `name`,
     read-modify-write — preserves any existing crop/legacy-engine override
-    (`set_positive_override`) for the same image (DECISIONS.md I-181)."""
+    (`set_positive_override`) for the same image (DECISIONS.md I-181).
+    `content_frame` is required, same as every other field here (no
+    default): a caller not touching the crop must still pass through its
+    *current* value explicitly — a default of `None` would silently clear
+    a previously confirmed crop on every tonal-only confirm, exactly the
+    silent-discard this module exists to prevent."""
     overrides = load_positive_overrides(paths, fs)
     existing = overrides.get(name, PositiveOverride())
     overrides[name] = replace(
@@ -128,5 +143,6 @@ def set_positive_print_overrides(
         print_contrast=contrast,
         print_paper_black=paper_black,
         print_paper_soft_clip=paper_soft_clip,
+        print_content_frame=content_frame,
     )
     _save_positive_overrides(overrides, paths, fs)

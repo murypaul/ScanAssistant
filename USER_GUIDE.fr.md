@@ -343,20 +343,26 @@ panneau de droite dépend du moteur de la campagne :
 - **Moteur historique** : les mêmes réglages exposition/ombres/hautes
   lumières/contraste que le mode manuel en capture, plus un rectangle de
   recadrage déplaçable sur l'aperçu, mis à jour en direct.
-- **Moteur en domaine de densité** : quatre groupes — base du film
-  (Dmin), exposition du scan, modèle du film (fixe, affiché pour
-  information, non réglable — c'est une propriété de la pellicule, pas
-  un choix par image), et modèle du papier (contraste, avec point
-  noir/compression douce sous un bouton **Avancé** dont l'état ouvert/
-  fermé persiste d'une image à l'autre). Chaque groupe démarre en
-  **Auto** ; son propre interrupteur bascule en **Manual** sans toucher
-  aux autres. Pas de rectangle de recadrage ici pour l'instant — le
-  moteur en domaine de densité n'a pas encore de surcharge de cadrage
-  manuel, seulement les groupes de tonalité. Le rendu étant coûteux,
-  l'aperçu ne se met à jour qu'une fois un réglage validé (curseur
-  relâché, Entrée dans un champ), jamais pendant le glissement — la
-  fenêtre affiche un curseur d'attente pour ce rendu plutôt que de geler
-  en silence.
+- **Moteur en domaine de densité** : un rectangle de recadrage déplaçable
+  aussi, sur l'aperçu complet (non recadré), et quatre groupes de
+  tonalité — base du film (Dmin), exposition du scan, modèle du film
+  (fixe, affiché à titre indicatif seulement — non réglable ici, c'est
+  une seule et même courbe de réponse appliquée à toutes les images quelle
+  que soit la pellicule, pas un choix par image ou par campagne), et
+  modèle du papier (contraste, avec point noir/compression douce sous un
+  bouton **Avancé** dont l'état ouvert/fermé persiste d'une image à
+  l'autre). Chaque groupe démarre en **Auto** — son propre interrupteur
+  (étiqueté *Auto*, activé par défaut) bascule en **Manual** quand on le
+  désactive, sans toucher aux autres. Le rendu étant coûteux, l'aperçu ne
+  se met à jour qu'une fois un changement validé (curseur relâché ou
+  poignée de recadrage relâchée, interrupteur basculé, Entrée dans un
+  champ), jamais en continu pendant le glissement — l'écran se verrouille
+  avec un message de statut le temps de ce rendu, mais la fenêtre elle-même
+  reste réactive plutôt que de geler. Seul le tout premier décodage RAW
+  d'une image donnée est réellement long ; revisiter une image déjà
+  ouverte plus tôt dans cette session d'écran, ou lui valider un nouveau
+  changement, réutilise ce décodage et ne relance que le calcul de
+  tonalité, bien moins coûteux.
 
 `Enter` (ou **Confirm & next**) applique les réglages de l'image courante
 et passe à la suivante du filtre actif. Pour le moteur en domaine de
@@ -366,8 +372,11 @@ sélectionnées d'un coup — utile pour toute une pellicule prise dans les
 mêmes conditions. Le Dmin est exclu de cette propagation par défaut
 (cochez **Include Dmin** pour l'inclure) : c'est une mesure physique
 propre à la bordure de ce négatif précis, pas un choix esthétique à
-copier sans discernement sur toute une sélection. Une confirmation
-indique combien d'images sont concernées avant toute régénération.
+copier sans discernement sur toute une sélection. Le cadrage n'est lui
+non plus jamais propagé — il est propre au cadrage physique de chaque
+négatif, pas quelque chose à copier d'une image à l'autre. Une
+confirmation indique combien d'images sont concernées avant toute
+régénération.
 
 `Ctrl+Z` / `Ctrl+Y` annulent et rétablissent le dernier réglage confirmé
 ou la dernière propagation — jamais un glissement en cours — pour la

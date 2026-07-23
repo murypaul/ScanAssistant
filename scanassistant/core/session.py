@@ -782,13 +782,18 @@ class CaptureSession:
 
         Same journal-rebuild + jpeg_positive-only scope as
         `regenerate_positive`; does nothing (empty list) if the RAW or its
-        support frame can't be reconstructed.
-        """
+        support frame can't be reconstructed. Touches only the tonal half
+        of the entry — the crop (`print_content_frame`) is preserved as-is,
+        whatever it currently is, never reset to auto by a tonal-only call;
+        setting the crop itself is the calibration screen's own direct
+        `project.positive_overrides.set_positive_print_overrides` call."""
         context = rebuild_export_context(
             name, self.paths, self.fs, self.campaign.capture.extensions
         )
         if context is None:
             return []
+        existing = load_positive_overrides(self.paths, self.fs).get(name)
+        content_frame = existing.print_content_frame if existing else None
         set_positive_print_overrides(
             self.paths,
             self.fs,
@@ -798,6 +803,7 @@ class CaptureSession:
             contrast=contrast,
             paper_black=paper_black,
             paper_soft_clip=paper_soft_clip,
+            content_frame=content_frame,
         )
         context = replace(
             context,
@@ -806,6 +812,7 @@ class CaptureSession:
             manual_print_contrast=contrast,
             manual_print_paper_black=paper_black,
             manual_print_paper_soft_clip=paper_soft_clip,
+            manual_print_content_frame=content_frame,
         )
         self.enqueue_export_context(name, ["jpeg_positive"], context)
         events = self._drain_exports(self._new_deadline())
@@ -896,6 +903,7 @@ class CaptureSession:
             manual_print_contrast=override.print_contrast if override else None,
             manual_print_paper_black=override.print_paper_black if override else None,
             manual_print_paper_soft_clip=override.print_paper_soft_clip if override else None,
+            manual_print_content_frame=override.print_content_frame if override else None,
         )
         self.enqueue_export_context(name, ["jpeg_positive"], context)
         events = self._drain_exports(self._new_deadline())

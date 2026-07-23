@@ -81,6 +81,7 @@ class ExportContext:
     manual_print_contrast: float | None = None
     manual_print_paper_black: float | None = None
     manual_print_paper_soft_clip: float | None = None
+    manual_print_content_frame: tuple[float, float, float, float] | None = None
 
 
 @dataclass(frozen=True)

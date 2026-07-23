@@ -77,6 +77,15 @@ class ManualPrintOverrides:
     contrast: float | None = None
     paper_black: float | None = None
     paper_soft_clip: float | None = None
+    # x, y, w, h *fractions* of `linear`'s own width/height — the support
+    # frame, pre-flip (same convention `PositiveOverride.print_content_
+    # frame` persists) — fractions, not absolute pixels, since the caller
+    # (a persisted override) is bound to a resolution-independent value,
+    # not this particular decode's own pixel dimensions. `None` keeps the
+    # automatic GrabCut/inset detection (`_content_mask`). Unlike the other
+    # fields, this one has no corresponding calibration-screen "group":
+    # it's set by dragging the crop overlay, not a slider.
+    content_frame: tuple[float, float, float, float] | None = None
 
 
 _AUTO = ManualPrintOverrides()
@@ -120,6 +129,7 @@ def render_print(
     user_wb: list[float] | None = None,
     overrides: ManualPrintOverrides = _AUTO,
     horizontal_flip: bool = True,
+    crop_to_content: bool = True,
 ) -> PrintResult:
     """RAW linear development + geometry, then `render_print_from_linear`."""
     development = decoder.develop(raw_path, user_wb=user_wb, linear=True)
@@ -136,6 +146,7 @@ def render_print(
         geometry.frame_in_output,
         overrides=overrides,
         horizontal_flip=horizontal_flip,
+        crop_to_content=crop_to_content,
     )
 
 
@@ -145,6 +156,7 @@ def render_print_from_linear(
     *,
     overrides: ManualPrintOverrides = _AUTO,
     horizontal_flip: bool = True,
+    crop_to_content: bool = True,
 ) -> PrintResult:
     """Core algorithm (13_INVERSION_NEGATIFS.md §3-§8) on an already linear,
     already geometry-cropped array — `linear` is RGB, float64, [0, 1].
@@ -154,13 +166,34 @@ def render_print_from_linear(
     `flagged` (the tonal-confidence signal, I-178/I-176) only ever reflects
     groups still on auto — once an operator has set a value by hand, its
     own automatic estimate being out of bounds is no longer a reason to
-    ask them to look at it again."""
+    ask them to look at it again.
+
+    `crop_to_content=False` (the calibration screen's crop-editing preview
+    only — every export path keeps the default) skips the final crop: the
+    full support-frame positive is returned instead, and `content_frame`
+    is expressed in *that same, already-flipped* array's own coordinate
+    space (mirrored across the frame's width when `horizontal_flip`, unlike
+    the default crop-then-return contract's pre-flip convention) — so a
+    caller can draw/drag it directly over `pixels` without its own
+    transform. Never mixed with the default: two different coordinate
+    conventions for the same field would be a much worse trap than the
+    extra parameter."""
     dmin = (
         np.array(overrides.dmin, dtype=np.float64)
         if overrides.dmin is not None
         else _sample_dmin(linear, frame_in_output)
     )
-    mask, mask_source, content_frame = _content_mask(linear, frame_in_output, dmin)
+    manual_rect: tuple[int, int, int, int] | None = None
+    if overrides.content_frame is not None:
+        full_h, full_w = linear.shape[:2]
+        xf, yf, wf, hf = overrides.content_frame
+        manual_rect = (
+            round(xf * full_w),
+            round(yf * full_h),
+            max(1, round(wf * full_w)),
+            max(1, round(hf * full_h)),
+        )
+    mask, mask_source, content_frame = _content_mask(linear, frame_in_output, dmin, manual_rect)
 
     density = np.log10(dmin[None, None, :] / np.maximum(linear, _THRESHOLD))
     density = np.clip(density, 0.0, None)
@@ -212,16 +245,23 @@ def render_print_from_linear(
     luminance = np.clip(luminance, 0.0, 1.0)
 
     pixels16 = np.clip(np.round(luminance * 65535.0), 0, 65535).astype(np.uint16)
-    cx, cy, cw, ch = content_frame
-    pixels16 = pixels16[cy : cy + ch, cx : cx + cw]
-    if horizontal_flip:
-        # Negatives are captured emulsion-side up (more detail) —
-        # geometrically mirrored left-right versus the actual scene, same
-        # correction `imaging.positive.render_positive` applies. Done last,
-        # on the already-cropped output, so `content_frame` stays in the
-        # un-mirrored support-frame coordinate space other callers expect
-        # (same convention the legacy pipeline uses).
-        pixels16 = np.fliplr(pixels16)
+    full_height, full_width = pixels16.shape[:2]
+    if crop_to_content:
+        cx, cy, cw, ch = content_frame
+        pixels16 = pixels16[cy : cy + ch, cx : cx + cw]
+        if horizontal_flip:
+            # Negatives are captured emulsion-side up (more detail) —
+            # geometrically mirrored left-right versus the actual scene,
+            # same correction `imaging.positive.render_positive` applies.
+            # Done last, on the already-cropped output, so `content_frame`
+            # stays in the un-mirrored support-frame coordinate space other
+            # callers expect (same convention the legacy pipeline uses).
+            pixels16 = np.fliplr(pixels16)
+    else:
+        if horizontal_flip:
+            pixels16 = np.fliplr(pixels16)
+            cx, cy, cw, ch = content_frame
+            content_frame = (full_width - cx - cw, cy, cw, ch)
 
     return PrintResult(
         pixels=pixels16,
@@ -285,22 +325,38 @@ def _sample_dmin(linear: np.ndarray, frame: FrameGeometry) -> np.ndarray:
 
 
 def _content_mask(
-    linear: np.ndarray, frame: FrameGeometry, dmin: np.ndarray
+    linear: np.ndarray,
+    frame: FrameGeometry,
+    dmin: np.ndarray,
+    manual_rect: tuple[int, int, int, int] | None = None,
 ) -> tuple[np.ndarray, str, tuple[int, int, int, int]]:
-    """Content region for the density statistics *and* the final crop —
-    GrabCut (`imaging.content_framing`, same detector already in
-    production) when confident, else a rectangular inset. Either way, a
-    second pass removes any pixel whose density clips to 0 on every
-    channel from the *statistics* mask only (never the crop rectangle,
-    which stays a clean rectangle): brighter than the measured Dmin
-    everywhere, so by definition not exposed content — found on a real
-    sample where the inset fallback let 30% of a support frame's own
-    unexposed border leak into the "content" statistics (I-177)."""
+    """Content region for the density statistics *and* the final crop.
+
+    `manual_rect` (an operator-confirmed crop, `ManualPrintOverrides.
+    content_frame`) wins outright — no GrabCut/inset fallback runs at all.
+    Otherwise: GrabCut (`imaging.content_framing`, same detector already in
+    production) when confident, else a rectangular inset. Either way
+    (including a manual rect), a second pass removes any pixel whose
+    density clips to 0 on every channel from the *statistics* mask only
+    (never the crop rectangle, which stays a clean rectangle): brighter
+    than the measured Dmin everywhere, so by definition not exposed
+    content — found on a real sample where the inset fallback let 30% of a
+    support frame's own unexposed border leak into the "content"
+    statistics (I-177)."""
+    shape = linear.shape[:2]
+    if manual_rect is not None:
+        x, y, w, h = manual_rect
+        mask, source, rect = _rect_mask(shape, x, y, w, h), "manual", manual_rect
+        density = np.log10(dmin[None, None, :] / np.maximum(linear, _THRESHOLD))
+        not_border = (density > 0.0).any(axis=-1)
+        refined = mask & not_border
+        stats_mask = refined if refined.sum() >= 1000 else mask
+        return stats_mask, source, rect
+
     preview8 = np.clip(np.sqrt(np.clip(linear, 0, 1)) * 255, 0, 255).astype(np.uint8)
     result = detect_content_frame(preview8, frame)
-    shape = linear.shape[:2]
-    source: str | None = None
-    rect: tuple[int, int, int, int] | None = None
+    source = None
+    rect = None
     if result is not None:
         candidate = _rect_mask(shape, result.x, result.y, result.width, result.height)
         if candidate.sum() >= 1000:

@@ -10,12 +10,18 @@ capture (loads a session the same way `StatisticsScreen` does).
 Grid of thumbnails (reusing the already-exported `JPEG_POSITIVE` files, no
 new decode) with multi-select, driving two independent groups of tools:
 
-- **Content frame** (legacy engine only, see below): mouse-drag crop
-  editing on the JPEG_MASTER preview (`PreviewArea`, reused as-is — the
-  content frame is always axis-aligned, so none of its rotation handling
-  applies here). Regenerates `jpeg_positive` only, through
-  `CaptureSession.apply_manual_positive_override` — never the TIFF/JPEG
-  master, whose geometry (the support frame) this never touches.
+- **Content frame**: mouse-drag crop editing on a preview (`PreviewArea`,
+  reused as-is — the content frame is always axis-aligned, so none of its
+  rotation handling applies here), for *either* engine now. Legacy: drags
+  the JPEG_MASTER preview, regenerates `jpeg_positive` through
+  `CaptureSession.apply_manual_positive_override`. print_engine: drags the
+  full (uncropped) print_engine preview itself (`imaging.print_engine.
+  render_print_from_linear(crop_to_content=False)`,
+  `ManualPrintOverrides.content_frame` — DECISIONS.md I-181's own
+  follow-up), persisted as `PositiveOverride.print_content_frame`,
+  entirely separate from the legacy engine's `content_frame` field.
+  Neither ever touches the TIFF/JPEG master, whose geometry (the support
+  frame) this screen never changes.
 - **Tonal calibration** (`exports.jpeg_positive.engine`-dependent): the
   legacy engine's `PositiveSettingsPanel` (exposure/contrast/shadows/
   highlights) or the new engine's `PrintCalibrationPanel` (film base/Dmin,
@@ -23,41 +29,44 @@ new decode) with multi-select, driving two independent groups of tools:
   once. "Apply to selection" propagates the current image's tonal
   settings to every selected image (`CaptureSession.propagate_print_overrides`
   for the new engine; not offered for the legacy engine, which has no
-  propagation primitive of its own).
-
-**Crop editing is legacy-engine only**: `imaging.print_engine` doesn't yet
-accept a content-frame override (only the tonal groups do, DECISIONS.md
-I-181) — showing draggable handles that silently do nothing would be
-worse than not showing them. A print_engine image's auto-detected content
-frame is still drawn (informational), just not editable, here.
+  propagation primitive of its own) — never the crop, which is specific to
+  each negative's own physical framing and never propagated across images.
 
 The preview reflects whichever engine is active. Legacy: `imaging.positive
 .render_positive` on the already-decoded, already-cropped JPEG_MASTER —
 effectively instant, safe to re-render on every settings change including
-mid-drag. print_engine: a *real* `imaging.print_engine.render_print` call
-— its own dedicated RAW decode plus the full density-domain render,
-measured ~16.7s on a real image (DECISIONS.md I-182) — never re-rendered
-live while dragging a slider (`PrintCalibrationPanel.live_changed` is
-intentionally not wired to a re-render here), only once a group's value is
-committed, with a wait-cursor and status text making the wait legible
-rather than silently freezing the window.
+mid-drag. print_engine: `imaging.print_engine.render_print`'s own RAW
+decode + density-domain render measured ~16.7s on a real image
+(DECISIONS.md I-182) is cached per image for the rest of this screen
+session (`_linear_cache`) — a repeat visit or a committed settings/crop
+change re-runs only the cheap density-math half
+(`render_print_from_linear`), never a second decode. Every operation that
+can still take real time (the first decode of an image, a committed
+change, Confirm, Apply to selection, undo/redo) runs off the GUI thread
+(`_CallWorker`/`_run_async`) with the screen's controls locked and a
+status message, rather than blocking the Qt event loop — a `~16.7s` block
+with no `processEvents()` is what the OS sees as a hung, unresponsive
+application, the most likely cause of the "numerous crashes" this was
+originally reported to cause.
 """
 
 from __future__ import annotations
 
+from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
 from PIL import Image
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QIcon, QKeyEvent, QPixmap, QResizeEvent
+from PySide6.QtCore import QSize, Qt, QThread, Signal
+from PySide6.QtGui import QCloseEvent, QIcon, QKeyEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
-    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -82,7 +91,7 @@ from scanassistant.gui.widgets.print_calibration_panel import AutoValues, PrintC
 from scanassistant.i18n import t
 from scanassistant.imaging import print_engine
 from scanassistant.imaging.framing import RELIABLE, ConfidenceComponents, FrameResult
-from scanassistant.imaging.geometry import FrameGeometry
+from scanassistant.imaging.geometry import FrameGeometry, apply_geometry
 from scanassistant.imaging.positive import ManualSettings, render_positive
 from scanassistant.imaging.raw import RawDecoder, RawpyDecoder
 from scanassistant.project.campaign import JpegPositiveExportConfig, ManualPositiveSettings
@@ -92,6 +101,42 @@ from scanassistant.project.positive_overrides import (
     load_positive_overrides,
     set_positive_print_overrides,
 )
+
+# print_engine's own RAW decode + geometry crop is the ~16.7s (DECISIONS.md
+# I-182) dominant cost of a render — `render_print_from_linear` alone (the
+# tonal math re-run on a settings change) is a small fraction of that.
+# Caching the decoded-and-cropped linear array per image (bounded, since
+# each is a full-resolution float32 RGB array) turns "revisit an
+# already-loaded image" and "commit a slider change" into a sub-second
+# re-render instead of a second full decode.
+_LINEAR_CACHE_MAX = 3
+
+
+class _CallWorker(QThread):
+    """Runs a zero-arg callable on a background `QThread` and reports back
+    via a signal — used for every print_engine operation this screen used
+    to run synchronously on the GUI thread (decode, regenerate, propagate,
+    undo/restore). DECISIONS.md I-183(b) accepted that blocking as a known
+    limitation; it's since been reported as the likely cause of "numerous
+    crashes" — a main thread blocked for ~16.7s with no `processEvents()`
+    reads to the OS/desktop environment as a hung application, which is
+    usually what actually triggers an unprompted force-kill, not a real
+    crash in the process itself."""
+
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, func: Callable[[], Any], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._func = func
+
+    def run(self) -> None:
+        try:
+            result = self._func()
+        except Exception as exc:  # noqa: BLE001 - surfaced via `failed`, never swallowed
+            self.failed.emit(str(exc))
+            return
+        self.succeeded.emit(result)
 
 _DEFAULT_INSET_FRACTION = 0.05  # per side — a head start, not a guess: an
 # operator reviewing a *deferred* image (nothing confidently auto-detected)
@@ -178,6 +223,14 @@ class PositiveReviewScreen(QWidget):
         self._pending_exposures: dict[str, ManualPositiveSettings] = {}
         self._auto_values: AutoValues | None = None
         self._using_print_engine = False
+        # print_engine's own crop state (module docstring: crop editing is
+        # offered for both engines now) — parallel to `_current_frame`/
+        # `_pending_frames` above, kept separate rather than reused since
+        # the two engines' preview coordinate spaces differ (print_engine
+        # is always shown at native resolution, never downscaled).
+        self._current_print_frame: FrameResult | None = None
+        self._current_print_frame_shape: tuple[int, int] | None = None
+        self._pending_print_frames: dict[str, FrameResult] = {}
         # `RawpyDecoder` by default (production); a test double can be
         # injected here the same way `gui.screens.capture.CaptureScreen`
         # already allows — print_engine's own RAW decode (module docstring)
@@ -185,6 +238,11 @@ class PositiveReviewScreen(QWidget):
         self._decoder: RawDecoder = decoder or RawpyDecoder()
         self._undo_stack: list[_UndoCommand] = []
         self._redo_stack: list[_UndoCommand] = []
+        # name -> (linear float32 HxWx3 [0,1], geometry.frame_in_output),
+        # most-recently-used last. See `_LINEAR_CACHE_MAX`'s docstring.
+        self._linear_cache: OrderedDict[str, tuple[np.ndarray, FrameGeometry]] = OrderedDict()
+        self._workers: set[_CallWorker] = set()
+        self._busy = False
 
         self.category_deferred_checkbox = QCheckBox(t("positive_review.category_deferred"))
         self.category_deferred_checkbox.setChecked(True)
@@ -223,7 +281,7 @@ class PositiveReviewScreen(QWidget):
         self.settings_panel.settled_changed.connect(self._refresh_preview)
 
         self.print_panel = PrintCalibrationPanel()
-        self.print_panel.settled_changed.connect(self._refresh_preview)
+        self.print_panel.settled_changed.connect(self._on_print_settings_committed)
 
         self.include_dmin_checkbox = QCheckBox(t("positive_review.include_dmin"))
         self.apply_to_selection_button = QPushButton(t("positive_review.apply_to_selection"))
@@ -248,18 +306,24 @@ class PositiveReviewScreen(QWidget):
         list_container = QWidget()
         list_container.setLayout(list_column)
 
-        propagation_row = QHBoxLayout()
-        propagation_row.addWidget(self.include_dmin_checkbox)
-        propagation_row.addWidget(self.apply_to_selection_button)
+        # Stacked, not side-by-side: at the settings column's width, the
+        # checkbox + button together truncated the button's own label (the
+        # user saw the trailing "(Ctrl+Enter)" clipped down to "(Ctrl+E" —
+        # confirmed by the mis-copied shortcut in their report). Each on its
+        # own row always has the full column width to render in.
+        propagation_column = QVBoxLayout()
+        propagation_column.addWidget(self.include_dmin_checkbox)
+        propagation_column.addWidget(self.apply_to_selection_button)
 
         settings_column = QVBoxLayout()
         settings_column.addWidget(self.settings_panel)
         settings_column.addWidget(self.print_panel)
-        settings_column.addLayout(propagation_row)
+        settings_column.addLayout(propagation_column)
         settings_column.addWidget(self.confirm_button)
         settings_container = QWidget()
         settings_container.setLayout(settings_column)
-        settings_container.setMaximumWidth(320)
+        settings_container.setMinimumWidth(280)
+        settings_container.setMaximumWidth(360)
 
         detail_row = QSplitter()
         detail_row.addWidget(self.preview_area)
@@ -278,14 +342,100 @@ class PositiveReviewScreen(QWidget):
         layout.addWidget(splitter, 1)
         layout.addWidget(self.status_label)
 
+    # --- background work (see `_CallWorker`) ----------------------------------
+
+    def _set_busy(self, busy: bool, status: str | None = None) -> None:
+        self._busy = busy
+        if status is not None:
+            self.status_label.setText(status)
+        for widget in (
+            self.list_widget,
+            self.print_panel,
+            self.settings_panel,
+            self.confirm_button,
+            self.apply_to_selection_button,
+            self.include_dmin_checkbox,
+            self.category_deferred_checkbox,
+            self.category_applied_checkbox,
+            self.category_manual_checkbox,
+        ):
+            widget.setEnabled(not busy)
+        if busy:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        else:
+            QApplication.restoreOverrideCursor()
+
+    def _run_async(
+        self,
+        func: Callable[[], Any],
+        on_success: Callable[[Any], None],
+        *,
+        busy_text: str,
+        on_failure: Callable[[str], None] | None = None,
+    ) -> None:
+        """Runs `func` off the GUI thread (`_CallWorker`) while the screen is
+        locked (`_set_busy`). Every *externally* (user-)triggered entry
+        point is disabled while busy, but a completion handler can still
+        legitimately start a second worker before returning — e.g.
+        `confirm_current`'s `_finish_confirm` calls `refresh_list`, which
+        auto-loads the next image (a fresh `_run_async` decode) *before*
+        `apply_to_selection`'s own chained propagation step gets to start
+        its own. `self._workers` tracks all of them (a set, not a single
+        slot) so neither loses its reference — a lost reference here isn't
+        just a bookkeeping error, it orphans a real background `QThread`
+        that can still be running (touching numpy/opencv state) when the
+        screen is later torn down, which crashes the process outright
+        rather than raising a catchable exception."""
+        worker = _CallWorker(func, parent=self)
+
+        def _on_succeeded(result: object) -> None:
+            self._workers.discard(worker)
+            self._set_busy(bool(self._workers))
+            on_success(result)
+
+        def _on_failed(message: str) -> None:
+            self._workers.discard(worker)
+            self._set_busy(bool(self._workers))
+            if on_failure is not None:
+                on_failure(message)
+            else:
+                QMessageBox.warning(self, t("positive_review.title"), message)
+
+        worker.succeeded.connect(_on_succeeded)
+        worker.failed.connect(_on_failed)
+        self._workers.add(worker)
+        self._set_busy(True, busy_text)
+        worker.start()
+
+    def _wait_for_workers(self) -> None:
+        """Blocks until every in-flight worker has finished — used wherever
+        this screen is about to stop existing in its current form (torn
+        down, or rebound to a different session/campaign via `load`) so no
+        `QThread` is ever destroyed while still running (Qt aborts the
+        process when that happens, confirmed while testing this screen)."""
+        for worker in list(self._workers):
+            worker.wait()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._wait_for_workers()
+        super().closeEvent(event)
+
     # --- loading / navigation ------------------------------------------------
 
     def load(self, session: CaptureSession) -> None:
         """Binds to a campaign and refreshes the list (safe to call again
-        on every open — same convention as `StatisticsScreen.load`)."""
+        on every open — same convention as `StatisticsScreen.load`).
+
+        Waits out any worker still running for the *previous* session
+        first: `_linear_cache` is about to be cleared and `self._session`
+        reassigned, and a stale worker's completion handler closing over
+        the old session/name would otherwise run against that discarded
+        state."""
+        self._wait_for_workers()
         self._session = session
         self._undo_stack.clear()
         self._redo_stack.clear()
+        self._linear_cache.clear()
         self._using_print_engine = session.campaign.exports.jpeg_positive.engine == "print_engine"
         self.settings_panel.setVisible(not self._using_print_engine)
         self.print_panel.setVisible(self._using_print_engine)
@@ -355,6 +505,8 @@ class PositiveReviewScreen(QWidget):
             self._master_pixels = None
             self._current_name = None
             self._current_frame = None
+            self._current_print_frame = None
+            self._current_print_frame_shape = None
             self._auto_values = None
             self.confirm_button.setEnabled(False)
             self.preview_area.show_message(t("positive_review.nothing_to_review"))
@@ -405,33 +557,26 @@ class PositiveReviewScreen(QWidget):
             self.settings_panel.load(self._exposure_config)
 
     def _load_print_engine(self, name: str) -> None:
-        """Runs a real `print_engine.render_print` (own RAW decode, own
-        density-domain render — see module docstring, ~16.7s measured) to
-        get this image's automatic estimate *and* the first preview.
-        Crop editing is not offered for this engine (module docstring) —
-        the frame overlay shown is informational only."""
+        """Gets this image's positive on screen: instantly, from
+        `_linear_cache`, if it's been decoded before this screen session;
+        otherwise a real RAW decode + geometry crop, off the GUI thread
+        (`_run_async`) so the window stays responsive for the ~16.7s that
+        takes (DECISIONS.md I-182). Crop editing is not offered for this
+        engine (module docstring) — the frame overlay shown is
+        informational only."""
+        cached = self._linear_cache.get(name)
+        if cached is not None:
+            self._linear_cache.move_to_end(name)
+            linear, frame_in_output = cached
+            self._render_from_cached_linear(name, linear, frame_in_output)
+            return
+
         session = self._session
         assert session is not None
         context = self._rebuild_context(name)
         if context is None:
             self.preview_area.show_message(t("positive_review.master_unavailable", name=name))
             return
-        override = load_positive_overrides(session.paths, session.fs).get(name)
-        self._render_and_show_print_engine(name, context, override)
-
-    def _rebuild_context(self, name: str) -> ExportContext | None:
-        session = self._session
-        assert session is not None
-        return rebuild_export_context(
-            name, session.paths, session.fs, session.campaign.capture.extensions
-        )
-
-    def _render_and_show_print_engine(
-        self, name: str, context, override: PositiveOverride | None
-    ) -> None:
-        session = self._session
-        assert session is not None
-        positive_cfg = session.campaign.exports.jpeg_positive
         framing = session.campaign.framing
         frame = FrameGeometry(
             x=context.x,
@@ -440,32 +585,112 @@ class PositiveReviewScreen(QWidget):
             height=context.height,
             angle_deg=context.angle_deg,
         )
-        overrides = print_engine.ManualPrintOverrides(
-            dmin=context.manual_print_dmin,
-            exposure_shift=context.manual_print_exposure_shift,
-            contrast=context.manual_print_contrast,
-            paper_black=context.manual_print_paper_black,
-            paper_soft_clip=context.manual_print_paper_soft_clip,
-        )
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        self.status_label.setText(t("positive_review.reviewing", index=0, total=0, name=name))
-        try:
-            result = print_engine.render_print(
-                self._decoder,
-                context.raw_path,
+        decoder = self._decoder
+        raw_path = context.raw_path
+        rotation_deg = context.rotation_deg
+        size_mode = framing.size_mode
+        final_dimensions_px = (framing.final_dimensions_px[0], framing.final_dimensions_px[1])
+        user_wb = session.campaign.imaging.white_balance
+
+        def _decode() -> tuple[np.ndarray, FrameGeometry]:
+            development = decoder.develop(raw_path, user_wb=user_wb, linear=True)
+            geometry = apply_geometry(
+                development.pixels,
                 frame,
-                rotation_deg=context.rotation_deg,
-                size_mode=framing.size_mode,
-                final_dimensions_px=(
-                    framing.final_dimensions_px[0],
-                    framing.final_dimensions_px[1],
-                ),
-                user_wb=session.campaign.imaging.white_balance,
-                overrides=overrides,
-                horizontal_flip=positive_cfg.horizontal_flip,
+                rotation_deg=rotation_deg,
+                size_mode=size_mode,
+                final_dimensions_px=final_dimensions_px,
             )
-        finally:
-            QApplication.restoreOverrideCursor()
+            linear = (geometry.pixels.astype(np.float32) / 65535.0)
+            return linear, geometry.frame_in_output
+
+        def _on_decoded(result: tuple[np.ndarray, FrameGeometry]) -> None:
+            linear, frame_in_output = result
+            self._linear_cache[name] = (linear, frame_in_output)
+            self._linear_cache.move_to_end(name)
+            while len(self._linear_cache) > _LINEAR_CACHE_MAX:
+                self._linear_cache.popitem(last=False)
+            self._render_from_cached_linear(name, linear, frame_in_output)
+
+        def _on_failed(message: str) -> None:
+            self.preview_area.show_message(t("positive_review.master_unavailable", name=name))
+            self.status_label.setText(message)
+
+        self._run_async(
+            _decode, _on_decoded, busy_text=t("positive_review.loading", name=name), on_failure=_on_failed
+        )
+
+    def _rebuild_context(self, name: str) -> ExportContext | None:
+        session = self._session
+        assert session is not None
+        return rebuild_export_context(
+            name, session.paths, session.fs, session.campaign.capture.extensions
+        )
+
+    def _render_from_cached_linear(
+        self, name: str, linear: np.ndarray, frame_in_output: FrameGeometry
+    ) -> None:
+        """The cheap half of a print_engine render (`render_print_from_linear`
+        alone — density math + GrabCut content-frame, no RAW decode):
+        driven directly off `_linear_cache`, so a repeat visit or a
+        committed settings change never re-decodes.
+
+        Always renders `crop_to_content=False` (module docstring: crop
+        editing is now offered for print_engine too, unlike when this was
+        first built) — the full support-frame positive with a draggable
+        overlay, matching the legacy engine's own crop-editing preview
+        exactly, rather than the already-cropped result an operator could
+        do nothing with."""
+        session = self._session
+        assert session is not None
+        override = load_positive_overrides(session.paths, session.fs).get(name)
+        horizontal_flip = session.campaign.exports.jpeg_positive.horizontal_flip
+        full_height, full_width = linear.shape[:2]
+        content_frame_override = self._pending_print_content_frame(
+            name, override, full_width, full_height, horizontal_flip
+        )
+        overrides = print_engine.ManualPrintOverrides(
+            dmin=override.print_dmin if override else None,
+            exposure_shift=override.print_exposure_shift if override else None,
+            contrast=override.print_contrast if override else None,
+            paper_black=override.print_paper_black if override else None,
+            paper_soft_clip=override.print_paper_soft_clip if override else None,
+            content_frame=content_frame_override,
+        )
+        result = print_engine.render_print_from_linear(
+            linear.astype(np.float64),
+            frame_in_output,
+            overrides=overrides,
+            horizontal_flip=horizontal_flip,
+            crop_to_content=False,
+        )
+        self._show_print_result(name, result, override)
+
+    def _pending_print_content_frame(
+        self,
+        name: str,
+        override: PositiveOverride | None,
+        full_width: int,
+        full_height: int,
+        horizontal_flip: bool,
+    ) -> tuple[float, float, float, float] | None:
+        """The crop to render with, in priority order: an in-progress drag
+        not yet confirmed (`_pending_print_frames`, this screen session
+        only), else the persisted override, else `None` (let the engine
+        auto-detect). The pending frame is in the preview's own
+        full-resolution, already-flipped display space and needs mirroring
+        back to the pre-flip fraction convention every stored/engine-facing
+        crop uses; the persisted override is already in that convention."""
+        pending = self._pending_print_frames.get(name)
+        if pending is not None:
+            return _print_frame_to_fraction(pending, full_width, full_height, horizontal_flip)
+        if override is not None and override.print_content_frame is not None:
+            return override.print_content_frame
+        return None
+
+    def _show_print_result(
+        self, name: str, result: print_engine.PrintResult, override: PositiveOverride | None
+    ) -> None:
         self._auto_values = AutoValues(
             dmin=result.dmin,
             exposure_shift=result.exposure_shift,
@@ -477,7 +702,9 @@ class PositiveReviewScreen(QWidget):
         positive8 = (result.pixels // 257).astype(np.uint8)
         rgb = np.stack([positive8, positive8, positive8], axis=-1)
         self.preview_area.show_image(rgb)
-        self.preview_area.set_frame_overlay(None)
+        self._current_print_frame = _print_frame_from_rect(result.content_frame)
+        self._current_print_frame_shape = rgb.shape[:2]
+        self.preview_area.set_frame_overlay(self._current_print_frame)
         self.histogram_widget.set_pixels(rgb)
         self.status_label.setText(
             t(
@@ -488,14 +715,67 @@ class PositiveReviewScreen(QWidget):
             )
         )
 
+    def _on_print_settings_committed(self) -> None:
+        """`PrintCalibrationPanel.settled_changed`: re-render from the
+        panel's own current (not-yet-confirmed) values — the live-preview
+        gap the user reported ("pas de visualisation en temps réel"). Only
+        possible now that a committed change costs a `render_print_from_
+        linear` call on cached data, not a second full RAW decode; still
+        routed through `_run_async` since that alone (density math +
+        GrabCut on a full-resolution array) is not guaranteed instant.
+
+        Reuses `self._current_print_frame` (not the auto-detector) for the
+        crop: a tonal-only commit must not silently move or reset a crop
+        the operator already dragged into place."""
+        if not self._using_print_engine or self._current_name is None:
+            return
+        name = self._current_name
+        cached = self._linear_cache.get(name)
+        if cached is None:
+            return  # still decoding for the first time; nothing to re-render yet
+        linear, frame_in_output = cached
+        session = self._session
+        assert session is not None
+        horizontal_flip = session.campaign.exports.jpeg_positive.horizontal_flip
+        full_height, full_width = linear.shape[:2]
+        content_frame_override = None
+        if self._current_print_frame is not None:
+            content_frame_override = _print_frame_to_fraction(
+                self._current_print_frame, full_width, full_height, horizontal_flip
+            )
+        overrides = replace(self.print_panel.current_overrides(), content_frame=content_frame_override)
+
+        def _render() -> print_engine.PrintResult:
+            return print_engine.render_print_from_linear(
+                linear.astype(np.float64),
+                frame_in_output,
+                overrides=overrides,
+                horizontal_flip=horizontal_flip,
+                crop_to_content=False,
+            )
+
+        def _on_rendered(result: print_engine.PrintResult) -> None:
+            positive8 = (result.pixels // 257).astype(np.uint8)
+            rgb = np.stack([positive8, positive8, positive8], axis=-1)
+            self.preview_area.show_image(rgb)
+            self._current_print_frame = _print_frame_from_rect(result.content_frame)
+            self._current_print_frame_shape = rgb.shape[:2]
+            self.preview_area.set_frame_overlay(self._current_print_frame)
+            self.histogram_widget.set_pixels(rgb)
+
+        self._run_async(_render, _on_rendered, busy_text=t("positive_review.rendering", name=name))
+
     def _save_pending_edits(self) -> None:
         """Remembers the in-progress crop/exposure for the image being
         navigated away from, so it's restored (instead of reset to the
-        default inset / campaign settings) if the operator comes back to it
-        before confirming. Legacy engine only — print_engine's tonal state
-        is always read fresh from the persisted override + auto render."""
+        default inset / campaign settings, or the persisted/auto crop) if
+        the operator comes back to it before confirming."""
         name = self._current_name
-        if name is None or self._using_print_engine:
+        if name is None:
+            return
+        if self._using_print_engine:
+            if self._current_print_frame is not None:
+                self._pending_print_frames[name] = self._current_print_frame
             return
         if self._current_frame is not None:
             self._pending_frames[name] = self._current_frame
@@ -503,14 +783,15 @@ class PositiveReviewScreen(QWidget):
             self._pending_exposures[name] = self._exposure_config.manual_settings
 
     def _on_frame_dragged(self, frame: FrameResult) -> None:
-        """`frame` is in the currently *displayed* (possibly downscaled)
-        preview's coordinate space — converted back to `self._master_pixels`'
-        own, full-resolution space (`self._preview_scale`) before being
-        stored, so `confirm_current`'s fractions stay correct regardless of
-        how small the on-screen preview was downscaled to. No-op for
-        print_engine (module docstring: crop isn't wired into that engine
-        yet)."""
+        """`frame` is in the currently *displayed* preview's own coordinate
+        space. Legacy engine: that preview is possibly downscaled
+        (`self._preview_scale`), converted back to `self._master_pixels`'
+        full-resolution space before being stored. print_engine: the
+        preview is always shown at its own native resolution (no manual
+        downscale, module docstring on `_DISPLAY_PREVIEW_MAX_DIM`'s legacy-
+        only scope) — `frame` is already in the right space, stored as-is."""
         if self._using_print_engine:
+            self._current_print_frame = frame
             return
         scale = self._preview_scale
         self._current_frame = (
@@ -528,7 +809,7 @@ class PositiveReviewScreen(QWidget):
     def _refresh_preview(self, *, fast: bool = False) -> None:
         """Re-renders the positive preview — legacy engine only (see module
         docstring; print_engine's preview is driven by `_load_print_engine`/
-        `_render_and_show_print_engine` instead, on navigation and on a
+        `_on_print_settings_committed` instead, on navigation and on a
         committed settings change, never on this fast/live path)."""
         if self._using_print_engine:
             return
@@ -575,7 +856,7 @@ class PositiveReviewScreen(QWidget):
 
     # --- confirm / apply to selection / undo ----------------------------------
 
-    def confirm_current(self) -> None:
+    def confirm_current(self, *, on_done: Callable[[], None] | None = None) -> None:
         """Applies the current crop/exposure and advances to the next
         flagged image (Enter). The confirmed image no longer drops out of
         the list on its own once more than one category checkbox is
@@ -584,10 +865,16 @@ class PositiveReviewScreen(QWidget):
         so this always explicitly selects whatever followed it, rather than
         relying on `refresh_list`'s default (row 0), which would otherwise
         re-select the same image forever whenever it's also the very first
-        one ever logged in the campaign."""
+        one ever logged in the campaign.
+
+        For print_engine, `session.regenerate_positive` is a real render
+        (~16.7s) — routed through `_run_async` (`on_done` lets
+        `apply_to_selection` chain its own propagation step after this
+        completes, instead of assuming it's already done by the time this
+        method returns, as it used to when this was synchronous)."""
         session = self._session
         row = self.list_widget.currentRow()
-        if session is None or self._current_name is None or row < 0:
+        if session is None or self._current_name is None or row < 0 or self._busy:
             return
         name = self._names[row]
         next_name = self._names[row + 1] if row + 1 < len(self._names) else None
@@ -595,6 +882,13 @@ class PositiveReviewScreen(QWidget):
 
         if self._using_print_engine:
             overrides = self.print_panel.current_overrides()
+            content_frame = None
+            if self._current_print_frame is not None and self._current_print_frame_shape is not None:
+                full_height, full_width = self._current_print_frame_shape
+                horizontal_flip = session.campaign.exports.jpeg_positive.horizontal_flip
+                content_frame = _print_frame_to_fraction(
+                    self._current_print_frame, full_width, full_height, horizontal_flip
+                )
             set_positive_print_overrides(
                 session.paths,
                 session.fs,
@@ -604,36 +898,55 @@ class PositiveReviewScreen(QWidget):
                 contrast=overrides.contrast,
                 paper_black=overrides.paper_black,
                 paper_soft_clip=overrides.paper_soft_clip,
+                content_frame=content_frame,
             )
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            self.status_label.setText(t("positive_review.reviewing", index=0, total=0, name=name))
-            try:
-                session.regenerate_positive(name)
-            finally:
-                QApplication.restoreOverrideCursor()
-        else:
-            if self._master_pixels is None or self._current_frame is None:
-                return
-            height, width = self._master_pixels.shape[:2]
-            frame = self._current_frame
-            content_frame = (
-                frame.x / width,
-                frame.y / height,
-                frame.width / width,
-                frame.height / height,
-            )
-            manual = self._exposure_config.manual_settings if self._exposure_config else None
-            settings = (
-                (manual.exposure_ev, manual.contrast, manual.shadows, manual.highlights)
-                if manual is not None
-                else None
-            )
-            session.apply_manual_positive_override(
-                name, content_frame=content_frame, settings=settings
-            )
-            self._pending_frames.pop(name, None)
-            self._pending_exposures.pop(name, None)
+            self._pending_print_frames.pop(name, None)
 
+            def _regenerate() -> None:
+                session.regenerate_positive(name)
+
+            def _on_regenerated(_result: object) -> None:
+                self._finish_confirm(name, next_name, before, row)
+                if on_done is not None:
+                    on_done()
+
+            self._run_async(
+                _regenerate, _on_regenerated, busy_text=t("positive_review.regenerating", name=name)
+            )
+            return
+
+        if self._master_pixels is None or self._current_frame is None:
+            return
+        height, width = self._master_pixels.shape[:2]
+        frame = self._current_frame
+        content_frame = (
+            frame.x / width,
+            frame.y / height,
+            frame.width / width,
+            frame.height / height,
+        )
+        manual = self._exposure_config.manual_settings if self._exposure_config else None
+        settings = (
+            (manual.exposure_ev, manual.contrast, manual.shadows, manual.highlights)
+            if manual is not None
+            else None
+        )
+        session.apply_manual_positive_override(name, content_frame=content_frame, settings=settings)
+        self._pending_frames.pop(name, None)
+        self._pending_exposures.pop(name, None)
+        self._finish_confirm(name, next_name, before, row)
+        if on_done is not None:
+            on_done()
+
+    def _finish_confirm(
+        self,
+        name: str,
+        next_name: str | None,
+        before: dict[str, PositiveOverride | None],
+        row: int,
+    ) -> None:
+        session = self._session
+        assert session is not None
         after = _snapshot(session.paths, session.fs, [name])
         self._push_undo(_UndoCommand("confirm", (name,), before, after))
         item = self.list_widget.item(row)
@@ -647,9 +960,10 @@ class PositiveReviewScreen(QWidget):
         image's print_engine overrides to every other selected image.
         Confirms the current image first (so what's propagated is exactly
         what's on screen), then explicit confirmation ("N images
-        affected") before touching anything else."""
+        affected") before touching anything else. Both steps are
+        `_run_async` calls chained via `confirm_current`'s `on_done`."""
         session = self._session
-        if session is None or self._current_name is None or not self._using_print_engine:
+        if session is None or self._current_name is None or not self._using_print_engine or self._busy:
             return
         source_name = self._current_name
         targets = [n for n in self.selected_names() if n != source_name]
@@ -668,56 +982,71 @@ class PositiveReviewScreen(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
+        def _start_propagation() -> None:
+            before = _snapshot(session.paths, session.fs, targets)
+
+            def _propagate() -> None:
+                session.propagate_print_overrides(
+                    source_name, targets, include_dmin=self.include_dmin_checkbox.isChecked()
+                )
+
+            def _on_propagated(_result: object) -> None:
+                after = _snapshot(session.paths, session.fs, targets)
+                self._push_undo(_UndoCommand("propagate", tuple(targets), before, after))
+                self.status_label.setText(t("positive_review.propagation_done", count=len(targets)))
+                self.refresh_list(select_name=source_name)
+
+            self._run_async(
+                _propagate,
+                _on_propagated,
+                busy_text=t("positive_review.confirm_propagation_body", count=len(targets)),
+            )
+
         # Confirm the source first: propagation reads its *persisted*
         # override, not whatever's still only in the panel widgets.
-        self.confirm_current()
-
-        before = _snapshot(session.paths, session.fs, targets)
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        self.status_label.setText(t("positive_review.confirm_propagation_body", count=len(targets)))
-        try:
-            session.propagate_print_overrides(
-                source_name, targets, include_dmin=self.include_dmin_checkbox.isChecked()
-            )
-        finally:
-            QApplication.restoreOverrideCursor()
-        after = _snapshot(session.paths, session.fs, targets)
-        self._push_undo(_UndoCommand("propagate", tuple(targets), before, after))
-        self.status_label.setText(t("positive_review.propagation_done", count=len(targets)))
-        self.refresh_list(select_name=source_name)
+        self.confirm_current(on_done=_start_propagation)
 
     def _push_undo(self, command: _UndoCommand) -> None:
         self._undo_stack.append(command)
         self._redo_stack.clear()
 
     def undo(self) -> None:
-        if not self._undo_stack:
+        if not self._undo_stack or self._busy:
             return
         command = self._undo_stack.pop()
-        self._restore(command.names, command.before)
-        self._redo_stack.append(command)
-        self.refresh_list(select_name=self._current_name)
+
+        def _on_restored(_result: object) -> None:
+            self._redo_stack.append(command)
+            self.refresh_list(select_name=self._current_name)
+
+        self._restore_async(command.names, command.before, _on_restored)
 
     def redo(self) -> None:
-        if not self._redo_stack:
+        if not self._redo_stack or self._busy:
             return
         command = self._redo_stack.pop()
-        self._restore(command.names, command.after)
-        self._undo_stack.append(command)
-        self.refresh_list(select_name=self._current_name)
 
-    def _restore(
-        self, names: tuple[str, ...], snapshots: dict[str, PositiveOverride | None]
+        def _on_restored(_result: object) -> None:
+            self._undo_stack.append(command)
+            self.refresh_list(select_name=self._current_name)
+
+        self._restore_async(command.names, command.after, _on_restored)
+
+    def _restore_async(
+        self,
+        names: tuple[str, ...],
+        snapshots: dict[str, PositiveOverride | None],
+        on_done: Callable[[object], None],
     ) -> None:
         session = self._session
         if session is None:
             return
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
+
+        def _restore() -> None:
             for name in names:
                 session.restore_positive_override(name, snapshots.get(name))
-        finally:
-            QApplication.restoreOverrideCursor()
+
+        self._run_async(_restore, on_done, busy_text=t("positive_review.undo"))
 
     # --- misc ------------------------------------------------------------------
 
@@ -830,6 +1159,41 @@ def _frame_from_fraction(
         level=RELIABLE,
         components=_ZERO_COMPONENTS,
     )
+
+
+def _print_frame_from_rect(rect: tuple[int, int, int, int]) -> FrameResult:
+    """Wraps a print_engine content-frame rect (already in the preview's
+    own display coordinate space — `PrintResult.content_frame` from a
+    `crop_to_content=False` render) as a draggable `FrameResult` overlay,
+    same confidence/level convention as `_default_content_frame`/
+    `_frame_from_fraction` (always shown as "reliable" — the frame's own
+    correctness here is the operator's judgment, not a detector score)."""
+    x, y, w, h = rect
+    return FrameResult(
+        x=x,
+        y=y,
+        width=w,
+        height=h,
+        angle_deg=0.0,
+        confidence=1.0,
+        level=RELIABLE,
+        components=_ZERO_COMPONENTS,
+    )
+
+
+def _print_frame_to_fraction(
+    frame: FrameResult, full_width: int, full_height: int, horizontal_flip: bool
+) -> tuple[float, float, float, float]:
+    """Converts a content-frame rect from the print_engine preview's own
+    (full-resolution, already-flipped) display space to the pre-flip
+    fraction convention `PositiveOverride.print_content_frame`/
+    `imaging.print_engine.ManualPrintOverrides.content_frame` both use —
+    the inverse of the mirroring `render_print_from_linear(crop_to_content
+    =False)` applies to its own returned `content_frame`."""
+    x, y, w, h = frame.x, frame.y, frame.width, frame.height
+    if horizontal_flip:
+        x = full_width - x - w
+    return (x / full_width, y / full_height, w / full_width, h / full_height)
 
 
 def _load_master_jpeg(paths: CampaignPaths, name: str) -> np.ndarray | None:

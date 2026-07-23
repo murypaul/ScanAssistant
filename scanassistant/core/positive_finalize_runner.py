@@ -116,6 +116,7 @@ class PositiveFinalizeRunner:
             contrast=context.manual_print_contrast,
             paper_black=context.manual_print_paper_black,
             paper_soft_clip=context.manual_print_paper_soft_clip,
+            content_frame=context.manual_print_content_frame,
         )
         print_result = print_engine.render_print(
             self._decoder,
@@ -160,7 +161,7 @@ class PositiveFinalizeRunner:
             height=h,
             fill=1.0,
             area_ratio=(w * h) / support_area if support_area > 0 else 0.0,
-            source="auto",
+            source="manual" if print_result.content_mask_source == "manual" else "auto",
             tonal_flagged=print_result.flagged,
             fraction=(
                 (x / support_width, y / support_height, w / support_width, h / support_height)

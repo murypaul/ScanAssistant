@@ -91,15 +91,21 @@ class _Group(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self.group_box)
 
-    def _on_toggled(self, manual: bool) -> None:
-        self._form_widget.setEnabled(manual)
+    def _on_toggled(self, auto: bool) -> None:
+        # The switch's own checked state *is* "Auto" (matches the "Auto"
+        # label next to it, and its default-on start state) — sliders are
+        # editable exactly when it's switched off. Previously this method
+        # (mis-named `manual` for its bool param) enabled the form when the
+        # switch turned ON, i.e. when "Auto" was activated — backwards from
+        # what the label promised, and confirmed as a real bug in practice.
+        self._form_widget.setEnabled(not auto)
         self.committed.emit()
 
     def is_manual(self) -> bool:
-        return self.auto_switch.isChecked()
+        return not self.auto_switch.isChecked()
 
     def set_manual(self, manual: bool) -> None:
-        self.auto_switch.setChecked(manual)
+        self.auto_switch.setChecked(not manual)
         self._form_widget.setEnabled(manual)
 
     def add_slider(self, label: str, minimum: float, maximum: float, decimals: int) -> SliderField:
