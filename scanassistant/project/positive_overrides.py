@@ -89,6 +89,22 @@ def set_positive_override(
     _save_positive_overrides(overrides, paths, fs)
 
 
+def write_positive_override(
+    paths: CampaignPaths, fs: FileSystem, name: str, override: PositiveOverride | None
+) -> None:
+    """Replaces `name`'s entire override wholesale — `None` removes it.
+    Unlike `set_positive_override`/`set_positive_print_overrides`, which
+    each only ever touch their own half of the entry, this is the
+    calibration screen's undo/redo primitive: restoring an exact prior
+    snapshot must not merge with whatever is currently persisted."""
+    overrides = load_positive_overrides(paths, fs)
+    if override is None:
+        overrides.pop(name, None)
+    else:
+        overrides[name] = override
+    _save_positive_overrides(overrides, paths, fs)
+
+
 def set_positive_print_overrides(
     paths: CampaignPaths,
     fs: FileSystem,

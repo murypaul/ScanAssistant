@@ -67,9 +67,11 @@ from scanassistant.project.inventory import (
 )
 from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.positive_overrides import (
+    PositiveOverride,
     load_positive_overrides,
     set_positive_override,
     set_positive_print_overrides,
+    write_positive_override,
 )
 from scanassistant.project.state import (
     ContentFramingState,
@@ -863,6 +865,41 @@ class CaptureSession:
             "propagated",
             details={"source": source_name, "targets": applied, "include_dmin": include_dmin},
         )
+        return events
+
+    def restore_positive_override(
+        self, name: str, override: PositiveOverride | None
+    ) -> list[SessionEvent]:
+        """Replaces `name`'s override wholesale with an exact prior snapshot
+        and regenerates `jpeg_positive` — the calibration screen's Ctrl+Z/
+        Ctrl+Y primitive (06_INTERFACE.md §8ter): unlike
+        `apply_manual_positive_override`/`apply_manual_print_overrides`,
+        which each only ever touch their own half of the entry, this
+        overwrites both at once from a snapshot the caller captured before
+        the change being undone. `override=None` removes the entry
+        entirely (undoing the very first override ever set for `name`).
+
+        Does nothing (empty list) if the RAW or its support frame can't be
+        reconstructed, same as every other regeneration entry point."""
+        context = rebuild_export_context(
+            name, self.paths, self.fs, self.campaign.capture.extensions
+        )
+        if context is None:
+            return []
+        write_positive_override(self.paths, self.fs, name, override)
+        context = replace(
+            context,
+            content_frame_override=override.content_frame if override else None,
+            manual_positive_settings=override.settings if override else None,
+            manual_print_dmin=override.print_dmin if override else None,
+            manual_print_exposure_shift=override.print_exposure_shift if override else None,
+            manual_print_contrast=override.print_contrast if override else None,
+            manual_print_paper_black=override.print_paper_black if override else None,
+            manual_print_paper_soft_clip=override.print_paper_soft_clip if override else None,
+        )
+        self.enqueue_export_context(name, ["jpeg_positive"], context)
+        events = self._drain_exports(self._new_deadline())
+        self._persist_state()
         return events
 
     def _log_export(self, task: ExportTask, result: ExportResult | None) -> None:
