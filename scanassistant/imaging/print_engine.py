@@ -63,6 +63,26 @@ _BILATERAL_DETAIL_BOOST = 2.2
 
 
 @dataclass(frozen=True)
+class ManualPrintOverrides:
+    """Explicit per-group manual overrides (13_INVERSION_NEGATIFS.md §9,
+    06_INTERFACE.md §8ter): each field maps 1:1 to one of the calibration
+    screen's groups — film base (Dmin), scan exposure, paper model
+    (contrast/black/soft-clip) — `None` means that group stays automatic.
+    No field for the film model group (toe/shoulder): I-178 fixed it as a
+    property of the film stock, not recomputed per image — the screen
+    surfaces it read-only, nothing to override here."""
+
+    dmin: tuple[float, float, float] | None = None
+    exposure_shift: float | None = None
+    contrast: float | None = None
+    paper_black: float | None = None
+    paper_soft_clip: float | None = None
+
+
+_AUTO = ManualPrintOverrides()
+
+
+@dataclass(frozen=True)
 class PrintResult:
     """16-bit monochrome positive, plus the diagnostics the calibration
     screen and the journal need — never silently dropped (I-176)."""
@@ -92,7 +112,7 @@ def render_print(
     size_mode: str = "native",
     final_dimensions_px: tuple[int, int] = (6016, 4016),
     user_wb: list[float] | None = None,
-    dmin_override: tuple[float, float, float] | None = None,
+    overrides: ManualPrintOverrides = _AUTO,
     horizontal_flip: bool = True,
 ) -> PrintResult:
     """RAW linear development + geometry, then `render_print_from_linear`."""
@@ -108,7 +128,7 @@ def render_print(
     return render_print_from_linear(
         linear,
         geometry.frame_in_output,
-        dmin_override=dmin_override,
+        overrides=overrides,
         horizontal_flip=horizontal_flip,
     )
 
@@ -117,14 +137,21 @@ def render_print_from_linear(
     linear: np.ndarray,
     frame_in_output: FrameGeometry,
     *,
-    dmin_override: tuple[float, float, float] | None = None,
+    overrides: ManualPrintOverrides = _AUTO,
     horizontal_flip: bool = True,
 ) -> PrintResult:
     """Core algorithm (13_INVERSION_NEGATIFS.md §3-§8) on an already linear,
-    already geometry-cropped array — `linear` is RGB, float64, [0, 1]."""
+    already geometry-cropped array — `linear` is RGB, float64, [0, 1].
+
+    Any `overrides` field left `None` computes exactly as before (fully
+    automatic); a set field short-circuits that group's own computation.
+    `flagged` (the tonal-confidence signal, I-178/I-176) only ever reflects
+    groups still on auto — once an operator has set a value by hand, its
+    own automatic estimate being out of bounds is no longer a reason to
+    ask them to look at it again."""
     dmin = (
-        np.array(dmin_override, dtype=np.float64)
-        if dmin_override is not None
+        np.array(overrides.dmin, dtype=np.float64)
+        if overrides.dmin is not None
         else _sample_dmin(linear, frame_in_output)
     )
     mask, mask_source, content_frame = _content_mask(linear, frame_in_output, dmin)
@@ -141,14 +168,21 @@ def render_print_from_linear(
     low, high = np.percentile(v_content, [5.0, 95.0])
     spread = max(high - low, 1e-3)
     raw_contrast = _CONTRAST_TARGET_SPREAD / spread
-    contrast = float(np.clip(raw_contrast, _CONTRAST_CAP_LOW, _CONTRAST_CAP_HIGH))
-    flagged = not (_CONTRAST_CAP_LOW <= raw_contrast <= _CONTRAST_CAP_HIGH)
+    if overrides.contrast is not None:
+        contrast = float(overrides.contrast)
+        flagged = False
+    else:
+        contrast = float(np.clip(raw_contrast, _CONTRAST_CAP_LOW, _CONTRAST_CAP_HIGH))
+        flagged = not (_CONTRAST_CAP_LOW <= raw_contrast <= _CONTRAST_CAP_HIGH)
     v = np.clip(mean_before + (v - mean_before) * contrast, 0.0, 1.0)
 
     mean_after_contrast = float(np.mean(v[mask]))
-    exposure_shift = _TARGET_MEAN - mean_after_contrast
+    if overrides.exposure_shift is not None:
+        exposure_shift = float(overrides.exposure_shift)
+    else:
+        exposure_shift = _TARGET_MEAN - mean_after_contrast
+        flagged = flagged or abs(exposure_shift) > _EXPOSURE_SHIFT_FLAG
     v = np.clip(v + exposure_shift, 0.0, 1.0)
-    flagged = flagged or abs(exposure_shift) > _EXPOSURE_SHIFT_FLAG
 
     luminance = v @ _REC709
 
@@ -157,12 +191,16 @@ def render_print_from_linear(
         luminance = _local_contrast_bilateral(luminance)
         local_contrast_applied = True
 
-    luminance = np.clip(luminance + _PAPER_BLACK, 0.0, None)
-    clipped = -(luminance - _PAPER_SOFT_CLIP) / max(1e-6, 1.0 - _PAPER_SOFT_CLIP)
-    above = luminance > _PAPER_SOFT_CLIP
+    paper_black = _PAPER_BLACK if overrides.paper_black is None else float(overrides.paper_black)
+    paper_soft_clip = (
+        _PAPER_SOFT_CLIP if overrides.paper_soft_clip is None else float(overrides.paper_soft_clip)
+    )
+    luminance = np.clip(luminance + paper_black, 0.0, None)
+    clipped = -(luminance - paper_soft_clip) / max(1e-6, 1.0 - paper_soft_clip)
+    above = luminance > paper_soft_clip
     luminance = np.where(
         above,
-        _PAPER_SOFT_CLIP + (1 - np.exp(clipped)) * (1 - _PAPER_SOFT_CLIP),
+        paper_soft_clip + (1 - np.exp(clipped)) * (1 - paper_soft_clip),
         luminance,
     )
     luminance = np.clip(luminance, 0.0, 1.0)
