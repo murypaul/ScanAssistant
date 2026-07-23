@@ -335,10 +335,18 @@ filter). The right-hand panel depends on the campaign's engine:
   of a given image is the only genuinely slow step; revisiting an image
   already opened earlier in this screen session, or committing a further
   change to it, reuses that decode and only re-runs the much cheaper tone
-  math.
+  math. The next image in the filtered list is also quietly decoded in the
+  background while you're still looking at the current one, so moving on
+  often finds it already waiting.
 
 `Enter` (or **Confirm & next**) applies the current image's settings and
-moves to the next one in the filtered list. For the density-domain
+moves to the next one in the filtered list. You don't have to click it for
+every image, though: any real edit (dragging the crop, changing a tone
+setting) auto-confirms on its own, either when you move to another image
+or after a few quiet seconds with no further change — the same behavior
+as adjusting the frame during capture. It runs in the background and never
+blocks you from moving on to the next image, even for the density-domain
+engine's much slower render. For the density-domain
 engine, **Apply to selection** (button, or `Ctrl+Enter`) copies the
 current image's tone settings to every other selected image at once —
 useful for a whole roll shot under the same conditions. Dmin is excluded

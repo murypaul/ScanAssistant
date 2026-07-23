@@ -61,7 +61,7 @@ from typing import Any
 import cv2
 import numpy as np
 from PIL import Image
-from PySide6.QtCore import QSize, Qt, QThread, Signal
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QIcon, QKeyEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -110,6 +110,11 @@ from scanassistant.project.positive_overrides import (
 # already-loaded image" and "commit a slider change" into a sub-second
 # re-render instead of a second full decode.
 _LINEAR_CACHE_MAX = 3
+
+# Same value `gui.screens.capture` uses for its own frame/rotation commit
+# debounce (`_FRAME_COMMIT_DELAY_MS`/`_ROTATION_COMMIT_DELAY_MS`) — a
+# deliberately shared convention, not independently tuned.
+_CONFIRM_DEBOUNCE_MS = 2500
 
 
 class _CallWorker(QThread):
@@ -241,8 +246,23 @@ class PositiveReviewScreen(QWidget):
         # name -> (linear float32 HxWx3 [0,1], geometry.frame_in_output),
         # most-recently-used last. See `_LINEAR_CACHE_MAX`'s docstring.
         self._linear_cache: OrderedDict[str, tuple[np.ndarray, FrameGeometry]] = OrderedDict()
+        self._prefetching: set[str] = set()
         self._workers: set[_CallWorker] = set()
+        self._foreground_workers: set[_CallWorker] = set()
         self._busy = False
+        # Debounced auto-confirm (06_INTERFACE.md §8ter), same pattern as
+        # `gui.screens.capture`'s own frame/rotation commit timers: a real
+        # edit (crop drag, tonal setting) starts/restarts this, and it fires
+        # `_auto_confirm_silently` after `_CONFIRM_DEBOUNCE_MS` of no further
+        # edit — never requires an explicit Confirm click. Every navigation
+        # away from the current image also flushes it immediately first
+        # (`_save_pending_edits`), the same "never lose a pending edit even
+        # if the timer hasn't fired yet" guarantee `capture.py` already
+        # relies on for its own commit timers.
+        self._confirm_pending = False
+        self._confirm_debounce_timer = QTimer(self)
+        self._confirm_debounce_timer.setSingleShot(True)
+        self._confirm_debounce_timer.timeout.connect(self._commit_pending_confirm)
 
         self.category_deferred_checkbox = QCheckBox(t("positive_review.category_deferred"))
         self.category_deferred_checkbox.setChecked(True)
@@ -279,9 +299,11 @@ class PositiveReviewScreen(QWidget):
         self.settings_panel = PositiveSettingsPanel()
         self.settings_panel.live_changed.connect(lambda: self._refresh_preview(fast=True))
         self.settings_panel.settled_changed.connect(self._refresh_preview)
+        self.settings_panel.settled_changed.connect(self._mark_edited)
 
         self.print_panel = PrintCalibrationPanel()
         self.print_panel.settled_changed.connect(self._on_print_settings_committed)
+        self.print_panel.settled_changed.connect(self._mark_edited)
 
         self.include_dmin_checkbox = QCheckBox(t("positive_review.include_dmin"))
         self.apply_to_selection_button = QPushButton(t("positive_review.apply_to_selection"))
@@ -370,41 +392,56 @@ class PositiveReviewScreen(QWidget):
         func: Callable[[], Any],
         on_success: Callable[[Any], None],
         *,
-        busy_text: str,
+        busy_text: str = "",
         on_failure: Callable[[str], None] | None = None,
+        silent: bool = False,
     ) -> None:
-        """Runs `func` off the GUI thread (`_CallWorker`) while the screen is
-        locked (`_set_busy`). Every *externally* (user-)triggered entry
-        point is disabled while busy, but a completion handler can still
-        legitimately start a second worker before returning — e.g.
-        `confirm_current`'s `_finish_confirm` calls `refresh_list`, which
-        auto-loads the next image (a fresh `_run_async` decode) *before*
-        `apply_to_selection`'s own chained propagation step gets to start
-        its own. `self._workers` tracks all of them (a set, not a single
-        slot) so neither loses its reference — a lost reference here isn't
-        just a bookkeeping error, it orphans a real background `QThread`
-        that can still be running (touching numpy/opencv state) when the
-        screen is later torn down, which crashes the process outright
-        rather than raising a catchable exception."""
+        """Runs `func` off the GUI thread (`_CallWorker`). Every
+        *externally* (user-)triggered entry point is disabled while busy
+        (`_set_busy`), but a completion handler can still legitimately
+        start a second worker before returning — e.g. `confirm_current`'s
+        `_finish_confirm` calls `refresh_list`, which auto-loads the next
+        image (a fresh `_run_async` decode) *before* `apply_to_selection`'s
+        own chained propagation step gets to start its own. `self._workers`
+        tracks all of them (a set, not a single slot) so neither loses its
+        reference — a lost reference here isn't just a bookkeeping error,
+        it orphans a real background `QThread` that can still be running
+        (touching numpy/opencv state) when the screen is later torn down,
+        which crashes the process outright rather than raising a catchable
+        exception.
+
+        `silent=True` (background prefetch, debounced auto-confirm on
+        navigating away — 06_INTERFACE.md §8ter) never touches `_set_busy`:
+        the operator keeps browsing/editing while it runs, on top of
+        whatever a foreground (non-silent) operation is also doing — the
+        two are independent, `self._foreground_workers` tracks only the
+        latter so the screen unlocks exactly when no *foreground* work is
+        left, regardless of what's still finishing silently underneath."""
         worker = _CallWorker(func, parent=self)
 
         def _on_succeeded(result: object) -> None:
             self._workers.discard(worker)
-            self._set_busy(bool(self._workers))
+            if not silent:
+                self._foreground_workers.discard(worker)
+                self._set_busy(bool(self._foreground_workers))
             on_success(result)
 
         def _on_failed(message: str) -> None:
             self._workers.discard(worker)
-            self._set_busy(bool(self._workers))
+            if not silent:
+                self._foreground_workers.discard(worker)
+                self._set_busy(bool(self._foreground_workers))
             if on_failure is not None:
                 on_failure(message)
-            else:
+            elif not silent:
                 QMessageBox.warning(self, t("positive_review.title"), message)
 
         worker.succeeded.connect(_on_succeeded)
         worker.failed.connect(_on_failed)
         self._workers.add(worker)
-        self._set_busy(True, busy_text)
+        if not silent:
+            self._foreground_workers.add(worker)
+            self._set_busy(True, busy_text)
         worker.start()
 
     def _wait_for_workers(self) -> None:
@@ -417,6 +454,7 @@ class PositiveReviewScreen(QWidget):
             worker.wait()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._save_pending_edits()  # flush a pending debounced auto-confirm first
         self._wait_for_workers()
         super().closeEvent(event)
 
@@ -426,16 +464,19 @@ class PositiveReviewScreen(QWidget):
         """Binds to a campaign and refreshes the list (safe to call again
         on every open — same convention as `StatisticsScreen.load`).
 
-        Waits out any worker still running for the *previous* session
-        first: `_linear_cache` is about to be cleared and `self._session`
-        reassigned, and a stale worker's completion handler closing over
-        the old session/name would otherwise run against that discarded
-        state."""
+        First flushes a pending debounced auto-confirm for the *previous*
+        session's current image (same reasoning as `_save_pending_edits`),
+        then waits out any worker still running for it: `_linear_cache` is
+        about to be cleared and `self._session` reassigned, and a stale
+        worker's completion handler closing over the old session/name would
+        otherwise run against that discarded state."""
+        self._save_pending_edits()
         self._wait_for_workers()
         self._session = session
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._linear_cache.clear()
+        self._prefetching.clear()
         self._using_print_engine = session.campaign.exports.jpeg_positive.engine == "print_engine"
         self.settings_panel.setVisible(not self._using_print_engine)
         self.print_panel.setVisible(self._using_print_engine)
@@ -539,10 +580,18 @@ class PositiveReviewScreen(QWidget):
         if self._using_print_engine:
             self._load_print_engine(name)
         else:
-            manual = (
-                self._pending_exposures.get(name)
-                or session.campaign.exports.jpeg_positive.manual_settings
-            )
+            manual = self._pending_exposures.get(name)
+            if manual is None:
+                confirmed = load_positive_overrides(session.paths, session.fs).get(name)
+                if confirmed is not None and confirmed.settings is not None:
+                    exposure_ev, contrast, shadows, highlights = confirmed.settings
+                    manual = ManualPositiveSettings(
+                        exposure_ev=exposure_ev,
+                        contrast=contrast,
+                        shadows=shadows,
+                        highlights=highlights,
+                    )
+            manual = manual or session.campaign.exports.jpeg_positive.manual_settings
             self._exposure_config = JpegPositiveExportConfig(
                 mode="manual",
                 horizontal_flip=session.campaign.exports.jpeg_positive.horizontal_flip,
@@ -569,14 +618,48 @@ class PositiveReviewScreen(QWidget):
             self._linear_cache.move_to_end(name)
             linear, frame_in_output = cached
             self._render_from_cached_linear(name, linear, frame_in_output)
+            self._maybe_prefetch_next(name)
             return
 
+        decode = self._build_decode_task(name)
+        if decode is None:
+            self.preview_area.show_message(t("positive_review.master_unavailable", name=name))
+            return
+
+        def _on_decoded(result: tuple[np.ndarray, FrameGeometry]) -> None:
+            linear, frame_in_output = result
+            self._cache_linear(name, linear, frame_in_output)
+            self._render_from_cached_linear(name, linear, frame_in_output)
+            self._maybe_prefetch_next(name)
+
+        def _on_failed(message: str) -> None:
+            self.preview_area.show_message(t("positive_review.master_unavailable", name=name))
+            self.status_label.setText(message)
+
+        self._run_async(
+            decode, _on_decoded, busy_text=t("positive_review.loading", name=name), on_failure=_on_failed
+        )
+
+    def _rebuild_context(self, name: str) -> ExportContext | None:
+        session = self._session
+        assert session is not None
+        return rebuild_export_context(
+            name, session.paths, session.fs, session.campaign.capture.extensions
+        )
+
+    def _build_decode_task(
+        self, name: str
+    ) -> Callable[[], tuple[np.ndarray, FrameGeometry]] | None:
+        """The expensive half of a print_engine render (RAW decode +
+        geometry crop, DECISIONS.md I-182) as a zero-arg callable ready for
+        `_run_async` — `None` if `name`'s support frame can't be rebuilt
+        from the journal. Shared by the foreground load (`_load_print_engine`)
+        and the silent next-image prefetch (`_maybe_prefetch_next`)."""
         session = self._session
         assert session is not None
         context = self._rebuild_context(name)
         if context is None:
-            self.preview_area.show_message(t("positive_review.master_unavailable", name=name))
-            return
+            return None
         framing = session.campaign.framing
         frame = FrameGeometry(
             x=context.x,
@@ -601,31 +684,49 @@ class PositiveReviewScreen(QWidget):
                 size_mode=size_mode,
                 final_dimensions_px=final_dimensions_px,
             )
-            linear = (geometry.pixels.astype(np.float32) / 65535.0)
+            linear = geometry.pixels.astype(np.float32) / 65535.0
             return linear, geometry.frame_in_output
 
+        return _decode
+
+    def _cache_linear(self, name: str, linear: np.ndarray, frame_in_output: FrameGeometry) -> None:
+        self._linear_cache[name] = (linear, frame_in_output)
+        self._linear_cache.move_to_end(name)
+        while len(self._linear_cache) > _LINEAR_CACHE_MAX:
+            self._linear_cache.popitem(last=False)
+
+    def _maybe_prefetch_next(self, name: str) -> None:
+        """Silently decodes the *next* image in the current filtered list
+        while the operator is still looking at `name` — by the time they
+        move on (an explicit Confirm, or the debounced auto-confirm,
+        06_INTERFACE.md §8ter), the following image is often already
+        decoded, instead of every single navigation paying the full RAW
+        decode cost even for a plain, unhurried "look at the next flagged
+        image" workflow. Never sets `_busy` (`_run_async(silent=True)`):
+        this is a pure head-start, not something the operator should ever
+        have to wait on directly."""
+        if not self._using_print_engine or name not in self._names:
+            return
+        index = self._names.index(name)
+        if index + 1 >= len(self._names):
+            return
+        next_name = self._names[index + 1]
+        if next_name in self._linear_cache or next_name in self._prefetching:
+            return
+        decode = self._build_decode_task(next_name)
+        if decode is None:
+            return
+
         def _on_decoded(result: tuple[np.ndarray, FrameGeometry]) -> None:
+            self._prefetching.discard(next_name)
             linear, frame_in_output = result
-            self._linear_cache[name] = (linear, frame_in_output)
-            self._linear_cache.move_to_end(name)
-            while len(self._linear_cache) > _LINEAR_CACHE_MAX:
-                self._linear_cache.popitem(last=False)
-            self._render_from_cached_linear(name, linear, frame_in_output)
+            self._cache_linear(next_name, linear, frame_in_output)
 
-        def _on_failed(message: str) -> None:
-            self.preview_area.show_message(t("positive_review.master_unavailable", name=name))
-            self.status_label.setText(message)
+        def _on_failed(_message: str) -> None:
+            self._prefetching.discard(next_name)
 
-        self._run_async(
-            _decode, _on_decoded, busy_text=t("positive_review.loading", name=name), on_failure=_on_failed
-        )
-
-    def _rebuild_context(self, name: str) -> ExportContext | None:
-        session = self._session
-        assert session is not None
-        return rebuild_export_context(
-            name, session.paths, session.fs, session.campaign.capture.extensions
-        )
+        self._prefetching.add(next_name)
+        self._run_async(decode, _on_decoded, on_failure=_on_failed, silent=True)
 
     def _render_from_cached_linear(
         self, name: str, linear: np.ndarray, frame_in_output: FrameGeometry
@@ -706,6 +807,7 @@ class PositiveReviewScreen(QWidget):
         self._current_print_frame_shape = rgb.shape[:2]
         self.preview_area.set_frame_overlay(self._current_print_frame)
         self.histogram_widget.set_pixels(rgb)
+        self._reposition_histogram()
         self.status_label.setText(
             t(
                 "positive_review.reviewing",
@@ -762,16 +864,26 @@ class PositiveReviewScreen(QWidget):
             self._current_print_frame_shape = rgb.shape[:2]
             self.preview_area.set_frame_overlay(self._current_print_frame)
             self.histogram_widget.set_pixels(rgb)
+            self._reposition_histogram()
 
         self._run_async(_render, _on_rendered, busy_text=t("positive_review.rendering", name=name))
 
     def _save_pending_edits(self) -> None:
-        """Remembers the in-progress crop/exposure for the image being
-        navigated away from, so it's restored (instead of reset to the
-        default inset / campaign settings, or the persisted/auto crop) if
-        the operator comes back to it before confirming."""
+        """First flushes a debounced auto-confirm if one is pending
+        (06_INTERFACE.md §8ter — an edit the operator made but the
+        `_CONFIRM_DEBOUNCE_MS` quiet period hasn't elapsed for yet must
+        never be silently dropped just because they moved on before it
+        fired, same guarantee `gui.screens.capture`'s own commit timers
+        give). Only without a pending edit does the older, purely-in-memory
+        "remember the in-progress crop/exposure, restore it if the operator
+        comes back before confirming" fallback still apply."""
         name = self._current_name
         if name is None:
+            return
+        if self._confirm_pending:
+            self._confirm_debounce_timer.stop()
+            self._confirm_pending = False
+            self._auto_confirm_silently()
             return
         if self._using_print_engine:
             if self._current_print_frame is not None:
@@ -792,6 +904,7 @@ class PositiveReviewScreen(QWidget):
         only scope) — `frame` is already in the right space, stored as-is."""
         if self._using_print_engine:
             self._current_print_frame = frame
+            self._mark_edited()
             return
         scale = self._preview_scale
         self._current_frame = (
@@ -805,6 +918,7 @@ class PositiveReviewScreen(QWidget):
                 height=frame.height / scale,
             )
         )
+        self._mark_edited()
 
     def _refresh_preview(self, *, fast: bool = False) -> None:
         """Re-renders the positive preview — legacy engine only (see module
@@ -856,6 +970,127 @@ class PositiveReviewScreen(QWidget):
 
     # --- confirm / apply to selection / undo ----------------------------------
 
+    def _mark_edited(self) -> None:
+        """A real edit happened (crop drag, a print_engine group toggled or
+        a slider committed, a legacy setting committed) — (re)starts the
+        debounced auto-confirm (06_INTERFACE.md §8ter), same pattern as
+        `gui.screens.capture`'s own frame/rotation commit timers. A no-op
+        call from `PrintCalibrationPanel.load()`'s own programmatic setup
+        can't reach here: that emits with its groups' signals blocked
+        specifically to prevent this (see its own docstring)."""
+        self._confirm_pending = True
+        self._confirm_debounce_timer.start(_CONFIRM_DEBOUNCE_MS)
+
+    def _commit_pending_confirm(self) -> None:
+        self._confirm_debounce_timer.stop()
+        if not self._confirm_pending:
+            return
+        self._confirm_pending = False
+        self._auto_confirm_silently()
+
+    def _auto_confirm_silently(self) -> None:
+        """The debounced/navigate-away half of the auto-confirm
+        (06_INTERFACE.md §8ter): persists whatever the operator just
+        changed without an explicit Confirm click. Silent for print_engine
+        (`_run_async(silent=True)`) — never blocks moving on to the next
+        image, unlike `confirm_current`'s own (deliberately visible)
+        regenerate. No list-navigation side effect either way: this fires
+        *during* a navigation the operator already initiated themselves (or
+        after a quiet pause with none at all), so jumping to some other
+        "next" image would fight whatever's already happening."""
+        session = self._session
+        name = self._current_name
+        if session is None or name is None or name not in self._names:
+            return
+        row = self._names.index(name)
+        before = _snapshot(session.paths, session.fs, [name])
+
+        if self._using_print_engine:
+            self._persist_print_overrides_for_current(name)
+
+            def _regenerate() -> None:
+                session.regenerate_positive(name)
+                session.wait_for_pending_exports()
+
+            def _on_regenerated(_result: object) -> None:
+                self._record_confirm(name, before, row)
+
+            self._run_async(_regenerate, _on_regenerated, silent=True)
+            return
+
+        if not self._persist_legacy_overrides_for_current(name):
+            return
+        self._record_confirm(name, before, row)
+
+    def _persist_print_overrides_for_current(self, name: str) -> None:
+        """Writes `name`'s current tonal + crop state as its print_engine
+        override — the actual "confirm" for that engine, shared by the
+        explicit Confirm action and the silent debounced auto-confirm."""
+        session = self._session
+        assert session is not None
+        overrides = self.print_panel.current_overrides()
+        content_frame = None
+        if self._current_print_frame is not None and self._current_print_frame_shape is not None:
+            full_height, full_width = self._current_print_frame_shape
+            horizontal_flip = session.campaign.exports.jpeg_positive.horizontal_flip
+            content_frame = _print_frame_to_fraction(
+                self._current_print_frame, full_width, full_height, horizontal_flip
+            )
+        set_positive_print_overrides(
+            session.paths,
+            session.fs,
+            name,
+            dmin=overrides.dmin,
+            exposure_shift=overrides.exposure_shift,
+            contrast=overrides.contrast,
+            paper_black=overrides.paper_black,
+            paper_soft_clip=overrides.paper_soft_clip,
+            content_frame=content_frame,
+        )
+        self._pending_print_frames.pop(name, None)
+
+    def _persist_legacy_overrides_for_current(self, name: str) -> bool:
+        """Same for the legacy engine — `False` (nothing persisted) if the
+        master preview isn't loaded, the same guard `confirm_current` used
+        to inline directly."""
+        session = self._session
+        assert session is not None
+        if self._master_pixels is None or self._current_frame is None:
+            return False
+        height, width = self._master_pixels.shape[:2]
+        frame = self._current_frame
+        content_frame = (
+            frame.x / width,
+            frame.y / height,
+            frame.width / width,
+            frame.height / height,
+        )
+        manual = self._exposure_config.manual_settings if self._exposure_config else None
+        settings = (
+            (manual.exposure_ev, manual.contrast, manual.shadows, manual.highlights)
+            if manual is not None
+            else None
+        )
+        session.apply_manual_positive_override(name, content_frame=content_frame, settings=settings)
+        session.wait_for_pending_exports()
+        self._pending_frames.pop(name, None)
+        self._pending_exposures.pop(name, None)
+        return True
+
+    def _record_confirm(
+        self, name: str, before: dict[str, PositiveOverride | None], row: int
+    ) -> None:
+        """Undo-stack entry + thumbnail refresh only — no list navigation
+        (shared by `_finish_confirm`, which adds that, and the silent
+        auto-confirm, which deliberately doesn't)."""
+        session = self._session
+        assert session is not None
+        after = _snapshot(session.paths, session.fs, [name])
+        self._push_undo(_UndoCommand("confirm", (name,), before, after))
+        item = self.list_widget.item(row)
+        if item is not None:
+            item.setIcon(self._thumbnail_icon(name))
+
     def confirm_current(self, *, on_done: Callable[[], None] | None = None) -> None:
         """Applies the current crop/exposure and advances to the next
         flagged image (Enter). The confirmed image no longer drops out of
@@ -876,34 +1111,18 @@ class PositiveReviewScreen(QWidget):
         row = self.list_widget.currentRow()
         if session is None or self._current_name is None or row < 0 or self._busy:
             return
+        self._confirm_debounce_timer.stop()
+        self._confirm_pending = False
         name = self._names[row]
         next_name = self._names[row + 1] if row + 1 < len(self._names) else None
         before = _snapshot(session.paths, session.fs, [name])
 
         if self._using_print_engine:
-            overrides = self.print_panel.current_overrides()
-            content_frame = None
-            if self._current_print_frame is not None and self._current_print_frame_shape is not None:
-                full_height, full_width = self._current_print_frame_shape
-                horizontal_flip = session.campaign.exports.jpeg_positive.horizontal_flip
-                content_frame = _print_frame_to_fraction(
-                    self._current_print_frame, full_width, full_height, horizontal_flip
-                )
-            set_positive_print_overrides(
-                session.paths,
-                session.fs,
-                name,
-                dmin=overrides.dmin,
-                exposure_shift=overrides.exposure_shift,
-                contrast=overrides.contrast,
-                paper_black=overrides.paper_black,
-                paper_soft_clip=overrides.paper_soft_clip,
-                content_frame=content_frame,
-            )
-            self._pending_print_frames.pop(name, None)
+            self._persist_print_overrides_for_current(name)
 
             def _regenerate() -> None:
                 session.regenerate_positive(name)
+                session.wait_for_pending_exports()
 
             def _on_regenerated(_result: object) -> None:
                 self._finish_confirm(name, next_name, before, row)
@@ -915,25 +1134,8 @@ class PositiveReviewScreen(QWidget):
             )
             return
 
-        if self._master_pixels is None or self._current_frame is None:
+        if not self._persist_legacy_overrides_for_current(name):
             return
-        height, width = self._master_pixels.shape[:2]
-        frame = self._current_frame
-        content_frame = (
-            frame.x / width,
-            frame.y / height,
-            frame.width / width,
-            frame.height / height,
-        )
-        manual = self._exposure_config.manual_settings if self._exposure_config else None
-        settings = (
-            (manual.exposure_ev, manual.contrast, manual.shadows, manual.highlights)
-            if manual is not None
-            else None
-        )
-        session.apply_manual_positive_override(name, content_frame=content_frame, settings=settings)
-        self._pending_frames.pop(name, None)
-        self._pending_exposures.pop(name, None)
         self._finish_confirm(name, next_name, before, row)
         if on_done is not None:
             on_done()
@@ -945,13 +1147,7 @@ class PositiveReviewScreen(QWidget):
         before: dict[str, PositiveOverride | None],
         row: int,
     ) -> None:
-        session = self._session
-        assert session is not None
-        after = _snapshot(session.paths, session.fs, [name])
-        self._push_undo(_UndoCommand("confirm", (name,), before, after))
-        item = self.list_widget.item(row)
-        if item is not None:
-            item.setIcon(self._thumbnail_icon(name))
+        self._record_confirm(name, before, row)
         self._current_name = None
         self.refresh_list(select_name=next_name)
 
@@ -989,6 +1185,7 @@ class PositiveReviewScreen(QWidget):
                 session.propagate_print_overrides(
                     source_name, targets, include_dmin=self.include_dmin_checkbox.isChecked()
                 )
+                session.wait_for_pending_exports()
 
             def _on_propagated(_result: object) -> None:
                 after = _snapshot(session.paths, session.fs, targets)
@@ -1013,6 +1210,11 @@ class PositiveReviewScreen(QWidget):
     def undo(self) -> None:
         if not self._undo_stack or self._busy:
             return
+        # An edit still only debouncing (not yet confirmed) firing *after*
+        # the undo below would silently override it a couple of seconds
+        # later — discard it, the undo itself is the operator's intent now.
+        self._confirm_debounce_timer.stop()
+        self._confirm_pending = False
         command = self._undo_stack.pop()
 
         def _on_restored(_result: object) -> None:
@@ -1024,6 +1226,8 @@ class PositiveReviewScreen(QWidget):
     def redo(self) -> None:
         if not self._redo_stack or self._busy:
             return
+        self._confirm_debounce_timer.stop()
+        self._confirm_pending = False
         command = self._redo_stack.pop()
 
         def _on_restored(_result: object) -> None:
@@ -1045,6 +1249,7 @@ class PositiveReviewScreen(QWidget):
         def _restore() -> None:
             for name in names:
                 session.restore_positive_override(name, snapshots.get(name))
+            session.wait_for_pending_exports()
 
         self._run_async(_restore, on_done, busy_text=t("positive_review.undo"))
 

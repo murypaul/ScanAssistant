@@ -362,10 +362,20 @@ panneau de droite dépend du moteur de la campagne :
   d'une image donnée est réellement long ; revisiter une image déjà
   ouverte plus tôt dans cette session d'écran, ou lui valider un nouveau
   changement, réutilise ce décodage et ne relance que le calcul de
-  tonalité, bien moins coûteux.
+  tonalité, bien moins coûteux. L'image suivante du filtre actif est
+  aussi décodée discrètement en arrière-plan pendant que vous regardez
+  encore l'image courante, si bien qu'elle est souvent déjà prête au
+  moment de passer à la suite.
 
 `Enter` (ou **Confirm & next**) applique les réglages de l'image courante
-et passe à la suivante du filtre actif. Pour le moteur en domaine de
+et passe à la suivante du filtre actif. Vous n'avez pas besoin de cliquer
+dessus pour chaque image cela dit : tout réglage réellement modifié
+(recadrage glissé, réglage de tonalité changé) se confirme automatiquement
+tout seul, soit en passant à une autre image, soit après quelques secondes
+sans nouvelle modification — le même comportement que l'ajustement du
+cadre pendant la capture. Cela tourne en arrière-plan et ne vous bloque
+jamais pour passer à l'image suivante, même pour le rendu bien plus lent
+du moteur en domaine de densité. Pour le moteur en domaine de
 densité, **Apply to selection** (bouton, ou `Ctrl+Enter`) copie les
 réglages de tonalité de l'image courante vers toutes les autres images
 sélectionnées d'un coup — utile pour toute une pellicule prise dans les

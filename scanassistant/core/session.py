@@ -1626,6 +1626,24 @@ class CaptureSession:
         self._persist_state()
         return events
 
+    def wait_for_pending_exports(self) -> list[SessionEvent]:
+        """Blocks until every export currently queued or in flight (either
+        executor) has actually finished and been journaled/logged.
+
+        `regenerate_positive`/`apply_manual_positive_override`/
+        `apply_manual_print_overrides`/etc. all submit through
+        `_drain_exports` with a short, bounded deadline — by design, meant
+        for a caller with its own periodic pump (`CaptureScreen`'s pump
+        timer) that will collect the result on a *later* call, not this
+        one. A caller with no periodic pump of its own (the positive
+        calibration screen) has no later call coming — without this, a
+        journal/state read immediately after one of those methods returns
+        can silently see stale data (the regenerate is still running on the
+        executor's own worker thread)."""
+        events = self._drain_exports(deadline=None)
+        self._persist_state()
+        return events
+
     def shutdown_executors(self) -> None:
         """Releases both background executors' worker thread(s), if any —
         `self.export_executor` and, when configured, the print_engine

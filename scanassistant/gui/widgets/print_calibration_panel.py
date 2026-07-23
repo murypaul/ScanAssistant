@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSignalBlocker, Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
@@ -191,8 +191,22 @@ class PrintCalibrationPanel(QWidget):
         """(Re)binds the panel to the image currently loaded — safe to call
         again on every navigation. `advanced_toggle`'s expanded/collapsed
         state is deliberately left untouched here (06_INTERFACE.md §8ter:
-        persists across images within the screen session)."""
+        persists across images within the screen session).
+
+        Every group's switch is set with its own `committed`/`live` signals
+        blocked: `set_manual` below can flip a switch's checked state
+        relative to whatever the *previous* image left it on (e.g. the prior
+        image had a manual override, this one doesn't) — without blocking,
+        that flip alone fires `settled_changed` as if the operator had just
+        edited *this* freshly-loaded image, triggering a wasted extra
+        render and (once the operator's own edits start a debounced
+        auto-confirm, 06_INTERFACE.md §8ter) could even mark it dirty before
+        they have touched anything."""
         override = override or PositiveOverride()
+        blockers = [
+            QSignalBlocker(group.auto_switch)
+            for group in (self.dmin_group, self.exposure_group, self.paper_group)
+        ]
 
         self.dmin_group.set_manual(override.print_dmin is not None)
         r, g, b = override.print_dmin or auto.dmin
@@ -222,6 +236,9 @@ class PrintCalibrationPanel(QWidget):
             if override.print_paper_soft_clip is not None
             else auto.paper_soft_clip
         )
+
+        for blocker in blockers:
+            blocker.unblock()
 
     def current_overrides(self) -> ManualPrintOverrides:
         """Reads the panel's current state — `None` per group still on Auto."""
