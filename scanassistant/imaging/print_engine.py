@@ -43,8 +43,8 @@ _CONTRAST_CAP_LOW = 0.6
 _CONTRAST_CAP_HIGH = 2.2
 _TARGET_MEAN = 0.45  # same target `imaging.positive._auto` uses
 _EXPOSURE_SHIFT_FLAG = 0.20
-_PAPER_BLACK = 0.02
-_PAPER_SOFT_CLIP = 0.85
+DEFAULT_PAPER_BLACK = 0.02
+DEFAULT_PAPER_SOFT_CLIP = 0.85
 
 # Dmin ring / content-mask insets, fractions of the support frame's own
 # width/height.
@@ -197,9 +197,9 @@ def render_print_from_linear(
         luminance = _local_contrast_bilateral(luminance)
         local_contrast_applied = True
 
-    paper_black = _PAPER_BLACK if overrides.paper_black is None else float(overrides.paper_black)
+    paper_black = DEFAULT_PAPER_BLACK if overrides.paper_black is None else float(overrides.paper_black)
     paper_soft_clip = (
-        _PAPER_SOFT_CLIP if overrides.paper_soft_clip is None else float(overrides.paper_soft_clip)
+        DEFAULT_PAPER_SOFT_CLIP if overrides.paper_soft_clip is None else float(overrides.paper_soft_clip)
     )
     luminance = np.clip(luminance + paper_black, 0.0, None)
     clipped = -(luminance - paper_soft_clip) / max(1e-6, 1.0 - paper_soft_clip)
