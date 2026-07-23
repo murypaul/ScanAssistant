@@ -756,8 +756,18 @@ class CaptureSession:
             # "manual" (operator-confirmed, `apply_manual_positive_override`)
             # is a distinct outcome from "applied" (automatic, confident
             # detection) — a manually-confirmed image must not keep
-            # reappearing in the "needs review" list.
-            outcome = "manual" if content_frame.source == "manual" else "applied"
+            # reappearing in the "needs review" list. `tonal_flagged`
+            # (13_INVERSION_NEGATIFS.md §9) overrides both: a confident crop
+            # doesn't make an unconfident density/tonal estimate trustworthy
+            # — an operator override of the crop wouldn't have touched the
+            # tonal estimate either, so a flagged tonal render still needs a
+            # look even on an image whose crop was already confirmed.
+            if content_frame.tonal_flagged:
+                outcome = "deferred"
+            elif content_frame.source == "manual":
+                outcome = "manual"
+            else:
+                outcome = "applied"
             state = ContentFramingState(
                 x=content_frame.x,
                 y=content_frame.y,

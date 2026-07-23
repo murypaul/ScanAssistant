@@ -38,7 +38,15 @@ _GRABCUT_ITERS = 2  # more iterations did not change the outcome on any tested s
 _GRABCUT_SEED = 12345  # cv2.grabCut's GMM init is otherwise unseeded (verified elsewhere
 # in this package: two runs on the same image can give different rectangles without this).
 _MIN_FILL = 0.80
-_MIN_AREA_RATIO = 0.55
+# Calibrated against the 2024_5_1 campaign's own journal (570 "applied"
+# outcomes, I-176): at 0.55, one real crop landed at 0.592 — only 0.04 above
+# the cutoff, essentially a coin flip away from being (correctly) deferred
+# instead of silently trusted. Raised to 0.62: closes that near-miss and
+# reclassifies 8/570 (1.4%) borderline crops to `deferred`, without touching
+# the bulk of the distribution (p10 was already 0.654). `_MIN_FILL` left
+# alone — nothing in that same data landed within 0.06 of its cutoff, no
+# real near-miss to calibrate against.
+_MIN_AREA_RATIO = 0.62
 _MARGIN_PCT = 2.0  # biased to slightly over-include rather than crop tight against
 # the detected boundary — matches the operator's own stated preference (a sliver of
 # unexposed border left in is fine, cutting into the photo itself is not).

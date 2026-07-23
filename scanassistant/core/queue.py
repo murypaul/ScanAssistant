@@ -91,6 +91,14 @@ class ContentFrameOutcome:
     # knowing what resolution `master.pixels` was at this particular export
     # (see `ExportContext.content_frame_override` above for why fractions).
     fraction: tuple[float, float, float, float] | None = None
+    # `imaging.print_engine.PrintResult.flagged` (13_INVERSION_NEGATIFS.md
+    # §9): the density/tonal estimate itself was unconfident (contrast
+    # capped, or exposure shift beyond tolerance) — independent of crop
+    # confidence, an image can have a perfectly good crop and still need a
+    # tonal review. Always `False` for the legacy engine, which has no
+    # equivalent signal. Drives `CaptureSession._log_positive_framing`'s
+    # `deferred` classification alongside crop confidence, not just it.
+    tonal_flagged: bool = False
 
 
 @dataclass(frozen=True)

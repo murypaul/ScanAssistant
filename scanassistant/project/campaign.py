@@ -65,7 +65,15 @@ class FramingConfig:
     enabled: bool = True
     default_orientation: str = "horizontal"  # horizontal | vertical
     margin_pct: float = 2.0
-    reliable_threshold: float = 0.90
+    # I-176 flagged these "[À RECALIBRER]" without picking numbers, pending
+    # real data. Calibrated here against the 2024_5_1 campaign's own journal
+    # (144 automatic detections): only 1/144 sat in [0.90, 0.92) — raising
+    # reliable_threshold to 0.93 closes that one near-miss (silently
+    # auto-applied a hair above the old cutoff) while reclassifying nothing
+    # else, since the rest already cluster either well above 0.93 or well
+    # into the review tier (median 0.809). review_threshold left as-is: 0%
+    # of real detections fell below it, no data suggesting it binds at all.
+    reliable_threshold: float = 0.93
     review_threshold: float = 0.60
     max_deskew_deg: float = 5.0
     threshold_bias: int = 0

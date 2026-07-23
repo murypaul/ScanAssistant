@@ -276,6 +276,7 @@ class MasterExportRunner:
             fill=1.0,
             area_ratio=(w * h) / support_area if support_area > 0 else 0.0,
             source="auto",
+            tonal_flagged=result.flagged,
             fraction=(
                 (x / master_width, y / master_height, w / master_width, h / master_height)
                 if master_width > 0 and master_height > 0
