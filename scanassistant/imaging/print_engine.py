@@ -93,6 +93,7 @@ def render_print(
     final_dimensions_px: tuple[int, int] = (6016, 4016),
     user_wb: list[float] | None = None,
     dmin_override: tuple[float, float, float] | None = None,
+    horizontal_flip: bool = True,
 ) -> PrintResult:
     """RAW linear development + geometry, then `render_print_from_linear`."""
     development = decoder.develop(raw_path, user_wb=user_wb, linear=True)
@@ -104,7 +105,12 @@ def render_print(
         final_dimensions_px=final_dimensions_px,
     )
     linear = geometry.pixels.astype(np.float64) / 65535.0
-    return render_print_from_linear(linear, geometry.frame_in_output, dmin_override=dmin_override)
+    return render_print_from_linear(
+        linear,
+        geometry.frame_in_output,
+        dmin_override=dmin_override,
+        horizontal_flip=horizontal_flip,
+    )
 
 
 def render_print_from_linear(
@@ -112,6 +118,7 @@ def render_print_from_linear(
     frame_in_output: FrameGeometry,
     *,
     dmin_override: tuple[float, float, float] | None = None,
+    horizontal_flip: bool = True,
 ) -> PrintResult:
     """Core algorithm (13_INVERSION_NEGATIFS.md §3-§8) on an already linear,
     already geometry-cropped array — `linear` is RGB, float64, [0, 1]."""
@@ -163,6 +170,14 @@ def render_print_from_linear(
     pixels16 = np.clip(np.round(luminance * 65535.0), 0, 65535).astype(np.uint16)
     cx, cy, cw, ch = content_frame
     pixels16 = pixels16[cy : cy + ch, cx : cx + cw]
+    if horizontal_flip:
+        # Negatives are captured emulsion-side up (more detail) —
+        # geometrically mirrored left-right versus the actual scene, same
+        # correction `imaging.positive.render_positive` applies. Done last,
+        # on the already-cropped output, so `content_frame` stays in the
+        # un-mirrored support-frame coordinate space other callers expect
+        # (same convention the legacy pipeline uses).
+        pixels16 = np.fliplr(pixels16)
 
     return PrintResult(
         pixels=pixels16,

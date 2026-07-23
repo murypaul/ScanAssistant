@@ -257,6 +257,7 @@ class MasterExportRunner:
             size_mode=framing.size_mode,
             final_dimensions_px=_final_dimensions(framing.final_dimensions_px),
             user_wb=self._campaign.imaging.white_balance,
+            horizontal_flip=positive_cfg.horizontal_flip,
         )
         positive_pipeline.write_jpeg_positive(
             result.pixels,
