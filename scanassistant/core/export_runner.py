@@ -249,6 +249,13 @@ class MasterExportRunner:
             height=context.height,
             angle_deg=context.angle_deg,
         )
+        overrides = print_engine.ManualPrintOverrides(
+            dmin=context.manual_print_dmin,
+            exposure_shift=context.manual_print_exposure_shift,
+            contrast=context.manual_print_contrast,
+            paper_black=context.manual_print_paper_black,
+            paper_soft_clip=context.manual_print_paper_soft_clip,
+        )
         result = print_engine.render_print(
             self._decoder,
             context.raw_path,
@@ -257,6 +264,7 @@ class MasterExportRunner:
             size_mode=framing.size_mode,
             final_dimensions_px=_final_dimensions(framing.final_dimensions_px),
             user_wb=self._campaign.imaging.white_balance,
+            overrides=overrides,
             horizontal_flip=positive_cfg.horizontal_flip,
         )
         positive_pipeline.write_jpeg_positive(

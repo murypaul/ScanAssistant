@@ -68,7 +68,19 @@ class ExportContext:
     # sliced back into absolute pixels once actually re-developed here.
     content_frame_override: tuple[float, float, float, float] | None = None  # x, y, w, h fractions
     manual_positive_settings: tuple[float, int, int, int] | None = None  # exposure_ev, contrast,
-    # shadows, highlights
+    # shadows, highlights — legacy engine only (`imaging.positive`).
+    # print_engine manual overrides (13_INVERSION_NEGATIFS.md §9, DECISIONS.md
+    # I-181): a parallel, independent set of fields — never converted to or
+    # from `manual_positive_settings` above. Each `None` means that group
+    # stays automatic. Mirrors `imaging.print_engine.ManualPrintOverrides`,
+    # redefined in primitives here rather than imported: same principle as
+    # `ContentFrameOutcome` below, which must not import the `imaging` type
+    # it mirrors either.
+    manual_print_dmin: tuple[float, float, float] | None = None
+    manual_print_exposure_shift: float | None = None
+    manual_print_contrast: float | None = None
+    manual_print_paper_black: float | None = None
+    manual_print_paper_soft_clip: float | None = None
 
 
 @dataclass(frozen=True)

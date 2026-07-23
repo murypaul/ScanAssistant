@@ -66,7 +66,11 @@ from scanassistant.project.inventory import (
     validate_name,
 )
 from scanassistant.project.layout import CampaignPaths
-from scanassistant.project.positive_overrides import set_positive_override
+from scanassistant.project.positive_overrides import (
+    load_positive_overrides,
+    set_positive_override,
+    set_positive_print_overrides,
+)
 from scanassistant.project.state import (
     ContentFramingState,
     CurrentImageState,
@@ -720,6 +724,111 @@ class CaptureSession:
         self.enqueue_export_context(name, ["jpeg_positive"], context)
         events = self._drain_exports(self._new_deadline())
         self._persist_state()
+        return events
+
+    def apply_manual_print_overrides(
+        self,
+        name: str,
+        *,
+        dmin: tuple[float, float, float] | None = None,
+        exposure_shift: float | None = None,
+        contrast: float | None = None,
+        paper_black: float | None = None,
+        paper_soft_clip: float | None = None,
+    ) -> list[SessionEvent]:
+        """Regenerates `jpeg_positive` for `name` using an operator's manual
+        print_engine overrides from the calibration screen
+        (13_INVERSION_NEGATIFS.md §9, 06_INTERFACE.md §8ter) — each `None`
+        means that group stays automatic. Persisted (`project.
+        positive_overrides.set_positive_print_overrides`), independent of
+        the crop override (`apply_manual_positive_override`, DECISIONS.md
+        I-181) — never touches TIFF/JPEG master.
+
+        Same journal-rebuild + jpeg_positive-only scope as
+        `regenerate_positive`; does nothing (empty list) if the RAW or its
+        support frame can't be reconstructed.
+        """
+        context = rebuild_export_context(
+            name, self.paths, self.fs, self.campaign.capture.extensions
+        )
+        if context is None:
+            return []
+        set_positive_print_overrides(
+            self.paths,
+            self.fs,
+            name,
+            dmin=dmin,
+            exposure_shift=exposure_shift,
+            contrast=contrast,
+            paper_black=paper_black,
+            paper_soft_clip=paper_soft_clip,
+        )
+        context = replace(
+            context,
+            manual_print_dmin=dmin,
+            manual_print_exposure_shift=exposure_shift,
+            manual_print_contrast=contrast,
+            manual_print_paper_black=paper_black,
+            manual_print_paper_soft_clip=paper_soft_clip,
+        )
+        self.enqueue_export_context(name, ["jpeg_positive"], context)
+        events = self._drain_exports(self._new_deadline())
+        self._persist_state()
+        return events
+
+    def propagate_print_overrides(
+        self, source_name: str, target_names: list[str], *, include_dmin: bool = False
+    ) -> list[SessionEvent]:
+        """Copies `source_name`'s persisted print_engine overrides to every
+        name in `target_names` (06_INTERFACE.md §8ter "Apply to selection")
+        — `source_name` must already have a confirmed override (usually via
+        `apply_manual_print_overrides` on it first); nothing to propagate
+        otherwise (empty list).
+
+        Dmin excluded by default (`include_dmin`): a physical measurement
+        local to *that* negative's own border — propagating it without
+        discernment would reintroduce a color cast rather than correct one
+        (13_INVERSION_NEGATIFS.md §9). Paper-model settings (contrast,
+        exposure, black, soft-clip) are an aesthetic choice, consistent to
+        propagate across one film/box.
+
+        Regenerates `jpeg_positive` for exactly the targets that could be
+        rebuilt, journals a dedicated event listing them (whether or not
+        every target succeeded), and silently skips any name whose RAW or
+        support frame can't be reconstructed rather than aborting the
+        whole batch."""
+        source = load_positive_overrides(self.paths, self.fs).get(source_name)
+        if source is None:
+            return []
+        events: list[SessionEvent] = []
+        applied: list[str] = []
+        for target in target_names:
+            # Not `if apply_manual_print_overrides(...):` — a successful
+            # regeneration of an image that's no longer current produces no
+            # SessionEvent at all (no VALIDATED->COMPLETED transition to
+            # report), so an empty return doesn't mean "skipped". Checking
+            # the context directly is the only reliable signal here.
+            context = rebuild_export_context(
+                target, self.paths, self.fs, self.campaign.capture.extensions
+            )
+            if context is None:
+                continue
+            applied.append(target)
+            events.extend(
+                self.apply_manual_print_overrides(
+                    target,
+                    dmin=source.print_dmin if include_dmin else None,
+                    exposure_shift=source.print_exposure_shift,
+                    contrast=source.print_contrast,
+                    paper_black=source.print_paper_black,
+                    paper_soft_clip=source.print_paper_soft_clip,
+                )
+            )
+        self.journal.log(
+            "POSITIVE_CALIBRATION",
+            "propagated",
+            details={"source": source_name, "targets": applied, "include_dmin": include_dmin},
+        )
         return events
 
     def _log_export(self, task: ExportTask, result: ExportResult | None) -> None:
