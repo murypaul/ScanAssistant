@@ -33,7 +33,6 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "rotate": "V",
         "recompute_frame": "C",
         "toggle_guides": "G",
-        "positive_preview": "P",
         "master_preview": "T",
         "cycle_preview": "K",
         "go_to_name": "Ctrl+G",

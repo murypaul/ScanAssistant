@@ -57,15 +57,14 @@ from scanassistant.gui.update_worker import UpdateApplyWorker, UpdateCheckWorker
 from scanassistant.gui.widgets.export_queue_panel import ExportQueuePanel
 from scanassistant.gui.widgets.history_panel import HistoryPanel
 from scanassistant.gui.widgets.pin_checkbox import make_pin_checkbox
-from scanassistant.gui.widgets.positive_settings_panel import PositiveSettingsPanel
 from scanassistant.gui.wizard.new_campaign import NewCampaignWizard
 from scanassistant.i18n import t
 from scanassistant.imaging.raw import RawpyDecoder
 from scanassistant.journal.journal import Journal
 from scanassistant.metadata.writer import ExifToolMetadataWriter
 from scanassistant.metadata.writer import is_available as is_exiftool_available
-from scanassistant.project.campaign import Campaign, open_campaign, save_campaign
-from scanassistant.project.errors import InvalidCampaignError, ScanAssistantError
+from scanassistant.project.campaign import Campaign, open_campaign
+from scanassistant.project.errors import ScanAssistantError
 from scanassistant.project.inventory import Inventory
 from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.lock import ProjectLock, acquire_lock
@@ -95,9 +94,8 @@ def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
         f"  {c['rotate']}  Rotate 90° (Shift+{c['rotate']}: the other way)",
         f"  {c['go_to_name']}  Go to name",
         f"  {c['recompute_frame']}  Recompute frame",
-        f"  {c['positive_preview']}  Positive preview",
         f"  {c['master_preview']}  Master preview",
-        f"  {c['cycle_preview']}  Cycle preview (negative / positive / master,"
+        f"  {c['cycle_preview']}  Cycle preview (negative / master,"
         f" Shift+{c['cycle_preview']}: the other way)",
         f"  {c['trigger_capture']}  Trigger the camera remotely (tethered camera only)",
         f"  {c['pause_resume']}  Pause / Resume",
@@ -204,20 +202,6 @@ class MainWindow(QMainWindow):
         self.history_dock.setWidget(self.history_panel)
         self.history_dock.setVisible(False)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.history_dock)
-
-        self.positive_settings_panel = PositiveSettingsPanel()
-        self.positive_settings_panel.setting_changed.connect(self._on_positive_setting_changed)
-        self.positive_settings_panel.live_changed.connect(
-            lambda: self.capture_screen.refresh_active_preview(fast=True)
-        )
-        self.positive_settings_panel.settled_changed.connect(
-            self.capture_screen.refresh_active_preview
-        )
-        self.positive_settings_dock = QDockWidget(t("positive_settings.title"), self)
-        self.positive_settings_dock.setObjectName("positiveSettingsDock")
-        self.positive_settings_dock.setWidget(self.positive_settings_panel)
-        self.positive_settings_dock.setVisible(False)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.positive_settings_dock)
 
         self._build_menus()
         self._restore_dock_layout()
@@ -329,7 +313,7 @@ class MainWindow(QMainWindow):
             action.setEnabled(False)
 
         # As with the Capture menu above, no shortcut is attached here:
-        # C/V/P/T are already handled by `CaptureScreen.keyPressEvent`, a
+        # C/V/T are already handled by `CaptureScreen.keyPressEvent`, a
         # `QAction.setShortcut` would double-trigger on every keypress.
         self.processing_menu = menu_bar.addMenu(t("menu.processing"))
         self.action_recompute_frame = self._add_action(
@@ -337,9 +321,6 @@ class MainWindow(QMainWindow):
         )
         self.action_rotate_image = self._add_action(
             self.processing_menu, t("menu.processing_rotate"), None, None
-        )
-        self.action_positive_preview = self._add_action(
-            self.processing_menu, t("menu.processing_positive_preview"), None, None
         )
         self.action_master_preview = self._add_action(
             self.processing_menu, t("menu.processing_master_preview"), None, None
@@ -350,7 +331,6 @@ class MainWindow(QMainWindow):
         for action in (
             self.action_recompute_frame,
             self.action_rotate_image,
-            self.action_positive_preview,
             self.action_master_preview,
             self.action_regenerate,
         ):
@@ -398,17 +378,6 @@ class MainWindow(QMainWindow):
         )
         self.action_history.setCheckable(True)
         self.history_dock.visibilityChanged.connect(self.action_history.setChecked)
-
-        self.action_positive_settings = self._add_action(
-            self.view_menu,
-            t("menu.view_positive_settings"),
-            None,
-            self._toggle_positive_settings_panel,
-        )
-        self.action_positive_settings.setCheckable(True)
-        self.positive_settings_dock.visibilityChanged.connect(
-            self.action_positive_settings.setChecked
-        )
 
         # Not a dock widget (it's an absolutely-positioned overlay on the
         # preview, not something Qt's dock system knows about), so unlike
@@ -503,8 +472,8 @@ class MainWindow(QMainWindow):
         if available == self._capture_docks_available:
             return
         self._capture_docks_available = available
-        docks = (self.export_queue_dock, self.history_dock, self.positive_settings_dock)
-        actions = (self.action_export_queue, self.action_history, self.action_positive_settings)
+        docks = (self.export_queue_dock, self.history_dock)
+        actions = (self.action_export_queue, self.action_history)
         if available:
             for dock in docks:
                 dock.setVisible(self._capture_docks_were_visible.get(dock, False))
@@ -761,26 +730,6 @@ class MainWindow(QMainWindow):
     def _on_history_image_activated(self, name: str) -> None:
         self.capture_screen.reopen_image_for_correction(name)
 
-    # --- "Positive settings" panel ----------------------------------------------
-
-    def _toggle_positive_settings_panel(self) -> None:
-        self.positive_settings_dock.setVisible(not self.positive_settings_dock.isVisible())
-
-    def _on_positive_setting_changed(self, key: str, before: object, after: object) -> None:
-        session = self.capture_screen.session
-        if session is None:
-            return
-        try:
-            save_campaign(session.campaign, session.paths.campaign_json)
-        except InvalidCampaignError as exc:
-            QMessageBox.warning(
-                self, t("project.invalid_setting_title"), format_business_error(exc)
-            )
-            return
-        session.journal.log(
-            "PROJECT", "setting_changed", details={"key": key, "before": before, "after": after}
-        )
-
     # --- metadata ----------------------------------------------------------
 
     def _on_check_exiftool(self) -> None:
@@ -822,12 +771,11 @@ class MainWindow(QMainWindow):
     )
 
     # Regenerate stays disabled permanently: it would duplicate Statistics ▸
-    # Regenerate selection. C/V/P/T are already functional via keyboard and
+    # Regenerate selection. C/V/T are already functional via keyboard and
     # wired here to the Processing menu.
     _PROCESSING_ACTION_SLOTS = (
         "action_recompute_frame",
         "action_rotate_image",
-        "action_positive_preview",
         "action_master_preview",
     )
 
@@ -867,7 +815,6 @@ class MainWindow(QMainWindow):
         )
         self._lock_was_stale = False  # consumed: no double recovery
         self._wire_capture_actions()
-        self.positive_settings_panel.load(campaign.exports.jpeg_positive)
         self._show_capture()
 
     def _check_capture_entry_conditions(
@@ -932,7 +879,6 @@ class MainWindow(QMainWindow):
             (
                 self.capture_screen.recompute_frame,
                 self.capture_screen.rotate_image_action,
-                self.capture_screen.toggle_positive_preview,
                 self.capture_screen.toggle_master_preview,
             ),
             strict=True,
@@ -975,7 +921,6 @@ class MainWindow(QMainWindow):
             (
                 self.capture_screen.recompute_frame,
                 self.capture_screen.rotate_image_action,
-                self.capture_screen.toggle_positive_preview,
                 self.capture_screen.toggle_master_preview,
             ),
             strict=True,
@@ -988,7 +933,6 @@ class MainWindow(QMainWindow):
     def _on_capture_stopped(self) -> None:
         self._unwire_capture_actions()
         self._refresh_history_panel()
-        self.positive_settings_panel.clear_panel()
         self.project_screen.refresh()
         self._show_project()
 

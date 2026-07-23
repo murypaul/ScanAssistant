@@ -17,7 +17,6 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
-import cv2
 import numpy as np
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer, Signal
@@ -78,7 +77,6 @@ from scanassistant.imaging.framing import (
     FrameResult,
 )
 from scanassistant.imaging.geometry import FrameGeometry, apply_geometry
-from scanassistant.imaging.positive import ManualSettings, render_positive
 from scanassistant.imaging.raw import RawDecoder, RawpyDecoder
 from scanassistant.imaging.white_balance import sample_white_balance
 from scanassistant.journal.journal import Journal
@@ -256,37 +254,6 @@ def _canonical_point_from_display(
     return canonical.x, canonical.y
 
 
-_FAST_PREVIEW_MAX_DIM = 480
-
-
-def _downscaled_for_fast_preview(
-    pixels: np.ndarray, frame: FrameResult | None
-) -> tuple[np.ndarray, FrameResult | None]:
-    """A much smaller copy of `pixels` (long edge ~480px) for the positive/
-    master preview while a Positive-settings slider is being dragged: the
-    tone-curve math (`imaging.positive.render_positive`) runs on every
-    mouse-move and is expensive enough at full preview resolution to
-    visibly stutter. `frame`'s coordinates are scaled down to match — it
-    must stay in the same space as the pixels it's cropping."""
-    height, width = pixels.shape[:2]
-    scale = _FAST_PREVIEW_MAX_DIM / max(height, width)
-    if scale >= 1.0:
-        return pixels, frame
-    resized = cv2.resize(
-        pixels, (round(width * scale), round(height * scale)), interpolation=cv2.INTER_AREA
-    )
-    if frame is None:
-        return resized, None
-    scaled_frame = replace(
-        frame,
-        x=frame.x * scale,
-        y=frame.y * scale,
-        width=frame.width * scale,
-        height=frame.height * scale,
-    )
-    return resized, scaled_frame
-
-
 class _CameraBridge(QObject):
     """`CameraController`'s callbacks fire on its own background thread —
     this relays them as Signals, which Qt delivers safely to the Qt thread
@@ -332,7 +299,6 @@ class CaptureScreen(QWidget):
         self._current_frame_result: FrameResult | None = None
         self._current_preview_pixels: np.ndarray | None = None
         self._current_preview_scale_factor: float = 1.0
-        self._positive_preview_active = False
         self._master_preview_active = False
         self._pending_conflict: NameConflictDetected | None = None
         self._capture_trigger_deadline: float | None = None
@@ -916,9 +882,8 @@ class CaptureScreen(QWidget):
         # or crop edit before the cursor moves on, but never let one linger
         # onto a different image's export regardless of how we got here.
         self._flush_pending_edits()
-        # Each new image starts back in plain negative view — positive/master
+        # Each new image starts back in plain negative view — master preview
         # is a per-image check, not a standing preference to carry forward.
-        self._positive_preview_active = False
         self._master_preview_active = False
         self._loaded_preview_for = name
         self._current_frame_result = None
@@ -1040,16 +1005,6 @@ class CaptureScreen(QWidget):
         self._display_current_preview()
         self._update_confidence_label()
 
-    # --- positive preview (P key) -----------------------------------------------
-
-    def toggle_positive_preview(self) -> None:
-        if self._current_preview_pixels is None:
-            return
-        self._positive_preview_active = not self._positive_preview_active
-        if self._positive_preview_active:
-            self._master_preview_active = False  # only one toggle active at a time
-        self._display_current_preview()
-
     # --- master preview (T key) -------------------------------------------------
 
     def toggle_master_preview(self) -> None:
@@ -1057,66 +1012,27 @@ class CaptureScreen(QWidget):
         if self._current_preview_pixels is None:
             return
         self._master_preview_active = not self._master_preview_active
-        if self._master_preview_active:
-            self._positive_preview_active = False  # only one toggle active at a time
         self._display_current_preview()
 
     # --- cycle preview (K key) ---------------------------------------------------
 
     def cycle_preview_action(self, *, direction: int = 1) -> None:
-        """K key: negative → positive → master → negative (Shift+K: the other
-        way around), independent of P/T."""
+        """K key: negative ↔ master (Shift+K: the other way around) — a
+        2-state cycle, same underlying toggle as T. Positive judgment no
+        longer lives in capture at all (DECISIONS.md I-173): tonal review
+        happens post-capture, in the dedicated calibration screen."""
         if self._current_preview_pixels is None:
             return
-        if direction >= 0:
-            if not self._positive_preview_active and not self._master_preview_active:
-                self._positive_preview_active = True
-            elif self._positive_preview_active:
-                self._positive_preview_active = False
-                self._master_preview_active = True
-            else:
-                self._master_preview_active = False
-        else:
-            if not self._positive_preview_active and not self._master_preview_active:
-                self._master_preview_active = True
-            elif self._master_preview_active:
-                self._master_preview_active = False
-                self._positive_preview_active = True
-            else:
-                self._positive_preview_active = False
+        self._master_preview_active = not self._master_preview_active
         self._display_current_preview()
 
-    def refresh_active_preview(self, *, fast: bool = False) -> None:
-        """Re-renders the positive/master preview from what's already in memory —
-        no RAW redecode. Called whenever Positive settings changes; `fast`
-        (mid-drag on a slider) trades resolution for speed so the preview
-        keeps up with the mouse instead of stuttering."""
-        if self._positive_preview_active or self._master_preview_active:
-            self._display_current_preview(fast=fast)
-
-    def _display_current_preview(self, *, fast: bool = False) -> None:
-        """Switches between negative / positive (P) / master (T) preview in the same area."""
+    def _display_current_preview(self) -> None:
+        """Switches between negative / master (T) preview in the same area."""
         pixels = self._current_preview_pixels
         if pixels is None:
             return
-        if self._positive_preview_active:
-            if fast:
-                small_pixels, small_frame = _downscaled_for_fast_preview(
-                    pixels, self._current_frame_result
-                )
-                image = self._render_positive_preview(small_pixels, frame_override=small_frame)
-            else:
-                image = self._render_positive_preview(pixels)
-            self.preview_area.show_image(image)
-            self.preview_area.set_frame_overlay(None)  # not relevant to the inverted positive
-        elif self._master_preview_active:
-            if fast:
-                small_pixels, small_frame = _downscaled_for_fast_preview(
-                    pixels, self._current_frame_result
-                )
-                image = self._render_master_preview(small_pixels, frame_override=small_frame)
-            else:
-                image = self._render_master_preview(pixels)
+        if self._master_preview_active:
+            image = self._render_master_preview(pixels)
             self.preview_area.show_image(image)
             self.preview_area.set_frame_overlay(None)  # frame is already applied, no need to repeat
         else:
@@ -1127,18 +1043,13 @@ class CaptureScreen(QWidget):
             self.preview_area.show_image(rotated_pixels)
             self.preview_area.set_frame_overlay(rotated_frame)
             # Negative view only — deliberately not refreshed when toggled to
-            # positive/master (P/T), a differently-toned rendering the
-            # histogram isn't meant to track.
+            # master (T), a differently-cropped view the histogram isn't
+            # meant to track.
             self.histogram_widget.set_pixels(rotated_pixels)
 
-    def _render_master_preview(
-        self, preview_pixels: np.ndarray, *, frame_override: FrameResult | None = None
-    ) -> np.ndarray:
+    def _render_master_preview(self, preview_pixels: np.ndarray) -> np.ndarray:
         """Preview with the frame *and rotation* applied, on the preview already in
-        memory — no RAW redecode. `frame_override` (already in `preview_pixels`'s
-        own coordinate space) is used instead of `self._current_frame_result`
-        when set — the fast/downscaled preview path needs this, since the
-        real frame's coordinates wouldn't match a shrunk pixel array.
+        memory — no RAW redecode.
 
         Same geometry logic as the real export (`imaging.geometry.apply_geometry`,
         reused as-is), but always in `native` mode: this toggle shows the
@@ -1156,7 +1067,7 @@ class CaptureScreen(QWidget):
         current = self.session.state.current_image if self.session is not None else None
         if current is None:
             return preview_pixels
-        frame = frame_override if frame_override is not None else self._current_frame_result
+        frame = self._current_frame_result
         geometry = apply_geometry(
             preview_pixels,
             FrameGeometry(
@@ -1170,73 +1081,6 @@ class CaptureScreen(QWidget):
             size_mode="native",
         )
         return geometry.pixels
-
-    def _render_positive_preview(
-        self, preview_pixels: np.ndarray, *, frame_override: FrameResult | None = None
-    ) -> np.ndarray:
-        """Positive rendered from the preview already in memory, using campaign settings.
-
-        Crop/deskew/rotation applied first (same geometry as the master
-        preview) so the positive preview matches what the actual export will
-        look like, not the raw unrotated negative.
-        """
-        assert self.session is not None
-        config = self.session.campaign.exports.jpeg_positive
-        manual = config.manual_settings
-        framed_pixels = self._render_master_preview(preview_pixels, frame_override=frame_override)
-        if frame_override is None:
-            framed_pixels = self._apply_content_frame_preview(framed_pixels)
-        # `imaging.positive.render_positive` expects 16-bit input; the preview
-        # is 8-bit (`imaging.preview.Preview.pixels`) — exact rescale
-        # (255 * 257 = 65535), no extra library needed.
-        array16 = framed_pixels.astype(np.uint16) * 257
-        positive16 = render_positive(
-            array16,
-            horizontal_flip=config.horizontal_flip,
-            mode=config.mode,
-            manual=ManualSettings(
-                exposure_ev=manual.exposure_ev,
-                contrast=manual.contrast,
-                shadows=manual.shadows,
-                highlights=manual.highlights,
-            ),
-        )
-        positive8 = (positive16 // 257).astype(np.uint8)
-        return np.stack([positive8, positive8, positive8], axis=-1)
-
-    def _apply_content_frame_preview(self, framed_pixels: np.ndarray) -> np.ndarray:
-        """Read-only reflection of the content frame already applied to the
-        last `jpeg_positive` export (`session.state.current_image.
-        content_framing`) — never recomputed here: detection only ever runs
-        in the background export task (`imaging.content_framing`), never on
-        this synchronous preview path. Skipped for the fast/downscaled
-        preview (`frame_override` set): that path uses its own, unrelated
-        scale, not `_current_preview_scale_factor`.
-
-        Nothing to show before the first `jpeg_positive` export has run for
-        this image (`content_framing` is still `None`) — the preview then
-        falls back to the support-frame crop alone, same as before this was
-        added.
-        """
-        session = self.session
-        current = session.state.current_image if session is not None else None
-        content_framing = current.content_framing if current is not None else None
-        if content_framing is None or content_framing.outcome != "applied":
-            return framed_pixels
-        # `content_framing` is in reference/master-pixel space, same
-        # convention as `framing` — `scale_factor` is reference/preview
-        # (`imaging.preview.Preview.scale_factor`), so converting to this
-        # preview's space divides, the opposite direction of
-        # `_to_reference_space`.
-        scale = self._current_preview_scale_factor
-        height, width = framed_pixels.shape[:2]
-        x0 = max(0, round(content_framing.x / scale))
-        y0 = max(0, round(content_framing.y / scale))
-        x1 = min(width, x0 + round(content_framing.width / scale))
-        y1 = min(height, y0 + round(content_framing.height / scale))
-        if x1 <= x0 or y1 <= y0:
-            return framed_pixels
-        return framed_pixels[y0:y1, x0:x1]
 
     def _apply_frame_result(
         self, name: str, journal_action: str, frame: FrameResult, *, rescued: bool = False
@@ -1371,8 +1215,6 @@ class CaptureScreen(QWidget):
                 self.recompute_frame()
             elif matches(event, actions["toggle_guides"]):
                 self._toggle_guides()
-            elif matches(event, actions["positive_preview"]):
-                self.toggle_positive_preview()
             elif matches(event, actions["master_preview"]):
                 self.toggle_master_preview()
             elif matches(event, actions["cycle_preview"]):
@@ -1426,10 +1268,9 @@ class CaptureScreen(QWidget):
     # capture, plus mouse drag on the frame overlay (`PreviewArea`) ------------
 
     def _ensure_negative_view_for_editing(self) -> None:
-        """Framing is judged on the raw negative, not its inverted positive
-        or an already-applied crop — switch back to it before editing."""
-        if self._positive_preview_active or self._master_preview_active:
-            self._positive_preview_active = False
+        """Framing is judged on the raw negative, not an already-applied
+        crop — switch back to it before editing."""
+        if self._master_preview_active:
             self._master_preview_active = False
             self._display_current_preview()
 
@@ -1903,7 +1744,6 @@ class CaptureScreen(QWidget):
         self._dispatch(events)
         current = session.state.current_image
         assert current is not None
-        self._positive_preview_active = False
         self._master_preview_active = False
         self._load_preview_known_frame(current.assigned_name, current.extension, current.framing)
         self._refresh_banner()
