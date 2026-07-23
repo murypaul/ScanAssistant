@@ -101,6 +101,12 @@ class PrintResult:
     # received — same space `imaging.content_framing.ContentFrameResult`
     # already uses elsewhere, so callers can build a `ContentFrameOutcome`
     # from it exactly like the existing `imaging.positive` pipeline does.
+    support_shape: tuple[int, int]  # (height, width) of that same coordinate
+    # space — callers building a `ContentFrameOutcome.fraction` need this as
+    # the denominator; `imaging.master.DevelopedMaster.pixels.shape` is a
+    # valid stand-in when one is already available (same geometry params),
+    # but a caller with no master at all (`core.positive_finalize_runner`)
+    # needs it from here instead of a redundant second geometry pass.
 
 
 def render_print(
@@ -228,6 +234,7 @@ def render_print_from_linear(
         content_mask_source=mask_source,
         local_contrast_applied=local_contrast_applied,
         content_frame=content_frame,
+        support_shape=(linear.shape[0], linear.shape[1]),
     )
 
 

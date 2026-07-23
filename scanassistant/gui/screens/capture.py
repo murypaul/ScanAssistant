@@ -56,7 +56,13 @@ from scanassistant.core.events import (
 from scanassistant.core.events import Warning as WarningEvent
 from scanassistant.core.export_runner import MasterExportRunner
 from scanassistant.core.fs import FileSystem
-from scanassistant.core.queue import ExportExecutor, ExportRunner, InlineExportExecutor
+from scanassistant.core.positive_finalize_runner import PositiveFinalizeRunner
+from scanassistant.core.queue import (
+    ExportExecutor,
+    ExportRunner,
+    InlineExportExecutor,
+    PooledExportExecutor,
+)
 from scanassistant.core.session import CaptureSession, SessionHistoryEntry
 from scanassistant.gui.errors import format_critical, format_warning
 from scanassistant.gui.preview_worker import PreviewResult, PreviewWorker
@@ -282,6 +288,7 @@ class CaptureScreen(QWidget):
         camera_config: CameraConfig | None = None,
         camera_backend: CameraBackend | None = None,
         persist_camera_config: Callable[[], None] | None = None,
+        positive_finalize_workers: int = 3,
     ) -> None:
         super().__init__(parent)
         self.session: CaptureSession | None = None
@@ -293,6 +300,10 @@ class CaptureScreen(QWidget):
         # user-facing instantiation passes a `ThreadedExportExecutor`, so a
         # slow export never freezes the Qt thread (DECISIONS.md I-92/I-98).
         self._export_executor_override = export_executor
+        # `processing.positive_finalize_workers` (DECISIONS.md I-179):
+        # sizes the dedicated pool built per-session below, only ever used
+        # for a print_engine campaign's jpeg_positive.
+        self._positive_finalize_workers = positive_finalize_workers
         self._preview_worker: PreviewWorker | None = None
         self._stabilizing: set[Path] = set()
         self._loaded_preview_for: str | None = None
@@ -586,6 +597,25 @@ class CaptureScreen(QWidget):
             metadata_writer=ExifToolMetadataWriter(executable=exiftool_executable),
             journal=journal,
         )
+        # Dedicated pool for jpeg_positive (DECISIONS.md I-179/I-182): only
+        # for a print_engine campaign — a real render measured ~16.7s
+        # (RAW decode + density-domain), enough to make the master export
+        # queue fall behind capture if it ran on the same single worker as
+        # tiff/jpeg_master above. `None`/`None` for a legacy-engine campaign
+        # leaves jpeg_positive on that regular path, unchanged.
+        positive_finalize_runner: ExportRunner | None = None
+        positive_finalize_executor: ExportExecutor | None = None
+        if campaign.exports.jpeg_positive.engine == "print_engine":
+            positive_finalize_runner = PositiveFinalizeRunner(
+                decoder=self._decoder,
+                campaign=campaign,
+                paths=paths,
+                metadata_writer=ExifToolMetadataWriter(executable=exiftool_executable),
+                journal=journal,
+            )
+            positive_finalize_executor = PooledExportExecutor(
+                worker_count=self._positive_finalize_workers
+            )
         self.session = CaptureSession(
             paths=paths,
             campaign=campaign,
@@ -596,6 +626,8 @@ class CaptureScreen(QWidget):
             monitor=monitor,
             export_runner=export_runner,
             export_executor=self._export_executor_override or InlineExportExecutor(),
+            positive_finalize_runner=positive_finalize_runner,
+            positive_finalize_executor=positive_finalize_executor,
             disk_warn_gb=disk_warn_gb,
             disk_critical_gb=disk_critical_gb,
             max_name_length=max_name_length,
@@ -630,7 +662,7 @@ class CaptureScreen(QWidget):
             self._session_history_by_root[self.session.paths.root] = self.session.session_history()
             self._dispatch(self.session.stop(wait_for_exports=wait_for_exports))
             if wait_for_exports:
-                self.session.export_executor.shutdown()  # releases the background thread, if any
+                self.session.shutdown_executors()  # releases the background thread(s), if any
             # else: abandoned deliberately (Quit without waiting) — the
             # daemon thread dies with the process, whatever it was still
             # writing is safely re-run from the untouched RAW next launch.
@@ -686,7 +718,7 @@ class CaptureScreen(QWidget):
             self._preview_worker.wait(_PREVIEW_WORKER_SHUTDOWN_TIMEOUT_MS)
         if self.session is not None:
             if wait_for_exports:
-                self.session.export_executor.shutdown()
+                self.session.shutdown_executors()
             self.session = None
         self._pending_conflict = None
         self.conflict_panel.setVisible(False)

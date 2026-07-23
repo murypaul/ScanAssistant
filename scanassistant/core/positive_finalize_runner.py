@@ -14,17 +14,26 @@ built for exactly this.
 
 Ignores `ExportContext.content_frame_override`/`manual_positive_settings`
 (the "Recadrage des positifs" screen's manual fields, `imaging.positive`'s
-own parameter model): the calibration screen for this new engine
-(specifications/13_INVERSION_NEGATIFS.md §9) has its own override
-mechanism, not yet wired in — until it is, this runner only ever produces
-the fully-automatic render.
+own parameter model — a different engine's parameter space). Does honor
+`manual_print_*` (the print_engine calibration screen's own overrides,
+DECISIONS.md I-181) and reports `PrintResult.flagged` back as
+`ContentFrameOutcome.tonal_flagged`, same as `core.export_runner`'s own
+print_engine path — an image finalized through this pool must classify
+into deferred/applied/manual exactly the same way regardless of which of
+the two passes actually rendered it.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from scanassistant.core.queue import ExportContext, ExportFailure, ExportResult, ExportTask
+from scanassistant.core.queue import (
+    ContentFrameOutcome,
+    ExportContext,
+    ExportFailure,
+    ExportResult,
+    ExportTask,
+)
 from scanassistant.imaging import positive as positive_pipeline
 from scanassistant.imaging import print_engine
 from scanassistant.imaging.geometry import FrameGeometry
@@ -72,7 +81,7 @@ class PositiveFinalizeRunner:
             return None
 
         try:
-            result = self._render(task.name, context)
+            path, outcome = self._render(task.name, context)
         except Exception as exc:  # unreadable/corrupt RAW, same catalog entry
             # as the quick pass (E-05) — a finalize failure never touches the
             # tier-1 file already on disk, so the image keeps a valid
@@ -88,10 +97,10 @@ class PositiveFinalizeRunner:
             )
             return ExportFailure(code="E-05", message=message)
 
-        self._write_metadata(task.name, context, result)
-        return ExportResult()
+        self._write_metadata(task.name, context, path)
+        return ExportResult(content_frame=outcome)
 
-    def _render(self, name: str, context: ExportContext) -> Path:
+    def _render(self, name: str, context: ExportContext) -> tuple[Path, ContentFrameOutcome]:
         positive_cfg = self._campaign.exports.jpeg_positive
         framing = self._campaign.framing
         frame = FrameGeometry(
@@ -101,6 +110,13 @@ class PositiveFinalizeRunner:
             height=context.height,
             angle_deg=context.angle_deg,
         )
+        overrides = print_engine.ManualPrintOverrides(
+            dmin=context.manual_print_dmin,
+            exposure_shift=context.manual_print_exposure_shift,
+            contrast=context.manual_print_contrast,
+            paper_black=context.manual_print_paper_black,
+            paper_soft_clip=context.manual_print_paper_soft_clip,
+        )
         print_result = print_engine.render_print(
             self._decoder,
             context.raw_path,
@@ -109,6 +125,8 @@ class PositiveFinalizeRunner:
             size_mode=framing.size_mode,
             final_dimensions_px=_final_dimensions(framing.final_dimensions_px),
             user_wb=self._campaign.imaging.white_balance,
+            overrides=overrides,
+            horizontal_flip=positive_cfg.horizontal_flip,
         )
         path = self._paths.jpeg_positive_dir / f"{name}{positive_cfg.suffix}.jpg"
         positive_pipeline.write_jpeg_positive(
@@ -132,7 +150,25 @@ class PositiveFinalizeRunner:
             },
             result="ok",
         )
-        return path
+        x, y, w, h = print_result.content_frame
+        support_height, support_width = print_result.support_shape
+        support_area = support_width * support_height
+        outcome = ContentFrameOutcome(
+            x=x,
+            y=y,
+            width=w,
+            height=h,
+            fill=1.0,
+            area_ratio=(w * h) / support_area if support_area > 0 else 0.0,
+            source="auto",
+            tonal_flagged=print_result.flagged,
+            fraction=(
+                (x / support_width, y / support_height, w / support_width, h / support_height)
+                if support_width > 0 and support_height > 0
+                else None
+            ),
+        )
+        return path, outcome
 
     def _write_metadata(self, name: str, context: ExportContext, derivative_path: Path) -> None:
         production = ProductionInfo(name=name, source_file=context.source_file)

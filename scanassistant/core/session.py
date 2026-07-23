@@ -130,6 +130,8 @@ class CaptureSession:
         monitor: FolderMonitor,
         export_runner: ExportRunner,
         export_executor: ExportExecutor | None = None,
+        positive_finalize_runner: ExportRunner | None = None,
+        positive_finalize_executor: ExportExecutor | None = None,
         now_wall: type[datetime] = datetime,
         disk_warn_gb: float = 10.0,
         disk_critical_gb: float = 2.0,
@@ -150,6 +152,18 @@ class CaptureSession:
         # (`gui.main_window`), so a slow export never freezes the Qt thread
         # (DECISIONS.md I-92/I-98).
         self.export_executor = export_executor or InlineExportExecutor()
+        # Dedicated pool for jpeg_positive when exports.jpeg_positive.engine
+        # == "print_engine" (DECISIONS.md I-179/I-182): measured at ~16.7s
+        # for a real image (RAW decode + density-domain render) versus
+        # ~1.8s for the legacy pipeline's incremental cost on top of the
+        # master decode tiff/jpeg_master already need — routing it through
+        # `self.export_executor` (the same single worker as tiff/jpeg_master)
+        # would make the master export queue fall behind capture, the one
+        # thing it must never do. `None` (the default: CLI, tests, a
+        # legacy-engine campaign) keeps jpeg_positive on the regular path,
+        # unchanged from before this existed.
+        self._positive_finalize_runner = positive_finalize_runner
+        self._positive_finalize_executor = positive_finalize_executor
         self._now_wall = now_wall
         self._disk_warn_gb = disk_warn_gb
         self._disk_critical_gb = disk_critical_gb
@@ -543,6 +557,20 @@ class CaptureSession:
             "jpeg_positive": exports.jpeg_positive.enabled,
         }[kind]
 
+    def _executor_and_runner_for(self, kind: str) -> tuple[ExportExecutor, ExportRunner]:
+        """Routes `jpeg_positive` to the dedicated finalize pool when the
+        campaign uses `print_engine` and one was configured (DECISIONS.md
+        I-179/I-182) — every other kind, and jpeg_positive on the legacy
+        engine, stays on the regular single-worker path."""
+        if (
+            kind == "jpeg_positive"
+            and self.campaign.exports.jpeg_positive.engine == "print_engine"
+            and self._positive_finalize_executor is not None
+            and self._positive_finalize_runner is not None
+        ):
+            return self._positive_finalize_executor, self._positive_finalize_runner
+        return self.export_executor, self.export_runner
+
     def _drain_exports(
         self, deadline: float | None = None, *, wait: bool = True
     ) -> list[SessionEvent]:
@@ -569,7 +597,8 @@ class CaptureSession:
                 break
             task = self.export_queue.checkout_next()
             assert task is not None
-            self.export_executor.submit(task, self.export_runner)
+            executor, runner = self._executor_and_runner_for(task.kind)
+            executor.submit(task, runner)
             submitted_any = True
 
         if deadline is None and wait:
@@ -578,8 +607,13 @@ class CaptureSession:
             # unless the caller explicitly opted out (`wait=False`,
             # `processing.drain_on_exit`).
             self.export_executor.wait_idle()
+            if self._positive_finalize_executor is not None:
+                self._positive_finalize_executor.wait_idle()
 
-        for task, result in self.export_executor.collect_completed():
+        completed = list(self.export_executor.collect_completed())
+        if self._positive_finalize_executor is not None:
+            completed += self._positive_finalize_executor.collect_completed()
+        for task, result in completed:
             self.export_queue.complete(task)
             stale_count = self._stale_completions.get(task.name)
             if stale_count:
@@ -1551,6 +1585,14 @@ class CaptureSession:
         self.state.mode = "preparation"
         self._persist_state()
         return events
+
+    def shutdown_executors(self) -> None:
+        """Releases both background executors' worker thread(s), if any —
+        `self.export_executor` and, when configured, the print_engine
+        finalize pool (DECISIONS.md I-179/I-182). Call after `stop()`."""
+        self.export_executor.shutdown()
+        if self._positive_finalize_executor is not None:
+            self._positive_finalize_executor.shutdown()
 
     def collect_export_progress(self) -> list[SessionEvent]:
         """Non-blocking check-in while waiting out a `stop(wait_for_exports=False)`.

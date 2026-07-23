@@ -164,6 +164,7 @@ class MainWindow(QMainWindow):
             shortcuts=self._shortcuts,
             camera_config=context.config.camera,
             persist_camera_config=lambda: save_config(context.config),
+            positive_finalize_workers=context.config.processing.positive_finalize_workers,
         )
         self.capture_screen.stopped.connect(self._on_capture_stopped)
         self.capture_screen.queue_changed.connect(self._refresh_export_queue_panel)
