@@ -233,10 +233,20 @@ class PreferencesDialog(QDialog):
         self.max_name_length_spin.setToolTip(t("preferences.max_name_length_tooltip"))
         self.max_name_length_spin.editingFinished.connect(self._on_max_name_length_changed)
 
+        self.positive_finalize_workers_spin = QSpinBox()
+        self.positive_finalize_workers_spin.setRange(1, 4)
+        self.positive_finalize_workers_spin.setToolTip(
+            t("preferences.positive_finalize_workers_tooltip")
+        )
+        self.positive_finalize_workers_spin.editingFinished.connect(
+            self._on_positive_finalize_workers_changed
+        )
+
         form = QFormLayout()
         form.addRow(t("preferences.exiftool"), exiftool_row)
         form.addRow(self.drain_on_exit_check)
         form.addRow(t("preferences.max_name_length"), self.max_name_length_spin)
+        form.addRow(t("preferences.positive_finalize_workers"), self.positive_finalize_workers_spin)
 
         widget = QWidget()
         widget.setLayout(form)
@@ -265,6 +275,12 @@ class PreferencesDialog(QDialog):
 
     def _on_max_name_length_changed(self) -> None:
         self.context.config.csv.max_name_length = self.max_name_length_spin.value()
+        self._save()
+
+    def _on_positive_finalize_workers_changed(self) -> None:
+        self.context.config.processing.positive_finalize_workers = (
+            self.positive_finalize_workers_spin.value()
+        )
         self._save()
 
     # --- Thresholds --------------------------------------------------------
@@ -542,6 +558,7 @@ class PreferencesDialog(QDialog):
         self.exiftool_edit.setText(c.paths.exiftool)
         self.drain_on_exit_check.setChecked(c.processing.drain_on_exit)
         self.max_name_length_spin.setValue(c.csv.max_name_length)
+        self.positive_finalize_workers_spin.setValue(c.processing.positive_finalize_workers)
         self._refresh_thresholds()
         self.check_enabled_check.setChecked(c.updates.check_enabled)
         self._refresh_shortcuts()

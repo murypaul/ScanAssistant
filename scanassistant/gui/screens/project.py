@@ -662,6 +662,19 @@ class ProjectScreen(QWidget):
 
         self.jpeg_positive_enabled_check = QCheckBox(t("wizard.step5.enabled"))
         self.jpeg_positive_enabled_check.toggled.connect(self._on_jpeg_positive_enabled_changed)
+        # Which engine renders jpeg_positive at all — mode/manual settings
+        # below only ever apply to "legacy" (DECISIONS.md I-181: the two
+        # engines' parameter spaces are independent, never converted into
+        # each other), so switching to "print_engine" disables them rather
+        # than leaving controls on screen that silently do nothing.
+        self.jpeg_positive_engine_combo = QComboBox()
+        self.jpeg_positive_engine_combo.addItem(t("wizard.step5.engine_legacy"), "legacy")
+        self.jpeg_positive_engine_combo.addItem(
+            t("wizard.step5.engine_print_engine"), "print_engine"
+        )
+        self.jpeg_positive_engine_combo.currentIndexChanged.connect(
+            self._on_jpeg_positive_engine_changed
+        )
         self.jpeg_positive_quality_spin = QSpinBox()
         self.jpeg_positive_quality_spin.setRange(1, 100)
         self.jpeg_positive_quality_spin.editingFinished.connect(
@@ -690,6 +703,7 @@ class ProjectScreen(QWidget):
 
         jpeg_positive_form = QFormLayout()
         jpeg_positive_form.addRow(self.jpeg_positive_enabled_check)
+        jpeg_positive_form.addRow(t("wizard.step5.engine"), self.jpeg_positive_engine_combo)
         jpeg_positive_form.addRow(t("wizard.step5.quality"), self.jpeg_positive_quality_spin)
         jpeg_positive_form.addRow(t("wizard.step5.long_edge"), self.jpeg_positive_long_edge_spin)
         jpeg_positive_form.addRow(t("wizard.step5.mode"), self.jpeg_positive_mode_combo)
@@ -698,8 +712,9 @@ class ProjectScreen(QWidget):
         jpeg_positive_group = QGroupBox(t("wizard.step5.jpeg_positive_group"))
         jpeg_positive_group.setLayout(jpeg_positive_form)
 
-        # Manual settings: never locked during capture, adjustable live
-        # alongside the positive preview (P key).
+        # Manual settings: the legacy engine's own "manual" mode
+        # (jpeg_positive_mode_combo above) — only meaningful for that
+        # engine (see the engine combo's own comment).
         self.manual_exposure_spin = QDoubleSpinBox()
         self.manual_exposure_spin.setRange(-3.0, 3.0)
         self.manual_exposure_spin.setSingleStep(0.1)
@@ -718,14 +733,14 @@ class ProjectScreen(QWidget):
         manual_form.addRow(t("wizard.step5.contrast"), self.manual_contrast_spin)
         manual_form.addRow(t("wizard.step5.shadows"), self.manual_shadows_spin)
         manual_form.addRow(t("wizard.step5.highlights"), self.manual_highlights_spin)
-        manual_group = QGroupBox(t("wizard.step5.manual_group"))
-        manual_group.setLayout(manual_form)
+        self.manual_group = QGroupBox(t("wizard.step5.manual_group"))
+        self.manual_group.setLayout(manual_form)
 
         layout = QVBoxLayout()
         layout.addWidget(tiff_group)
         layout.addWidget(jpeg_master_group)
         layout.addWidget(jpeg_positive_group)
-        layout.addWidget(manual_group)
+        layout.addWidget(self.manual_group)
         layout.addStretch(1)
         widget = QWidget()
         widget.setLayout(layout)
@@ -744,6 +759,7 @@ class ProjectScreen(QWidget):
             self.jpeg_master_quality_spin,
             self.jpeg_master_long_edge_spin,
             self.jpeg_positive_enabled_check,
+            self.jpeg_positive_engine_combo,
             self.jpeg_positive_quality_spin,
             self.jpeg_positive_long_edge_spin,
             self.jpeg_positive_mode_combo,
@@ -769,6 +785,10 @@ class ProjectScreen(QWidget):
             self.jpeg_master_quality_spin.setValue(e.jpeg_master.quality)
             self.jpeg_master_long_edge_spin.setValue(e.jpeg_master.long_edge_px)
             self.jpeg_positive_enabled_check.setChecked(e.jpeg_positive.enabled)
+            self.jpeg_positive_engine_combo.setCurrentIndex(
+                self.jpeg_positive_engine_combo.findData(e.jpeg_positive.engine)
+            )
+            self._apply_engine_enabled_state(e.jpeg_positive.engine)
             self.jpeg_positive_quality_spin.setValue(e.jpeg_positive.quality)
             self.jpeg_positive_long_edge_spin.setValue(e.jpeg_positive.long_edge_px)
             self.jpeg_positive_mode_combo.setCurrentIndex(
@@ -820,6 +840,20 @@ class ProjectScreen(QWidget):
         self._commit_export_field(
             "jpeg_positive.enabled", "jpeg_positive", "enabled", bool(checked)
         )
+
+    def _on_jpeg_positive_engine_changed(self, _index: int) -> None:
+        engine = self.jpeg_positive_engine_combo.currentData()
+        self._commit_export_field("jpeg_positive.engine", "jpeg_positive", "engine", engine)
+        self._apply_engine_enabled_state(engine)
+
+    def _apply_engine_enabled_state(self, engine: str) -> None:
+        """Mode/manual settings only ever apply to the legacy engine
+        (DECISIONS.md I-181) — disabled rather than hidden for print_engine,
+        so the values stay visible (and still editable if switched back)
+        instead of vanishing."""
+        legacy = engine == "legacy"
+        self.jpeg_positive_mode_combo.setEnabled(legacy)
+        self.manual_group.setEnabled(legacy)
 
     def _on_jpeg_positive_quality_changed(self) -> None:
         self._commit_export_field(

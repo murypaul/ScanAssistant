@@ -92,12 +92,15 @@ preview. The crop overlay is green (reliable), orange (needs a look), or
 red (couldn't be determined — falls back to the full frame); it carries
 a dark keyline on both sides of its color so it stays visible whatever
 the negative's own cast happens to be. Press `T` to preview the crop
-actually applied instead of the raw frame with an overlay; press `P` to
-preview the positive rendering instead.
+actually applied instead of the raw frame with an overlay.
 
 A small, translucent luminance histogram sits in a corner of the preview
 — a quick read on exposure at a glance. It follows the plain negative
-view only, not the positive/master preview toggles above.
+view only, not the master preview toggle above. There is no positive
+preview during capture: judging tone belongs to the dedicated
+[Positive calibration](#positive-calibration) screen, after capture — see
+below. Capture itself is judged on the raw negative and its histogram,
+which is enough to catch an exposure problem at a glance.
 
 ## Keyboard shortcuts
 
@@ -121,9 +124,8 @@ a time.
 | V | Rotate 90° (cycles 0°→90°→180°→270°) — Shift+V rotates the other way |
 | Ctrl+G | Go to an existing pending name (autocompletes as you type) |
 | C | Recompute the frame (rerun automatic detection) |
-| P | Toggle positive preview |
 | T | Toggle master (applied-crop) preview |
-| K | Cycle preview (negative → positive → master), independent of P/T — Shift+K cycles the other way |
+| K | Cycle preview (negative → master), same toggle as T — Shift+K cycles the other way |
 | Tab | Pause / resume |
 | Space | Trigger a remote capture (tethered camera only, see [Tethered capture](#tethered-capture-live-view--remote-trigger) below) |
 | L | Toggle live view on/off (tethered camera only) |
@@ -134,7 +136,7 @@ a time.
 ### Adjusting the crop
 
 No mode to enter — always available on the plain negative view (switches
-you back to it automatically if a positive/master preview was open):
+you back to it automatically if the master preview was open):
 
 | Input | Action |
 | --- | --- |
@@ -255,35 +257,81 @@ Manual edits and re-detections regenerate the exports for that image only;
 already-finalized images are untouched (use completeness check +
 regenerate to fix those instead).
 
-## Positive preview
+## Positive calibration
 
-Three rendering modes for the JPEG reading positive, set per campaign:
+There's no positive preview during capture — judging tone happens entirely
+after capture, in **Project ▸ Positive calibration** (also reachable
+outside capture), a dedicated screen that takes over the main window, same
+as capture mode rather than a separate floating window. Capture itself is
+judged on the raw negative and its histogram.
 
-- **simple** — plain linear min/max normalization.
-- **auto** (default) — a deterministic exposure/gamma optimization, no
-  machine learning involved, same output every time for the same input.
-- **manual** — campaign-wide exposure, shadows, highlights, and contrast
-  settings, adjustable live during capture with a preview (`P`).
+Two interchangeable positive engines, set per campaign:
+
+- **Legacy** — the original tone-curve pipeline, three rendering modes
+  (**simple**: plain linear min/max normalization; **auto**, the default:
+  a deterministic exposure/gamma optimization, no machine learning, same
+  output every time for the same input; **manual**: campaign-wide
+  exposure/shadows/highlights/contrast).
+- **Density-domain** (`print_engine`) — reconstructs the darkroom print
+  process itself instead of stretching an already-inverted curve: a
+  per-channel film base (Dmin, sampled from the negative's own unexposed
+  border — this is what absorbs a yellowed or stained base into a neutral
+  result), a fixed film response curve, and a paper response (exposure,
+  contrast, black point, highlight soft-clip). More physically grounded,
+  at a real cost: a dedicated RAW decode and a much heavier render (several
+  seconds to tens of seconds per image, depending on your machine) — during
+  capture it runs on a separate worker pool sized by **Preferences ▸
+  Processing ▸ Positive finalize workers**, so it never slows down the
+  TIFF/JPEG master export.
 
 The reading positive also automatically excludes the negative's unexposed
 border from its crop whenever it can confidently tell the two apart — the
 master TIFF and JPEG keep the full framed negative regardless, border
 included, for archival fidelity. Automatic exposure is never thrown off by
-that border either way, whether or not the extra crop above succeeds.
+that border either way, whether or not the extra crop above succeeds. An
+image the engine isn't confident about — crop or, for the density-domain
+engine, tone — is left flagged for review rather than silently accepted.
 
-When it isn't confident enough to draw that extra crop on its own, the
-image is simply left as the full framed negative — nothing is ever cut
-into by a low-confidence guess. **Project ▸ Positive crop review**
-(also available outside capture) takes over the main window — same as
-capture mode, not a separate window — and lists images by checkable
-category: flagged for review by default, but also already auto-cropped
-confidently or already confirmed manually, if you want to double-check
-either. The preview shows the actual reading positive (not the raw
-negative), with a luminance histogram and a draggable crop rectangle,
-updated live as you adjust exposure; `Enter` confirms and moves to the
-next, only the reading positive is regenerated, `Esc` returns to the
-project screen. A confirmed crop/exposure choice sticks even if the image
-is reprocessed later (after a crash, a retry).
+### The calibration screen
+
+A grid of thumbnails (reusing the already-exported JPEG files, no extra
+decode) on the left, filterable by checkable category — flagged for
+review by default, but also already applied confidently or already
+confirmed manually, if you want to double-check either — with multi-select
+(click, Ctrl/Shift-click, or `Ctrl+A` for everything in the current
+filter). The right-hand panel depends on the campaign's engine:
+
+- **Legacy engine**: the same exposure/shadows/highlights/contrast
+  controls as capture-time manual mode, plus a draggable crop rectangle on
+  the preview, live-updated as you adjust.
+- **Density-domain engine**: four groups — film base (Dmin), scan
+  exposure, film model (fixed, shown for reference, not adjustable — it's
+  a property of the film stock, not a per-image choice), and paper model
+  (contrast, with black point/soft-clip under an **Advanced** toggle that
+  stays open or closed as you move between images). Each group starts on
+  **Auto**; its own switch takes it to **Manual** without disturbing the
+  others. There's no crop rectangle here yet — the density-domain engine
+  doesn't have a manual crop override, only the tone groups. Because a
+  real render is expensive, the preview only updates once a group's value
+  is committed (released a slider, pressed Enter in a field), not while
+  dragging — the window shows a wait cursor for that one render rather
+  than freezing silently.
+
+`Enter` (or **Confirm & next**) applies the current image's settings and
+moves to the next one in the filtered list. For the density-domain
+engine, **Apply to selection** (button, or `Ctrl+Enter`) copies the
+current image's tone settings to every other selected image at once —
+useful for a whole roll shot under the same conditions. Dmin is excluded
+from that propagation by default (tick **Include Dmin** to override): it's
+a physical measurement specific to that one negative's own border, not an
+aesthetic choice to copy blindly across a whole selection. A confirmation
+shows how many images are affected before anything is regenerated.
+
+`Ctrl+Z` / `Ctrl+Y` undo and redo the last confirmed change or
+propagation — never an in-progress drag — for the current screen session
+(the stack doesn't persist once you leave the screen). `Esc` returns to
+the project screen. A confirmed choice sticks even if the image is
+reprocessed later (after a crash, a retry).
 
 The master TIFF and JPEG are never touched by any of this — only the
 reading positive is affected.
@@ -347,8 +395,10 @@ capture, like most menus), applied and saved as soon as you change them:
 
 - **General** — reopen the last project on startup.
 - **Processing** — the exiftool path (with a browse/test button), whether
-  closing waits for exports still in progress, and the maximum negative
-  name length accepted when importing a new CSV.
+  closing waits for exports still in progress, the maximum negative name
+  length accepted when importing a new CSV, and the number of worker
+  threads dedicated to the density-domain positive engine during capture
+  (see [Positive calibration](#positive-calibration)).
 - **Thresholds** — the disk-space warning/critical levels and the export
   queue's early-warning size.
 - **Updates** — the opt-in startup check (see [Updating](README.md#updating)

@@ -99,11 +99,15 @@ au-dessus et en dessous de l'aperçu. Le cadre superposé est vert
 entière) ; il porte un liseré sombre des deux côtés de sa couleur pour
 rester visible quelle que soit la teinte propre du négatif. `T` bascule
 vers l'aperçu du cadre réellement appliqué (plutôt que le cadre brut
-avec surimpression) ; `P` bascule vers l'aperçu positif.
+avec surimpression).
 
 Un petit histogramme de luminance, translucide, se trouve dans un coin de
 l'aperçu — un repère rapide sur l'exposition. Il ne suit que la vue
-négatif, pas les basculements aperçu positif/maître ci-dessus.
+négatif, pas le basculement vers l'aperçu maître ci-dessus. Il n'y a pas
+d'aperçu positif pendant la capture : le jugement de tonalité se fait
+entièrement dans l'écran dédié [Calibrage positif](#calibrage-positif),
+après la capture — voir plus bas. La capture elle-même se juge sur le
+négatif brut et son histogramme.
 
 ## Raccourcis clavier
 
@@ -128,9 +132,8 @@ actif à la fois.
 | V | Rotation 90° (cycle 0°→90°→180°→270°) — Maj+V tourne dans l'autre sens |
 | Ctrl+G | Aller à un nom déjà en attente (autocomplétion à la saisie) |
 | C | Recalculer le cadre (relance la détection automatique) |
-| P | Basculer l'aperçu positif |
 | T | Basculer l'aperçu maître (cadre appliqué) |
-| K | Cycler l'aperçu (négatif → positif → maître), indépendant de P/T — Maj+K cycle dans l'autre sens |
+| K | Cycler l'aperçu (négatif → maître), même bascule que T — Maj+K cycle dans l'autre sens |
 | Tab | Pause / reprendre |
 | Espace | Déclencher une capture à distance (appareil tethered uniquement, voir [Capture tethered](#capture-tethered-live-view-et-déclenchement-à-distance) ci-dessous) |
 | L | Activer/désactiver le live view (appareil tethered uniquement) |
@@ -141,7 +144,7 @@ actif à la fois.
 ### Ajuster le cadre
 
 Aucun mode à activer — toujours disponible sur l'aperçu négatif brut
-(y ramène automatiquement si un aperçu positif/maître était affiché) :
+(y ramène automatiquement si l'aperçu maître était affiché) :
 
 | Entrée | Action |
 | ------ | ------ |
@@ -273,40 +276,90 @@ exports que de l'image concernée ; les images déjà finalisées restent
 inchangées (pour celles-ci, passez plutôt par la vérification de
 complétude et sa régénération).
 
-## Aperçu positif
+## Calibrage positif
 
-Trois modes de rendu pour le JPEG positif de lecture, réglés par
-campagne :
+Pas d'aperçu positif pendant la capture — le jugement de tonalité se fait
+entièrement après coup, dans **Project ▸ Positive calibration** (aussi
+accessible en dehors de la capture), un écran dédié qui prend toute la
+fenêtre principale, comme le mode capture plutôt qu'une fenêtre flottante
+à part. La capture elle-même se juge sur le négatif brut et son
+histogramme.
 
-- **simple** — normalisation min/max linéaire, rien d'autre.
-- **auto** (par défaut) — une optimisation exposition/gamma déterministe,
-  sans apprentissage automatique : le résultat est identique à chaque
-  fois pour une même entrée.
-- **manual** — réglages de campagne (exposition, ombres, hautes lumières,
-  contraste), ajustables à chaud pendant la capture avec aperçu (`P`).
+Deux moteurs de positif interchangeables, réglés par campagne :
+
+- **Historique** — le pipeline par courbe de tonalité d'origine, trois
+  modes de rendu (**simple** : normalisation min/max linéaire, rien
+  d'autre ; **auto**, par défaut : une optimisation exposition/gamma
+  déterministe, sans apprentissage automatique, résultat identique à
+  chaque fois pour une même entrée ; **manual** : réglages de campagne
+  exposition/ombres/hautes lumières/contraste).
+- **Domaine de densité** (`print_engine`) — reconstruit le procédé de
+  tirage argentique lui-même plutôt que d'étirer une courbe déjà
+  inversée : une base du film par canal (Dmin, échantillonnée sur la
+  bordure non exposée du négatif lui-même — c'est ce qui absorbe un
+  support jauni ou taché dans un résultat neutre), une courbe de réponse
+  du film fixe, et une réponse papier (exposition, contraste, point noir,
+  compression douce des hautes lumières). Plus fidèle au fonctionnement
+  physique, à un coût réel : un décodage RAW dédié et un rendu bien plus
+  lourd (de quelques secondes à plusieurs dizaines de secondes par image
+  selon la machine) — pendant la capture, il tourne sur un bassin
+  d'ouvriers séparé, dimensionné par **Préférences ▸ Traitement ▸
+  Ouvriers de finalisation du positif**, pour ne jamais ralentir l'export
+  TIFF/JPEG maître.
 
 Le positif de lecture exclut aussi automatiquement la bordure non exposée
 du négatif de son cadrage, dès qu'il peut distinguer les deux avec
 confiance — le TIFF et le JPEG maîtres gardent toujours le négatif entier,
 bordure comprise, pour la fidélité archivistique. L'exposition automatique
 n'est plus faussée par cette bordure, que ce rognage supplémentaire
-réussisse ou non.
+réussisse ou non. Une image dont le moteur n'est pas confiant — cadrage,
+ou pour le moteur en domaine de densité, tonalité — reste signalée pour
+vérification plutôt qu'acceptée en silence.
 
-Quand la confiance n'est pas suffisante pour tracer ce rognage
-supplémentaire tout seul, l'image reste simplement le négatif entier
-recadré au cadre support — jamais de coupe décidée sur une estimation peu
-fiable. **Project ▸ Positive crop review** (aussi accessible en dehors de
-la capture) prend toute la fenêtre principale — comme le mode capture,
-pas une fenêtre à part — et liste les images par catégorie à cocher :
-celles à vérifier par défaut, mais aussi celles déjà recadrées
-automatiquement avec confiance ou déjà confirmées manuellement, si vous
-voulez les revérifier. L'aperçu affiche le vrai positif de lecture (pas le
-négatif brut), avec un histogramme de luminance et un rectangle de
-recadrage déplaçable à la souris, mis à jour en direct pendant l'ajustement
-de l'exposition ; `Enter` confirme et passe à la suivante ; seul le
-positif de lecture est régénéré ; `Échap` revient à l'écran projet. Un
-choix de cadrage/exposition confirmé reste valable même si l'image est
-retraitée plus tard (après une coupure, une nouvelle tentative).
+### L'écran de calibrage
+
+Une grille de vignettes (réutilisant les JPEG déjà exportés, sans nouveau
+décodage) à gauche, filtrable par catégorie à cocher — à vérifier par
+défaut, mais aussi déjà appliquées avec confiance ou déjà confirmées
+manuellement, si vous voulez les revérifier — avec sélection multiple
+(clic, Ctrl/Maj+clic, ou `Ctrl+A` pour tout le filtre courant). Le
+panneau de droite dépend du moteur de la campagne :
+
+- **Moteur historique** : les mêmes réglages exposition/ombres/hautes
+  lumières/contraste que le mode manuel en capture, plus un rectangle de
+  recadrage déplaçable sur l'aperçu, mis à jour en direct.
+- **Moteur en domaine de densité** : quatre groupes — base du film
+  (Dmin), exposition du scan, modèle du film (fixe, affiché pour
+  information, non réglable — c'est une propriété de la pellicule, pas
+  un choix par image), et modèle du papier (contraste, avec point
+  noir/compression douce sous un bouton **Avancé** dont l'état ouvert/
+  fermé persiste d'une image à l'autre). Chaque groupe démarre en
+  **Auto** ; son propre interrupteur bascule en **Manual** sans toucher
+  aux autres. Pas de rectangle de recadrage ici pour l'instant — le
+  moteur en domaine de densité n'a pas encore de surcharge de cadrage
+  manuel, seulement les groupes de tonalité. Le rendu étant coûteux,
+  l'aperçu ne se met à jour qu'une fois un réglage validé (curseur
+  relâché, Entrée dans un champ), jamais pendant le glissement — la
+  fenêtre affiche un curseur d'attente pour ce rendu plutôt que de geler
+  en silence.
+
+`Enter` (ou **Confirm & next**) applique les réglages de l'image courante
+et passe à la suivante du filtre actif. Pour le moteur en domaine de
+densité, **Apply to selection** (bouton, ou `Ctrl+Enter`) copie les
+réglages de tonalité de l'image courante vers toutes les autres images
+sélectionnées d'un coup — utile pour toute une pellicule prise dans les
+mêmes conditions. Le Dmin est exclu de cette propagation par défaut
+(cochez **Include Dmin** pour l'inclure) : c'est une mesure physique
+propre à la bordure de ce négatif précis, pas un choix esthétique à
+copier sans discernement sur toute une sélection. Une confirmation
+indique combien d'images sont concernées avant toute régénération.
+
+`Ctrl+Z` / `Ctrl+Y` annulent et rétablissent le dernier réglage confirmé
+ou la dernière propagation — jamais un glissement en cours — pour la
+session d'écran courante (la pile n'est pas conservée en quittant
+l'écran). `Échap` revient à l'écran projet. Un choix confirmé reste
+valable même si l'image est retraitée plus tard (après une coupure, une
+nouvelle tentative).
 
 Le TIFF et le JPEG maîtres ne sont jamais affectés par tout cela — seul le
 positif de lecture change.
@@ -376,8 +429,10 @@ appliquées et enregistrées dès le changement :
 
 - **General** — rouvrir la dernière campagne au démarrage.
 - **Processing** — le chemin d'exiftool (avec un bouton parcourir/tester),
-  si la fermeture attend les exports en cours, et la longueur maximale
-  d'un nom de négatif acceptée à l'import d'un nouveau CSV.
+  si la fermeture attend les exports en cours, la longueur maximale d'un
+  nom de négatif acceptée à l'import d'un nouveau CSV, et le nombre
+  d'ouvriers dédiés au moteur positif en domaine de densité pendant la
+  capture (voir [Calibrage positif](#calibrage-positif)).
 - **Thresholds** — les seuils d'espace disque (avertissement/critique) et
   le seuil d'alerte précoce de la file d'export.
 - **Updates** — la vérification automatique au démarrage, volontaire (voir

@@ -139,6 +139,12 @@ STRINGS: dict[str, str] = {
         "Longest negative name accepted when importing a new CSV. Existing"
         " campaigns stay readable regardless of this setting."
     ),
+    "preferences.positive_finalize_workers": "Positive finalize workers",
+    "preferences.positive_finalize_workers_tooltip": (
+        "Dedicated worker threads for the density-domain positive engine"
+        " (print_engine) during capture — never affects the legacy engine or"
+        " the TIFF/JPEG master export, which always run on their own path."
+    ),
     "preferences.disk_warn": "Disk space warning",
     "preferences.disk_warn_tooltip": (
         "Below this much free space, a warning banner appears — capture keeps running."
@@ -390,7 +396,10 @@ STRINGS: dict[str, str] = {
     "wizard.step5.quality": "JPEG quality",
     "wizard.step5.long_edge": "Long edge (px)",
     "wizard.step5.long_edge_full": "Full size",
-    "wizard.step5.mode": "Positive mode",
+    "wizard.step5.engine": "Positive engine",
+    "wizard.step5.engine_legacy": "Legacy (tone curve)",
+    "wizard.step5.engine_print_engine": "Density-domain (darkroom print model)",
+    "wizard.step5.mode": "Positive mode (legacy engine)",
     "wizard.step5.mode_simple": "Simple",
     "wizard.step5.mode_auto": "Automatic",
     "wizard.step5.mode_manual": "Manual",
