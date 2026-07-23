@@ -184,6 +184,21 @@ reste ouverte (un arrêt/reprise de la capture ne la réinitialise pas).
 | Entrée | Valider l'option sélectionnée |
 | Échap | Équivaut à l'option 1 avec un champ vide |
 
+### Écran de calibrage positif
+
+Ctrl+clic/Maj+clic (souris) sélectionne aussi plusieurs vignettes dans
+la grille.
+
+| Touche | Action |
+| ------ | ------ |
+| Entrée | Confirmer et suivant — applique les réglages de l'image courante, avance dans le filtre actif |
+| Haut / Bas | Image précédente / suivante dans la liste filtrée |
+| Page préc. / Page suiv. | Saut plus large dans la même liste |
+| Ctrl+A | Sélectionner toutes les images du filtre actif |
+| Ctrl+Entrée | Appliquer à la sélection — copie les réglages de tonalité de l'image courante vers la sélection (Dmin exclu par défaut) |
+| Ctrl+Z / Ctrl+Y | Annuler / rétablir le dernier réglage confirmé ou la dernière propagation |
+| Échap | Fermer l'écran, retour au projet |
+
 ### Partout ailleurs
 
 | Touche | Action |

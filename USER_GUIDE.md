@@ -175,6 +175,20 @@ again or `Esc` cancels the pick without changing anything.
 | Enter | Confirm the selected option |
 | Esc | Same as option 1 with an empty field |
 
+### Positive calibration screen
+
+Mouse Ctrl+click/Shift+click also multi-selects thumbnails in the grid.
+
+| Key | Action |
+| --- | --- |
+| Enter | Confirm and next — applies the current image's settings, advances in the active filter |
+| Up / Down | Previous / next image in the filtered list |
+| Page Up / Page Down | Jump further in the same list |
+| Ctrl+A | Select every image in the active filter |
+| Ctrl+Enter | Apply to selection — copies the current image's tone settings to the selection (Dmin excluded by default) |
+| Ctrl+Z / Ctrl+Y | Undo / redo the last confirmed change or propagation |
+| Esc | Close the screen, back to the project |
+
 ### Everywhere else
 
 | Key | Action |
