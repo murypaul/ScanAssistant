@@ -14,12 +14,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from scanassistant.imaging.framing import (
-    IMPOSSIBLE,
-    FrameResult,
-    detect_frame,
-    rescue_impossible_frame,
-)
+from scanassistant.imaging.framing import FrameResult, budget_to_params, detect_frame
 from scanassistant.imaging.preview import Preview, extract_preview
 from scanassistant.imaging.raw import RawDecoder
 from scanassistant.project.campaign import FramingConfig
@@ -29,16 +24,15 @@ from scanassistant.project.campaign import FramingConfig
 class PreviewResult:
     preview: Preview
     frame: FrameResult | None  # None if automatic framing is disabled (campaign.framing.enabled)
-    rescued: bool = False  # `frame` came from rescue_impossible_frame, not detect_frame —
-    # traceability only (journal `FRAMING` detail), never changes how the frame is applied.
 
 
-# Detection (rescue in particular) can outlive the widget that started it —
-# the operator moves to the next image, or closes the app, while a GrabCut
-# rescue is still running. Nothing else may then hold a reference to the
-# worker; if Python garbage-collects it while its thread is still running,
-# Qt aborts the whole process rather than raising a catchable error. Kept
-# alive here, independent of any widget's lifetime, until `finished` fires.
+# Detection (the GrabCut-based `detect_frame`, several seconds depending on
+# `framing.detection_budget_s`) can outlive the widget that started it — the
+# operator moves to the next image, or closes the app, while one is still
+# running. Nothing else may then hold a reference to the worker; if Python
+# garbage-collects it while its thread is still running, Qt aborts the whole
+# process rather than raising a catchable error. Kept alive here,
+# independent of any widget's lifetime, until `finished` fires.
 _running_workers: set[PreviewWorker] = set()
 
 
@@ -75,36 +69,23 @@ class PreviewWorker(QThread):
         try:
             preview: Preview = extract_preview(self._path, self._decoder, user_wb=self._user_wb)
             if self._skip_detection or not self._framing_config.enabled:
-                frame, rescued = None, False
+                frame = None
             else:
-                frame, rescued = self._detect_frame(preview)
+                frame = self._detect_frame(preview)
         except Exception as exc:  # unreadable/corrupt RAW (E-05)
             self.failed.emit(str(exc))
             return
-        self.succeeded.emit(PreviewResult(preview=preview, frame=frame, rescued=rescued))
+        self.succeeded.emit(PreviewResult(preview=preview, frame=frame))
 
-    def _detect_frame(self, preview: Preview) -> tuple[FrameResult, bool]:
+    def _detect_frame(self, preview: Preview) -> FrameResult:
         config = self._framing_config
-        primary = detect_frame(
+        working_long_edge_px, grabcut_iters = budget_to_params(config.detection_budget_s)
+        return detect_frame(
             preview.pixels,
             margin_pct=config.margin_pct,
             max_deskew_deg=config.max_deskew_deg,
             reliable_threshold=config.reliable_threshold,
             review_threshold=config.review_threshold,
-            threshold_bias=config.threshold_bias,
+            working_long_edge_px=working_long_edge_px,
+            grabcut_iters=grabcut_iters,
         )
-        if primary.level != IMPOSSIBLE:
-            return primary, False
-        # Last resort, never in place of the primary detector: a severely
-        # underexposed negative can have near-zero brightness contrast with
-        # the light table, leaving detect_frame's Otsu threshold nothing to
-        # split on — GrabCut's colour-distribution model can sometimes still
-        # separate the two.
-        rescued = rescue_impossible_frame(
-            preview.pixels,
-            margin_pct=config.margin_pct,
-            max_deskew_deg=config.max_deskew_deg,
-            reliable_threshold=config.reliable_threshold,
-            review_threshold=config.review_threshold,
-        )
-        return (rescued, True) if rescued is not None else (primary, False)

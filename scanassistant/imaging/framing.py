@@ -1,10 +1,39 @@
 """Automatic frame detection and confidence scoring.
 
-Algorithm: downscale → grayscale + blur → inverted Otsu threshold →
-morphological closing → largest external contour → `minAreaRect` →
-margin → bounded deskew. The confidence score measures the intrinsic
-geometric quality of the **detected** rectangle (before margin): no
-dependency on a target ratio or size. No dependency on PySide6.
+Algorithm: downscale → mask-seeded GrabCut (outer margin assumed
+background, center anchor assumed foreground) → largest external contour
+→ `minAreaRect` → margin → bounded deskew. The confidence score measures
+the intrinsic geometric quality of the **detected** rectangle (before
+margin): no dependency on a target ratio or size. No dependency on
+PySide6.
+
+**Not Otsu-threshold-based** (DECISIONS.md I-185, revises the original
+design): a single global brightness split can't tell the negative's own
+light-toned unexposed border apart from the light table behind it, so it
+systematically excludes that border from the detected rectangle — measured
+on a real campaign (`2024_5_1`) to affect the *entire* "reliable" bucket
+(100% of 14 high-confidence detections were later manually corrected,
+always larger than auto in both dimensions). GrabCut's colour-distribution
+model, already proven for the same "exclude the border" problem in
+`imaging.content_framing`, doesn't share that specific blind spot —
+re-measured on the same campaign's 120 real auto/manual pairs: the
+"reliable" bucket now covers 98% of images (vs. 15% before) at a *better*
+median accuracy (IoU 0.93 vs 0.89).
+
+**The confidence score's correlation with actual correctness is weak for
+either algorithm** (measured ≈0 for GrabCut on real data) — it measures
+how clean/self-consistent the *found* rectangle is, not whether it's the
+*right* one, and a smoothly-filled but wrong GrabCut mask can still score
+near the ceiling (a real counterexample: confidence 0.998, IoU 0.21 against
+the manual correction, on a negative whose own content has a much lighter
+region abutting a much darker one — both algorithms independently
+undershoot into the lighter region only). Cross-checking GrabCut's result
+against an independent Otsu-based detection was tried and measured *not*
+to help (94% agreement between the two, and ≈0 correlation between that
+agreement and actual accuracy, on the same real sample) — both methods
+share this specific blind spot rather than failing independently, so
+agreement between them isn't informative. Documented as a known,
+unresolved limitation rather than papered over; see DECISIONS.md I-185.
 """
 
 from __future__ import annotations
@@ -14,13 +43,68 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-REDUCED_LONG_EDGE_PX = 1600
+REDUCED_LONG_EDGE_PX = 1300  # `_DEFAULT_WORKING_LONG_EDGE_PX` — see `BUDGET_TIERS_S`
 _NEAR_EDGE_FRACTION_PCT = 1.0  # 1% of the long edge (c_rect, c_border)
-_MORPH_KERNEL_FRACTION = 0.02  # ~2% of the long edge (morphological closing)
 
 RELIABLE = "reliable"
 REVIEW = "review"
 IMPOSSIBLE = "impossible"
+
+# GrabCut seed geometry (mask-initialized: outer margin = sure background,
+# a small center anchor = sure foreground, everything else "probably
+# foreground" for GrabCut's own model to refine) — an operator never places
+# the negative touching the frame edge exactly, and the seed only needs to
+# give GrabCut's foreground/background colour models a first sample each to
+# build from, not a precise starting boundary.
+_OUTER_MARGIN_FRACTION = 0.04
+_CENTER_ANCHOR_FRACTION = 0.10
+_GRABCUT_SEED = 12345  # cv2.grabCut's GMM init is otherwise unseeded — verified
+# non-deterministic without this (two runs on the same image gave different
+# rectangles).
+_DEFAULT_GRABCUT_ITERS = 8
+# Grey-level standard deviation, on the downscaled working image, below
+# which there's nothing for GrabCut to segment (see `detect_frame`'s own
+# comment at the call site for the measured cost of *not* short-circuiting
+# this case). Real capture noise alone measures well above this on any
+# genuine negative, even a severely underexposed one (a real low-contrast
+# but real synthetic test case measured ~2.3 vs. a perfectly flat one at
+# 0.0) — conservative enough not to misfire on subtle-but-real content.
+_MIN_STD_FOR_SEGMENTATION = 1.0
+
+# Capture-time processing-budget tiers (06_INTERFACE.md / DECISIONS.md
+# I-185): (working_long_edge_px, grabcut_iters) pairs, empirically timed and
+# accuracy-checked against 120 real auto/manual pairs from `2024_5_1`
+# (`working_long_edge_px=1300, grabcut_iters=8` — the tier below labeled
+# "4s" — is the one actually validated end-to-end; the others are the same
+# GrabCut algorithm at a different resolution/iteration cost, timed but not
+# separately accuracy-validated). Deliberately not the operator-proposed
+# 2/3/4/5/7/10/12/15/20s ladder: measurement showed no distinct, meaningfully
+# different configuration for a "12s" tier (falls between the 1600px/12-iter
+# and 2000px/8-iter points already covered) or a "20s" one (max measured
+# ~14.5s at the highest resolution/iteration count tried, and accuracy
+# plateaued between 8 and 12 iterations in spot checks well before that) —
+# offering tiers that don't correspond to a real quality step would be
+# cosmetic, not a real choice.
+BUDGET_TIERS_S: dict[float, tuple[int, int]] = {
+    2.0: (1000, 5),
+    3.0: (1300, 3),
+    4.0: (1300, 8),  # default — the only tier validated on all 120 real pairs
+    5.0: (1600, 5),
+    7.0: (1600, 8),
+    10.0: (2000, 8),
+    15.0: (2000, 12),
+}
+DEFAULT_BUDGET_S = 4.0
+
+
+def budget_to_params(budget_s: float) -> tuple[int, int]:
+    """Nearest defined tier at or below `budget_s` (never silently rounds
+    *up* past what the operator asked to spend) — falls back to the
+    cheapest tier if `budget_s` is below all of them, so an invalid/stale
+    config value degrades to "fast" rather than raising."""
+    eligible = [tier for tier in BUDGET_TIERS_S if tier <= budget_s]
+    chosen = max(eligible) if eligible else min(BUDGET_TIERS_S)
+    return BUDGET_TIERS_S[chosen]
 
 
 @dataclass(frozen=True)
@@ -75,21 +159,32 @@ def detect_frame(
     *,
     margin_pct: float = 2.0,
     max_deskew_deg: float = 5.0,
-    reliable_threshold: float = 0.90,
-    review_threshold: float = 0.60,
-    threshold_bias: int = 0,
+    reliable_threshold: float = 0.93,
+    review_threshold: float = 0.85,
+    working_long_edge_px: int = REDUCED_LONG_EDGE_PX,
+    grabcut_iters: int = _DEFAULT_GRABCUT_ITERS,
 ) -> FrameResult:
-    """Detects the largest dark rectangle (negative) on a light background."""
+    """Detects the negative (support frame) on a light background via a
+    mask-seeded GrabCut segmentation (module docstring) — `working_long_edge_px`/
+    `grabcut_iters` set the quality/time tradeoff, normally chosen through
+    `budget_to_params` from a campaign's `framing.detection_budget_s`
+    rather than passed directly."""
     height, width = pixels.shape[:2]
 
-    small, scale = _reduce(pixels)
+    small, scale = _reduce(pixels, working_long_edge_px)
     gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY) if small.ndim == 3 else small
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    binary = _threshold_otsu_inverted(blurred, threshold_bias)
-    closed = _close(binary)
-
-    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    contour = max(contours, key=cv2.contourArea) if contours else None
+    if float(np.std(gray)) < _MIN_STD_FOR_SEGMENTATION:
+        # A genuinely near-uniform image (nothing there to segment — an
+        # accidental blank-table capture, or a synthetic test fixture with
+        # no structure at all) is a pathological case for GrabCut's
+        # iterative colour-model refinement: measured 7-28s (vs. 1-3s on
+        # real/structured content at the same resolution/iteration count)
+        # trying to converge on a foreground/background split that doesn't
+        # exist, for the same IMPOSSIBLE result it would eventually reach
+        # anyway. Skipping straight there keeps worst-case latency bounded
+        # without changing the outcome.
+        return _impossible_result(width, height)
+    contour = _grabcut_contour_from_gray(gray, grabcut_iters)
     if contour is None or cv2.contourArea(contour) <= 0:
         return _impossible_result(width, height)
 
@@ -106,57 +201,19 @@ def detect_frame(
     )
 
 
-# --- rescue: generously-seeded GrabCut, last resort when detect_frame fails ---
+def _grabcut_contour_from_gray(gray: np.ndarray, grabcut_iters: int) -> np.ndarray | None:
+    height, width = gray.shape[:2]
 
-_RESCUE_WORKING_LONG_EDGE_PX = 500  # much smaller than detect_frame's own 1600: GrabCut
-# is a far more expensive algorithm than Otsu+contour (measured 3-8s at 1600px on real
-# samples — well past the preview's implicit "short task" budget). At 500px, measured
-# 0.3-0.7s on the same samples with no meaningful loss of geometric quality (same
-# confidence tier, same ~65-70% area fraction) — this is a last-resort geometry
-# recovery, not a fine crop, so it doesn't need detect_frame's own precision.
-_RESCUE_OUTER_MARGIN_FRACTION = 0.04  # thin band at the very edge, assumed sure background —
-# the operator never places the negative touching the frame edge exactly.
-_RESCUE_CENTER_ANCHOR_FRACTION = 0.10  # small sure-foreground anchor at the center, to give
-# GrabCut's foreground GMM a first sample to build from.
-_RESCUE_GRABCUT_ITERS = 5
-_RESCUE_GRABCUT_SEED = 12345  # cv2.grabCut's GMM init is otherwise unseeded — verified
-# non-deterministic without this (two runs on the same image gave different rectangles).
-
-
-def rescue_impossible_frame(
-    pixels: np.ndarray,
-    *,
-    margin_pct: float = 2.0,
-    max_deskew_deg: float = 5.0,
-    reliable_threshold: float = 0.90,
-    review_threshold: float = 0.60,
-) -> FrameResult | None:
-    """Last-resort fallback for when `detect_frame` returns `IMPOSSIBLE` —
-    never called in place of it, only after it has already failed.
-
-    `detect_frame`'s Otsu threshold needs a real brightness split between the
-    negative and the light table; it has nothing to hold onto on a severely
-    underexposed negative (near-zero contrast with the table). GrabCut's
-    colour-distribution model can still separate the two from a generous seed
-    even then. Returns `None` (never a degenerate all-image `FrameResult`) if
-    the rescue itself doesn't find a plausible rectangle either — the caller
-    keeps today's `IMPOSSIBLE` behavior in that case.
-    """
-    height, width = pixels.shape[:2]
-    small, scale = _reduce(pixels, _RESCUE_WORKING_LONG_EDGE_PX)
-    gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY) if small.ndim == 3 else small
-    small_h, small_w = gray.shape[:2]
-
-    margin_y = max(1, round(small_h * _RESCUE_OUTER_MARGIN_FRACTION))
-    margin_x = max(1, round(small_w * _RESCUE_OUTER_MARGIN_FRACTION))
-    mask = np.full((small_h, small_w), cv2.GC_PR_FGD, np.uint8)
+    margin_y = max(1, round(height * _OUTER_MARGIN_FRACTION))
+    margin_x = max(1, round(width * _OUTER_MARGIN_FRACTION))
+    mask = np.full((height, width), cv2.GC_PR_FGD, np.uint8)
     mask[:margin_y, :] = cv2.GC_BGD
-    mask[small_h - margin_y :, :] = cv2.GC_BGD
+    mask[height - margin_y :, :] = cv2.GC_BGD
     mask[:, :margin_x] = cv2.GC_BGD
-    mask[:, small_w - margin_x :] = cv2.GC_BGD
-    center_y, center_x = small_h // 2, small_w // 2
-    anchor_h = max(1, round(small_h * _RESCUE_CENTER_ANCHOR_FRACTION))
-    anchor_w = max(1, round(small_w * _RESCUE_CENTER_ANCHOR_FRACTION))
+    mask[:, width - margin_x :] = cv2.GC_BGD
+    center_y, center_x = height // 2, width // 2
+    anchor_h = max(1, round(height * _CENTER_ANCHOR_FRACTION))
+    anchor_w = max(1, round(width * _CENTER_ANCHOR_FRACTION))
     mask[center_y - anchor_h : center_y + anchor_h, center_x - anchor_w : center_x + anchor_w] = (
         cv2.GC_FGD
     )
@@ -164,32 +221,15 @@ def rescue_impossible_frame(
     bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     bgd_model = np.zeros((1, 65), np.float64)
     fgd_model = np.zeros((1, 65), np.float64)
-    cv2.setRNGSeed(_RESCUE_GRABCUT_SEED)
+    cv2.setRNGSeed(_GRABCUT_SEED)
     try:
-        cv2.grabCut(
-            bgr, mask, None, bgd_model, fgd_model, _RESCUE_GRABCUT_ITERS, cv2.GC_INIT_WITH_MASK
-        )
+        cv2.grabCut(bgr, mask, None, bgd_model, fgd_model, grabcut_iters, cv2.GC_INIT_WITH_MASK)
     except cv2.error:
         return None
 
     foreground = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
     contours, _ = cv2.findContours(foreground, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    contour = max(contours, key=cv2.contourArea) if contours else None
-    if contour is None or cv2.contourArea(contour) <= 0:
-        return None
-
-    result = _frame_from_contour(
-        contour,
-        (small_h, small_w),
-        scale,
-        width,
-        height,
-        margin_pct=margin_pct,
-        max_deskew_deg=max_deskew_deg,
-        reliable_threshold=reliable_threshold,
-        review_threshold=review_threshold,
-    )
-    return None if result.level == IMPOSSIBLE else result
+    return max(contours, key=cv2.contourArea) if contours else None
 
 
 def _impossible_result(width: int, height: int, confidence: float = 0.0) -> FrameResult:
@@ -217,8 +257,7 @@ def _frame_from_contour(
     reliable_threshold: float,
     review_threshold: float,
 ) -> FrameResult:
-    """Shared by `detect_frame` and `rescue_impossible_frame`: turns a contour
-    (found by whichever segmentation method) into a scored, margined
+    """Turns a contour (found by `_grabcut_contour`) into a scored, margined
     `FrameResult` in full-resolution coordinates."""
     (center_x, center_y), (rect_w, rect_h), raw_angle = cv2.minAreaRect(contour)
     rect_w, rect_h, angle = _normalize_angle(rect_w, rect_h, raw_angle)
@@ -287,27 +326,6 @@ def _reduce(
         interpolation=cv2.INTER_AREA,
     )
     return resized, scale
-
-
-def _threshold_otsu_inverted(blurred: np.ndarray, threshold_bias: int) -> np.ndarray:
-    otsu_value, _ = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    if threshold_bias == 0:
-        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        return binary
-    biased = float(np.clip(otsu_value + threshold_bias, 0, 255))
-    _, binary = cv2.threshold(blurred, biased, 255, cv2.THRESH_BINARY_INV)
-    return binary
-
-
-def _close(binary: np.ndarray) -> np.ndarray:
-    long_edge = max(binary.shape[:2])
-    kernel_size = _odd(max(3, round(long_edge * _MORPH_KERNEL_FRACTION)))
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-    return cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-
-
-def _odd(n: int) -> int:
-    return n if n % 2 == 1 else n + 1
 
 
 def _normalize_angle(w: float, h: float, angle: float) -> tuple[float, float, float]:

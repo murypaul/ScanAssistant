@@ -384,6 +384,13 @@ STRINGS: dict[str, str] = {
     "wizard.step4.final_width": "Final width (px)",
     "wizard.step4.final_height": "Final height (px)",
     "wizard.step4.margin_pct": "Margin",
+    "wizard.step4.detection_budget": "Frame detection quality/time budget",
+    "wizard.step4.detection_budget_hint": (
+        "More time buys a higher-resolution, more-iterated detection pass "
+        "(imaging.framing.BUDGET_TIERS_S) — the default (4s) already covers "
+        "the vast majority of real negatives well; raise it if a specific "
+        "campaign's detections need more care and capture cadence allows it."
+    ),
     "wizard.step5.title": "Exports",
     "wizard.step5.subtitle": "Master and positive export settings.",
     "wizard.step5.enabled": "Enabled",

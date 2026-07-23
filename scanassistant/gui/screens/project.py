@@ -38,6 +38,7 @@ from scanassistant.core.bulk_export import export_derivatives
 from scanassistant.core.campaign_reset import reset_campaign
 from scanassistant.core.fs import RealFileSystem
 from scanassistant.gui.errors import format_business_error
+from scanassistant.imaging import framing
 from scanassistant.gui.widgets.csv_table import CsvTableWidget
 from scanassistant.gui.widgets.log_table import LogTableWidget
 from scanassistant.i18n import t
@@ -529,6 +530,14 @@ class ProjectScreen(QWidget):
         self.margin_spin.setSuffix(" %")
         self.margin_spin.editingFinished.connect(self._on_margin_changed)
 
+        self.detection_budget_combo = QComboBox()
+        for tier_s in sorted(framing.BUDGET_TIERS_S):
+            self.detection_budget_combo.addItem(f"{tier_s:.0f} s", tier_s)
+        self.detection_budget_combo.setToolTip(t("wizard.step4.detection_budget_hint"))
+        self.detection_budget_combo.currentIndexChanged.connect(
+            self._on_detection_budget_changed
+        )
+
         form = QFormLayout()
         form.addRow(self.framing_enabled_check)
         form.addRow(t("wizard.step4.default_orientation"), self.orientation_combo)
@@ -536,6 +545,7 @@ class ProjectScreen(QWidget):
         form.addRow(t("wizard.step4.final_width"), self.width_spin)
         form.addRow(t("wizard.step4.final_height"), self.height_spin)
         form.addRow(t("wizard.step4.margin_pct"), self.margin_spin)
+        form.addRow(t("wizard.step4.detection_budget"), self.detection_budget_combo)
 
         widget = QWidget()
         widget.setLayout(form)
@@ -553,6 +563,7 @@ class ProjectScreen(QWidget):
                 self.width_spin,
                 self.height_spin,
                 self.margin_spin,
+                self.detection_budget_combo,
             ):
                 stack.enter_context(QSignalBlocker(w))
             self.framing_enabled_check.setChecked(f.enabled)
@@ -563,6 +574,9 @@ class ProjectScreen(QWidget):
             self.width_spin.setValue(f.final_dimensions_px[0])
             self.height_spin.setValue(f.final_dimensions_px[1])
             self.margin_spin.setValue(f.margin_pct)
+            self.detection_budget_combo.setCurrentIndex(
+                self.detection_budget_combo.findData(f.detection_budget_s)
+            )
         self.width_spin.setEnabled(f.size_mode == "fixed")
         self.height_spin.setEnabled(f.size_mode == "fixed")
 
@@ -617,6 +631,16 @@ class ProjectScreen(QWidget):
             return
         self.campaign.framing.margin_pct = after
         self._commit("framing.margin_pct", before, after)
+
+    def _on_detection_budget_changed(self, _index: int) -> None:
+        if self.campaign is None:
+            return
+        before = self.campaign.framing.detection_budget_s
+        after = self.detection_budget_combo.currentData()
+        if after == before:
+            return
+        self.campaign.framing.detection_budget_s = after
+        self._commit("framing.detection_budget_s", before, after)
 
     # --- Exports --------------------------------------------------------
 

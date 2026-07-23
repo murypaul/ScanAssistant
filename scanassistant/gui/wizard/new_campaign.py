@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.widgets.csv_table import CsvTableWidget
 from scanassistant.i18n import t
+from scanassistant.imaging import framing as framing_module
 from scanassistant.project.campaign import (
     Campaign,
     CreatedCampaign,
@@ -336,6 +337,14 @@ class FramingPage(QWizardPage):
         self.margin_spin.setSuffix(" %")
         self.margin_spin.setValue(2.0)
 
+        self.detection_budget_combo = QComboBox()
+        for tier_s in sorted(framing_module.BUDGET_TIERS_S):
+            self.detection_budget_combo.addItem(f"{tier_s:.0f} s", tier_s)
+        self.detection_budget_combo.setCurrentIndex(
+            self.detection_budget_combo.findData(framing_module.DEFAULT_BUDGET_S)
+        )
+        self.detection_budget_combo.setToolTip(t("wizard.step4.detection_budget_hint"))
+
         form = QFormLayout(self)
         form.addRow(self.enabled_check)
         form.addRow(t("wizard.step4.default_orientation"), self.orientation_combo)
@@ -343,6 +352,7 @@ class FramingPage(QWizardPage):
         form.addRow(t("wizard.step4.final_width"), self.width_spin)
         form.addRow(t("wizard.step4.final_height"), self.height_spin)
         form.addRow(t("wizard.step4.margin_pct"), self.margin_spin)
+        form.addRow(t("wizard.step4.detection_budget"), self.detection_budget_combo)
 
         self._update_dimensions_enabled()
 
@@ -362,6 +372,9 @@ class FramingPage(QWizardPage):
         self.width_spin.setValue(width)
         self.height_spin.setValue(height)
         self.margin_spin.setValue(framing.margin_pct)
+        self.detection_budget_combo.setCurrentIndex(
+            self.detection_budget_combo.findData(framing.detection_budget_s)
+        )
         self._update_dimensions_enabled()
 
 
@@ -615,6 +628,7 @@ class NewCampaignWizard(QWizard):
             self.framing_page.height_spin.value(),
         ]
         campaign.framing.margin_pct = self.framing_page.margin_spin.value()
+        campaign.framing.detection_budget_s = self.framing_page.detection_budget_combo.currentData()
 
         campaign.exports.tiff.enabled = self.exports_page.tiff_enabled.isChecked()
         campaign.exports.tiff.bits = int(self.exports_page.tiff_bits.currentText())

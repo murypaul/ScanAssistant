@@ -101,9 +101,13 @@ _STATUS_MESSAGE_DURATION_MS = 5000
 _MIN_PUMP_INTERVAL_MS = 100
 _ROTATION_COMMIT_DELAY_MS = 2500
 _FRAME_COMMIT_DELAY_MS = 2500
-# Detection (rescue in particular) is capped well under this on real hardware;
-# bounded so quitting can never hang indefinitely even if it isn't.
-_PREVIEW_WORKER_SHUTDOWN_TIMEOUT_MS = 2000
+# `imaging.framing.detect_frame` (GrabCut, DECISIONS.md I-185) measured up
+# to ~14.5s at the highest quality/time budget tier (`BUDGET_TIERS_S`) plus
+# preview extraction — comfortable margin above that so quitting mid-
+# detection waits it out rather than risking Qt aborting the process over
+# a still-running QThread; still bounded, not indefinite, in case a
+# detection genuinely hangs for an unrelated reason.
+_PREVIEW_WORKER_SHUTDOWN_TIMEOUT_MS = 20000
 # How long to wait, after the camera confirms a remote trigger fired, for the
 # resulting file to actually show up in the watched folder before flagging
 # E-22 (card full/missing) — generous compared to normal write+stabilization
@@ -970,7 +974,7 @@ class CaptureScreen(QWidget):
         self._display_current_preview()
         self._update_confidence_label()
         if result.frame is not None:
-            self._apply_frame_result(name, journal_action, result.frame, rescued=result.rescued)
+            self._apply_frame_result(name, journal_action, result.frame)
 
     def _on_preview_failed(self, error: str) -> None:
         if not shiboken6.isValid(self):
@@ -1114,9 +1118,7 @@ class CaptureScreen(QWidget):
         )
         return geometry.pixels
 
-    def _apply_frame_result(
-        self, name: str, journal_action: str, frame: FrameResult, *, rescued: bool = False
-    ) -> None:
+    def _apply_frame_result(self, name: str, journal_action: str, frame: FrameResult) -> None:
         session = self.session
         if session is None:
             return
@@ -1143,7 +1145,6 @@ class CaptureScreen(QWidget):
                     "c_solidity": frame.components.c_solidity,
                 },
                 level=frame.level,
-                rescued=rescued,
             )
         self._dispatch(events)
 

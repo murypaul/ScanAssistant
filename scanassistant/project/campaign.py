@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scanassistant.imaging import framing
 from scanassistant.journal.journal import Journal
 from scanassistant.project.errors import InvalidCampaignError, MissingInventoryError
 from scanassistant.project.inventory import (
@@ -65,18 +66,33 @@ class FramingConfig:
     enabled: bool = True
     default_orientation: str = "horizontal"  # horizontal | vertical
     margin_pct: float = 2.0
-    # I-176 flagged these "[À RECALIBRER]" without picking numbers, pending
-    # real data. Calibrated here against the 2024_5_1 campaign's own journal
-    # (144 automatic detections): only 1/144 sat in [0.90, 0.92) — raising
-    # reliable_threshold to 0.93 closes that one near-miss (silently
-    # auto-applied a hair above the old cutoff) while reclassifying nothing
-    # else, since the rest already cluster either well above 0.93 or well
-    # into the review tier (median 0.809). review_threshold left as-is: 0%
-    # of real detections fell below it, no data suggesting it binds at all.
+    # I-176 calibrated these against 2024_5_1's journal under the *original*
+    # Otsu-based detector. **Superseded by DECISIONS.md I-185**: the
+    # detector itself was replaced (GrabCut, `imaging.framing.detect_frame`)
+    # after confirming Otsu systematically under-crops (excludes the
+    # negative's own unexposed border) — re-measured on the same campaign's
+    # 120 real auto/manual pairs under the new detector.
+    # `reliable_threshold` (0.93, unchanged — the value happens to still
+    # fit): the "reliable" bucket now covers 98% of images (vs. 15% before)
+    # at a *better* median accuracy (IoU 0.93 vs 0.89) — raising it further
+    # was measured to cost review-queue volume for no accuracy gain (IoU
+    # flat across [0.90, 0.98] on real data). `review_threshold` raised
+    # 0.60 → 0.85: GrabCut's confidence distribution sits much higher
+    # overall (p10 ≈ 0.95 on real data) than Otsu's did, so 0.60 would now
+    # essentially never trigger the "impossible" safety net at all.
     reliable_threshold: float = 0.93
-    review_threshold: float = 0.60
+    review_threshold: float = 0.85
     max_deskew_deg: float = 5.0
+    # Deprecated, Otsu-specific (I-185 retired the Otsu-based detector) —
+    # kept only so an existing campaign.json with this key still loads;
+    # `imaging.framing.detect_frame` no longer reads it.
     threshold_bias: int = 0
+    # Capture-time detection quality/time budget (DECISIONS.md I-185,
+    # `imaging.framing.BUDGET_TIERS_S`) — one of the defined tiers in
+    # seconds (currently 2/3/4/5/7/10/15); an unrecognized value falls back
+    # to the nearest tier at or below it, or the cheapest tier if lower
+    # than all of them (`imaging.framing.budget_to_params`).
+    detection_budget_s: float = 4.0
     size_mode: str = "native"  # native | fixed
     final_dimensions_px: list[int] = field(default_factory=lambda: [6016, 4016])
 
@@ -236,6 +252,12 @@ class Campaign:
             raise InvalidCampaignError("framing.max_deskew_deg", "must be within [0, 15]")
         if not -80 <= self.framing.threshold_bias <= 80:
             raise InvalidCampaignError("framing.threshold_bias", "must be within [-80, 80]")
+        if self.framing.detection_budget_s not in framing.BUDGET_TIERS_S:
+            raise InvalidCampaignError(
+                "framing.detection_budget_s",
+                f"must be one of {sorted(framing.BUDGET_TIERS_S)}: "
+                f"{self.framing.detection_budget_s!r}",
+            )
         if len(self.framing.final_dimensions_px) != 2 or not all(
             512 <= v <= 20000 for v in self.framing.final_dimensions_px
         ):
