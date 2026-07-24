@@ -1334,7 +1334,13 @@ class PositiveReviewScreen(QWidget):
         session = self._session
         assert session is not None
         horizontal_flip = session.campaign.exports.jpeg_positive.horizontal_flip
-        overrides = replace(self.print_panel.current_overrides(), content_frame=None)
+        # `content_frame_angle_deg=0.0` explicitly, not left to default: a
+        # fresh automatic detection is always axis-aligned, and this must
+        # keep resetting it even if `current_overrides()` ever starts
+        # carrying a nonzero angle of its own.
+        overrides = replace(
+            self.print_panel.current_overrides(), content_frame=None, content_frame_angle_deg=0.0
+        )
 
         def _render() -> print_engine.PrintResult:
             return print_engine.render_print_from_linear(
