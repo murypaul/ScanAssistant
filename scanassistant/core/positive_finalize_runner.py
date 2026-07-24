@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+
 from scanassistant.core.queue import (
     ContentFrameOutcome,
     ExportContext,
@@ -36,10 +38,11 @@ from scanassistant.core.queue import (
 )
 from scanassistant.imaging import positive as positive_pipeline
 from scanassistant.imaging import print_engine
-from scanassistant.imaging.geometry import FrameGeometry
+from scanassistant.imaging.geometry import FrameGeometry, apply_geometry
 from scanassistant.imaging.raw import RawDecoder
 from scanassistant.journal.journal import Journal
 from scanassistant.metadata.writer import MetadataWriter, ProductionInfo
+from scanassistant.project import positive_linear_cache
 from scanassistant.project.campaign import Campaign
 from scanassistant.project.layout import CampaignPaths
 
@@ -118,14 +121,41 @@ class PositiveFinalizeRunner:
             paper_soft_clip=context.manual_print_paper_soft_clip,
             content_frame=context.manual_print_content_frame,
         )
-        print_result = print_engine.render_print(
-            self._decoder,
-            context.raw_path,
+        final_dimensions_px = _final_dimensions(framing.final_dimensions_px)
+        user_wb = self._campaign.imaging.white_balance
+        # Decoded here (not via `print_engine.render_print`, which would
+        # hide the intermediate array) so the linear RAW decode — the
+        # ~16.7s dominant cost of this whole render — can also seed
+        # `positive_linear_cache` for the calibration screen: this pass
+        # already runs on several background workers in parallel with
+        # capture, the natural place to pre-pay that cost once instead of
+        # a second time whenever an operator later opens that screen.
+        development = self._decoder.develop(context.raw_path, user_wb=user_wb, linear=True)
+        geometry = apply_geometry(
+            development.pixels,
             frame,
             rotation_deg=context.rotation_deg,
             size_mode=framing.size_mode,
-            final_dimensions_px=_final_dimensions(framing.final_dimensions_px),
-            user_wb=self._campaign.imaging.white_balance,
+            final_dimensions_px=final_dimensions_px,
+        )
+        linear = geometry.pixels.astype(np.float64) / 65535.0
+        positive_linear_cache.save(
+            self._paths,
+            name,
+            linear,
+            geometry.frame_in_output,
+            positive_linear_cache.DecodeFingerprint.for_decode(
+                raw_path=context.raw_path,
+                frame=frame,
+                rotation_deg=context.rotation_deg,
+                size_mode=framing.size_mode,
+                final_dimensions_px=final_dimensions_px,
+                white_balance=user_wb,
+            ),
+        )
+        print_result = print_engine.render_print_from_linear(
+            linear,
+            geometry.frame_in_output,
             overrides=overrides,
             horizontal_flip=positive_cfg.horizontal_flip,
         )

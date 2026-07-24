@@ -99,6 +99,7 @@ from scanassistant.imaging.framing import RELIABLE, ConfidenceComponents, FrameR
 from scanassistant.imaging.geometry import FrameGeometry, apply_geometry
 from scanassistant.imaging.positive import ManualSettings, render_positive
 from scanassistant.imaging.raw import RawDecoder, RawpyDecoder
+from scanassistant.project import positive_linear_cache
 from scanassistant.project.campaign import JpegPositiveExportConfig, ManualPositiveSettings
 from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.positive_overrides import (
@@ -406,8 +407,12 @@ class PositiveReviewScreen(QWidget):
         if self._using_print_engine:
             self._update_print_engine_controls_enabled()
         else:
-            for widget in (self.print_panel, self.confirm_button, self.apply_to_selection_button):
-                widget.setEnabled(not busy)
+            for legacy_widget in (
+                self.print_panel,
+                self.confirm_button,
+                self.apply_to_selection_button,
+            ):
+                legacy_widget.setEnabled(not busy)
         if busy:
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         else:
@@ -741,8 +746,20 @@ class PositiveReviewScreen(QWidget):
         size_mode = framing.size_mode
         final_dimensions_px = (framing.final_dimensions_px[0], framing.final_dimensions_px[1])
         user_wb = session.campaign.imaging.white_balance
+        paths = session.paths
 
         def _decode() -> tuple[np.ndarray, FrameGeometry]:
+            fingerprint = positive_linear_cache.DecodeFingerprint.for_decode(
+                raw_path=raw_path,
+                frame=frame,
+                rotation_deg=rotation_deg,
+                size_mode=size_mode,
+                final_dimensions_px=final_dimensions_px,
+                white_balance=user_wb,
+            )
+            cached = positive_linear_cache.load(paths, name, fingerprint)
+            if cached is not None:
+                return cached
             development = decoder.develop(raw_path, user_wb=user_wb, linear=True)
             geometry = apply_geometry(
                 development.pixels,
@@ -752,6 +769,7 @@ class PositiveReviewScreen(QWidget):
                 final_dimensions_px=final_dimensions_px,
             )
             linear = geometry.pixels.astype(np.float32) / 65535.0
+            positive_linear_cache.save(paths, name, linear, geometry.frame_in_output, fingerprint)
             return linear, geometry.frame_in_output
 
         return _decode

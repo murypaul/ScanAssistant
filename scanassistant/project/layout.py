@@ -66,6 +66,15 @@ class CampaignPaths:
     def logs_dir(self) -> Path:
         return self.root / "LOGS"
 
+    @property
+    def print_cache_dir(self) -> Path:
+        """Downsampled linear-RAW cache for the print_engine positive
+        engine, keyed by image name — regenerable, not a deliverable
+        (unlike the other subdirectories, deliberately not part of
+        `SUBDIRECTORIES`/`create_campaign_tree`: created lazily on first
+        write, and safe to delete entirely at any time)."""
+        return self.root / ".print_cache"
+
 
 def create_campaign_tree(root: Path) -> CampaignPaths:
     """Creates a campaign's full directory layout.
