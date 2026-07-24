@@ -543,8 +543,7 @@ class PositiveReviewScreen(QWidget):
         self._print_engine_loaded_for = None
         self.refresh_list()
 
-    def refresh_list(self, *, select_name: str | None = None) -> None:
-        session = self._session
+    def _checked_categories(self) -> frozenset[str]:
         categories: set[str] = set()
         if self.category_deferred_checkbox.isChecked():
             categories.add("deferred")
@@ -552,12 +551,15 @@ class PositiveReviewScreen(QWidget):
             categories.add("applied")
         if self.category_manual_checkbox.isChecked():
             categories.add("manual")
+        return frozenset(categories)
+
+    def refresh_list(self, *, select_name: str | None = None) -> None:
+        session = self._session
+        categories = self._checked_categories()
         if session is None or not categories:
             self._names = []
         else:
-            self._names = list_positives_by_category(
-                session.paths, session.fs, frozenset(categories)
-            )
+            self._names = list_positives_by_category(session.paths, session.fs, categories)
         self.list_widget.blockSignals(True)
         self.list_widget.clear()
         for name in self._names:
@@ -567,6 +569,47 @@ class PositiveReviewScreen(QWidget):
             self.list_widget.addItem(item)
         self.list_widget.blockSignals(False)
         target_row = self._names.index(select_name) if select_name in self._names else 0
+        self.list_widget.setCurrentRow(target_row if self._names else -1)
+        if not self._names:
+            self._load_index(-1)
+
+    def _remove_stale_entries_and_select(self, select_name: str | None) -> None:
+        """Cheaper alternative to `refresh_list()` for a single confirm:
+        confirming one image typically drops it out of the current filter
+        (`deferred` → `applied`, most often) without changing anything
+        about every *other* image already in the list — a full
+        `refresh_list()` used to re-read and rescale the on-disk JPEG
+        thumbnail of every visible entry regardless, on every single
+        Confirm (Enter). Recomputes only which names the current category
+        filters still show (state lookup, no image I/O) and removes
+        exactly the row(s) that dropped out, leaving every other row's
+        icon untouched. Names newly *appearing* aren't handled here (rare
+        outside of toggling a filter checkbox, which still goes through
+        the full `refresh_list()`)."""
+        session = self._session
+        if session is None:
+            return
+        categories = self._checked_categories()
+        current_names = (
+            list_positives_by_category(session.paths, session.fs, categories)
+            if categories
+            else []
+        )
+        still_visible = set(current_names)
+        stale = [name for name in self._names if name not in still_visible]
+        for name in reversed(stale):
+            row = self._names.index(name)
+            self._names.pop(row)
+            self.list_widget.takeItem(row)
+            self._pending_thumbnail_refresh.pop(name, None)
+        target_row = self._names.index(select_name) if select_name in self._names else 0
+        # Forced through -1 first: `takeItem` can leave some *other* row
+        # already "current" at the Qt level (the item that slid into the
+        # removed one's place) — going straight to `target_row` would then
+        # silently no-op whenever that happens to already be it, and
+        # `_on_current_item_changed`/`_load_index` would never fire for
+        # the image this confirm is actually supposed to land on.
+        self.list_widget.setCurrentRow(-1)
         self.list_widget.setCurrentRow(target_row if self._names else -1)
         if not self._names:
             self._load_index(-1)
@@ -1454,7 +1497,11 @@ class PositiveReviewScreen(QWidget):
     ) -> None:
         self._record_confirm(name, before, row)
         self._current_name = None
-        self.refresh_list(select_name=next_name)
+        # `_remove_stale_entries_and_select`, not a full `refresh_list()`:
+        # this confirm touched exactly one image (`name`) — no need to
+        # re-read and rescale every other, unrelated thumbnail in the list
+        # on every single Confirm.
+        self._remove_stale_entries_and_select(next_name)
 
     def apply_to_selection(self) -> None:
         """Copies the current image's print_engine overrides to every other
