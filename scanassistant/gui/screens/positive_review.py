@@ -309,6 +309,11 @@ class PositiveReviewScreen(QWidget):
         # image itself is never stale (only the thumbnail icon can lag),
         # so giving up early here costs nothing but a slightly late icon.
         self._pending_thumbnail_refresh: dict[str, int] = {}
+        # Guards against overlapping polls: if a journal scan somehow takes
+        # longer than `_EXPORT_POLL_INTERVAL_MS` (a very large campaign),
+        # the next tick must skip rather than pile up a second background
+        # read on top of one still running.
+        self._export_poll_in_flight = False
 
         self.category_deferred_checkbox = QCheckBox(t("positive_review.category_deferred"))
         self.category_deferred_checkbox.setChecked(True)
@@ -573,15 +578,21 @@ class PositiveReviewScreen(QWidget):
         if not self._names:
             self._load_index(-1)
 
-    def _remove_stale_entries(self) -> None:
-        """Recomputes which names the current category filters still show
-        (a state/journal lookup, no image I/O) and removes exactly the
-        row(s) that dropped out, leaving every other row's icon untouched
-        — the cheap alternative to a full `refresh_list()` (which used to
+    def _remove_stale_entries(self, current_names: list[str] | None = None) -> None:
+        """Removes exactly the row(s) that dropped out of the current
+        category filters, leaving every other row's icon untouched — the
+        cheap alternative to a full `refresh_list()` (which used to
         re-read and rescale the on-disk JPEG thumbnail of every visible
         entry on every single Confirm). Names newly *appearing* aren't
         handled here (rare outside of toggling a filter checkbox, which
         still goes through the full `refresh_list()`).
+
+        `current_names` is normally precomputed off the Qt thread
+        (`_poll_export_progress`'s own background worker — a full journal
+        re-read on every tick, unbounded with the campaign's size, must
+        never run directly here). `None` (the explicit single-confirm path,
+        `_remove_stale_entries_and_select` — a one-off, operator-triggered
+        read, not a recurring tick) computes it synchronously instead.
 
         Called from two places for two different reasons: right after a
         confirm (where it usually finds nothing to remove yet — the
@@ -598,12 +609,13 @@ class PositiveReviewScreen(QWidget):
         session = self._session
         if session is None:
             return
-        categories = self._checked_categories()
-        current_names = (
-            list_positives_by_category(session.paths, session.fs, categories)
-            if categories
-            else []
-        )
+        if current_names is None:
+            categories = self._checked_categories()
+            current_names = (
+                list_positives_by_category(session.paths, session.fs, categories)
+                if categories
+                else []
+            )
         still_visible = set(current_names)
         stale = [name for name in self._names if name not in still_visible]
         for name in reversed(stale):
@@ -933,6 +945,9 @@ class PositiveReviewScreen(QWidget):
             paper_black=override.print_paper_black if override else None,
             paper_soft_clip=override.print_paper_soft_clip if override else None,
             content_frame=content_frame_override,
+            content_frame_angle_deg=self._pending_print_content_frame_angle_deg(
+                name, override, horizontal_flip
+            ),
         )
         result = print_engine.render_print_from_linear(
             linear.astype(np.float64),
@@ -946,7 +961,7 @@ class PositiveReviewScreen(QWidget):
         self._show_print_result(name, result, override)
         if content_frame_override is None and content_frame is None:
             detected_fraction = _print_frame_to_fraction(
-                _print_frame_from_rect(result.content_frame),
+                _print_frame_from_rect(result.content_frame, result.content_frame_angle_deg),
                 full_width,
                 full_height,
                 horizontal_flip,
@@ -997,6 +1012,18 @@ class PositiveReviewScreen(QWidget):
             return override.print_content_frame
         return None
 
+    def _pending_print_content_frame_angle_deg(
+        self, name: str, override: PositiveOverride | None, horizontal_flip: bool
+    ) -> float:
+        """Same priority order as `_pending_print_content_frame`, for the
+        crop's own deskew angle."""
+        pending = self._pending_print_frames.get(name)
+        if pending is not None:
+            return _print_frame_to_angle_deg(pending, horizontal_flip)
+        if override is not None:
+            return override.print_content_frame_angle_deg
+        return 0.0
+
     def _show_print_result(
         self, name: str, result: print_engine.PrintResult, override: PositiveOverride | None
     ) -> None:
@@ -1011,7 +1038,9 @@ class PositiveReviewScreen(QWidget):
         positive8 = (result.pixels // 257).astype(np.uint8)
         rgb = np.stack([positive8, positive8, positive8], axis=-1)
         self.preview_area.show_image(rgb)
-        self._current_print_frame = _print_frame_from_rect(result.content_frame)
+        self._current_print_frame = _print_frame_from_rect(
+            result.content_frame, result.content_frame_angle_deg
+        )
         self._current_print_frame_shape = rgb.shape[:2]
         self.preview_area.set_frame_overlay(self._current_print_frame)
         self.histogram_widget.set_pixels(rgb)
@@ -1053,12 +1082,18 @@ class PositiveReviewScreen(QWidget):
         horizontal_flip = session.campaign.exports.jpeg_positive.horizontal_flip
         full_height, full_width = linear.shape[:2]
         content_frame_override = None
+        content_frame_angle_deg = 0.0
         if self._current_print_frame is not None:
             content_frame_override = _print_frame_to_fraction(
                 self._current_print_frame, full_width, full_height, horizontal_flip
             )
+            content_frame_angle_deg = _print_frame_to_angle_deg(
+                self._current_print_frame, horizontal_flip
+            )
         overrides = replace(
-            self.print_panel.current_overrides(), content_frame=content_frame_override
+            self.print_panel.current_overrides(),
+            content_frame=content_frame_override,
+            content_frame_angle_deg=content_frame_angle_deg,
         )
 
         def _render() -> print_engine.PrintResult:
@@ -1137,12 +1172,18 @@ class PositiveReviewScreen(QWidget):
         horizontal_flip = session.campaign.exports.jpeg_positive.horizontal_flip
         full_height, full_width = linear.shape[:2]
         content_frame_override = None
+        content_frame_angle_deg = 0.0
         if self._current_print_frame is not None:
             content_frame_override = _print_frame_to_fraction(
                 self._current_print_frame, full_width, full_height, horizontal_flip
             )
+            content_frame_angle_deg = _print_frame_to_angle_deg(
+                self._current_print_frame, horizontal_flip
+            )
         overrides = replace(
-            self.print_panel.current_overrides(), content_frame=content_frame_override
+            self.print_panel.current_overrides(),
+            content_frame=content_frame_override,
+            content_frame_angle_deg=content_frame_angle_deg,
         )
         target_shape = (linear.shape[0], linear.shape[1])
 
@@ -1200,7 +1241,9 @@ class PositiveReviewScreen(QWidget):
         positive8 = (result.pixels // 257).astype(np.uint8)
         rgb = np.stack([positive8, positive8, positive8], axis=-1)
         self.preview_area.show_image(rgb)
-        self._current_print_frame = _print_frame_from_rect(result.content_frame)
+        self._current_print_frame = _print_frame_from_rect(
+            result.content_frame, result.content_frame_angle_deg
+        )
         self._current_print_frame_shape = rgb.shape[:2]
         self.preview_area.set_frame_overlay(self._current_print_frame)
         self.histogram_widget.set_pixels(rgb)
@@ -1334,6 +1377,24 @@ class PositiveReviewScreen(QWidget):
         self._current_print_frame = frame
         self._mark_edited()
 
+    def _rotate_print_frame(self, delta_deg: float) -> None:
+        """Ctrl+Left/Right (reserved, always active — see `keyPressEvent`):
+        deskews the content-frame crop, bounded to [-45, 45]° same as
+        `gui.screens.capture._rotate_frame`'s own support-frame rotation.
+        Mouse drag (`_on_frame_dragged`) never touches the angle at all —
+        this is the only way to set one. Only updates the overlay and
+        arms the debounce, same as a drag: the actual pixels only change
+        once that commits (`_on_print_settings_committed`/`_auto_confirm_
+        silently`), which already re-renders from whatever
+        `_current_print_frame` currently holds."""
+        if self._current_print_frame is None or self._print_engine_loaded_for != self._current_name:
+            return
+        frame = self._current_print_frame
+        new_angle = max(-45.0, min(45.0, frame.angle_deg + delta_deg))
+        self._current_print_frame = replace(frame, angle_deg=new_angle)
+        self.preview_area.set_frame_overlay(self._current_print_frame)
+        self._mark_edited()
+
     # --- confirm / apply to selection / undo ----------------------------------
 
     def _mark_edited(self) -> None:
@@ -1365,12 +1426,44 @@ class PositiveReviewScreen(QWidget):
         (`_remove_stale_entries` — a just-confirmed image doesn't actually
         change category until this later completion, not at submission
         time) and retries the thumbnail icon of any name still in
-        `_pending_thumbnail_refresh` (see its own docstring)."""
+        `_pending_thumbnail_refresh` (see its own docstring).
+
+        The journal/state I/O this needs (`collect_export_progress`,
+        `list_positives_by_category` — a full re-read and re-parse of the
+        *whole* campaign journal, unbounded, only ever growing) runs on a
+        background worker, never directly on this tick — confirmed in real
+        use to freeze the app long enough to be force-killed as
+        unresponsive when done straight on the Qt thread every single
+        tick, the same class of bug `_CallWorker`'s own docstring already
+        describes for a blocking render. Only the actual list-widget
+        mutation (cheap) happens back here, once the read completes."""
         session = self._session
-        if session is None:
+        if session is None or self._export_poll_in_flight:
             return
-        session.collect_export_progress()
-        self._remove_stale_entries()
+        self._export_poll_in_flight = True
+        categories = self._checked_categories()
+
+        def _work() -> list[str]:
+            session.collect_export_progress()
+            return (
+                list_positives_by_category(session.paths, session.fs, categories)
+                if categories
+                else []
+            )
+
+        def _on_done(current_names: object) -> None:
+            self._export_poll_in_flight = False
+            if self._session is not session:
+                return  # a different campaign was loaded while this ran
+            self._remove_stale_entries(current_names)  # type: ignore[arg-type]
+            self._retry_pending_thumbnails()
+
+        def _on_failed(_message: str) -> None:
+            self._export_poll_in_flight = False
+
+        self._run_async(_work, _on_done, on_failure=_on_failed, silent=True)
+
+    def _retry_pending_thumbnails(self) -> None:
         if not self._pending_thumbnail_refresh:
             return
         for name, attempts_left in list(self._pending_thumbnail_refresh.items()):
@@ -1421,11 +1514,15 @@ class PositiveReviewScreen(QWidget):
         assert session is not None
         overrides = self.print_panel.current_overrides()
         content_frame = None
+        content_frame_angle_deg = 0.0
         if self._current_print_frame is not None and self._current_print_frame_shape is not None:
             full_height, full_width = self._current_print_frame_shape
             horizontal_flip = session.campaign.exports.jpeg_positive.horizontal_flip
             content_frame = _print_frame_to_fraction(
                 self._current_print_frame, full_width, full_height, horizontal_flip
+            )
+            content_frame_angle_deg = _print_frame_to_angle_deg(
+                self._current_print_frame, horizontal_flip
             )
         set_positive_print_overrides(
             session.paths,
@@ -1437,6 +1534,7 @@ class PositiveReviewScreen(QWidget):
             paper_black=overrides.paper_black,
             paper_soft_clip=overrides.paper_soft_clip,
             content_frame=content_frame,
+            content_frame_angle_deg=content_frame_angle_deg,
         )
         self._pending_print_frames.pop(name, None)
 
@@ -1681,6 +1779,20 @@ class PositiveReviewScreen(QWidget):
             self._move(-6)
             event.accept()
             return
+        # Ctrl+Left/Right: deskew the content-frame crop — same reserved,
+        # always-active convention `gui.screens.capture` uses for the
+        # support frame's own rotation (Left/Right alone stay list
+        # navigation here, unlike Capture, which has no image list and
+        # uses plain arrows to nudge its own frame instead).
+        if bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier) and event.key() in (
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Right,
+        ):
+            shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            step_deg = 1.0 if shift else 0.1
+            self._rotate_print_frame(step_deg if event.key() == Qt.Key.Key_Right else -step_deg)
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     def _move(self, delta: int) -> None:
@@ -1723,19 +1835,24 @@ class PositiveReviewScreen(QWidget):
         self.histogram_widget.raise_()
 
 
-def _print_frame_from_rect(rect: tuple[int, int, int, int]) -> FrameResult:
+def _print_frame_from_rect(
+    rect: tuple[int, int, int, int], angle_deg: float = 0.0
+) -> FrameResult:
     """Wraps a print_engine content-frame rect (already in the preview's
     own display coordinate space — `PrintResult.content_frame` from a
     `crop_to_content=False` render) as a draggable `FrameResult` overlay
     (always shown as "reliable" — the frame's own correctness here is the
-    operator's judgment, not a detector score)."""
+    operator's judgment, not a detector score). `angle_deg` is the same
+    already-flipped-space angle `PrintResult.content_frame_angle_deg`
+    carries alongside it — `0.0` for an automatic detection, which never
+    rotates."""
     x, y, w, h = rect
     return FrameResult(
         x=x,
         y=y,
         width=w,
         height=h,
-        angle_deg=0.0,
+        angle_deg=angle_deg,
         confidence=1.0,
         level=RELIABLE,
         components=_ZERO_COMPONENTS,
@@ -1755,6 +1872,14 @@ def _print_frame_to_fraction(
     if horizontal_flip:
         x = full_width - x - w
     return (x / full_width, y / full_height, w / full_width, h / full_height)
+
+
+def _print_frame_to_angle_deg(frame: FrameResult, horizontal_flip: bool) -> float:
+    """Companion to `_print_frame_to_fraction`, for the crop's own deskew
+    angle — same mirrored-on-flip convention `imaging.print_engine.
+    render_print_from_linear(crop_to_content=False)` applies to its own
+    returned `content_frame_angle_deg`."""
+    return -frame.angle_deg if horizontal_flip else frame.angle_deg
 
 
 def _load_master_jpeg(paths: CampaignPaths, name: str) -> np.ndarray | None:
