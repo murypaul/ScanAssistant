@@ -22,6 +22,25 @@ import numpy as np
 
 from scanassistant.imaging.geometry import FrameGeometry
 
+# OpenCV defaults to using every logical core for a single call (GrabCut
+# here, the bilateral filter in `imaging.print_engine`, the resizes in
+# `imaging.geometry`/`project.positive_linear_cache`) — fine for one call
+# at a time, but `core.queue.PooledExportExecutor` deliberately runs up to
+# `processing.positive_finalize_workers` (default 3) of these
+# concurrently, each wanting every core for itself: real oversubscription,
+# not just theoretical (DECISIONS.md I-179 already flagged this exact risk
+# as "not yet verified empirically" when the pool was sized). Capped once
+# here, at import time — this module is the actual heavy OpenCV consumer,
+# and every entry point (GUI, CLI, tests) imports it transitively before
+# any concurrent worker could start, so a single process-wide setting here
+# is enough; no call site needs to remember to do this itself. `2`, not
+# `1`: still lets one call use a couple of cores when it's the only one
+# running (the common case, browsing/reviewing), while `positive_finalize_
+# workers` × `2` (6 by default) stays comfortably under a typical
+# multi-core machine instead of trying to claim all of them three times
+# over.
+cv2.setNumThreads(2)
+
 _WORKING_LONG_EDGE_PX = 350  # measured on real samples: NOT simply "smaller is safer
 # but blurrier" — a busy, high-contrast photo (foreground clutter against a much
 # darker background) made GrabCut confidently carve the image itself in half at
