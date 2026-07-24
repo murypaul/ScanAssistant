@@ -308,7 +308,9 @@ STRINGS: dict[str, str] = {
     "capture.status_unknown_name": "Unknown or already-used name: {name}",
     "capture.dismiss_warning": "Dismiss",
     "capture.status_image_errored": "{name} flagged as error ({code}) — see Statistics to retry.",
-    "capture.status_white_balance_pick": "Click a neutral point in the preview to set white balance…",
+    "capture.status_white_balance_pick": (
+        "Click a neutral point in the preview to set white balance…"
+    ),
     "capture.status_white_balance_cancelled": "White balance pick cancelled",
     "capture.status_white_balance_set": "White balance set for the rest of the session",
     "capture.status_white_balance_error": "Could not read that RAW to set white balance",

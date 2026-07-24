@@ -39,8 +39,17 @@ From the home screen, **New campaign** opens a short wizard:
    you confirm which column holds the names, with a preview and a
    validation report before anything is imported.
 4. **Capture & framing** — default orientation, output size mode, margins,
-   whether automatic framing is on.
-5. **Exports** — settings for TIFF, JPEG master, and JPEG positive.
+   whether automatic framing is on. Also where you pick the **capture
+   mode**: *Full processing* (the workflow this guide describes) or
+   *Simple* — RAW only, files renamed and moved with no crop detection
+   and no TIFF/JPEG/positive exports at all; the Framing and Exports
+   wizard steps are skipped for it, since neither applies.
+5. **Exports** — settings for TIFF, JPEG master, and JPEG positive,
+   including which **positive engine** to use: the original tone-curve
+   engine, or a density-domain engine that reconstructs the darkroom
+   print process (film response, then paper response) instead of
+   stretching an already-inverted image — see
+   [Positive calibration](#positive-calibration).
 6. **Metadata** — IPTC fields written to every export (creator, institution,
    copyright, collection, keywords).
 7. **Summary** — review, then create. Everything here stays editable later
@@ -101,6 +110,18 @@ preview during capture: judging tone belongs to the dedicated
 [Positive calibration](#positive-calibration) screen, after capture — see
 below. Capture itself is judged on the raw negative and its histogram,
 which is enough to catch an exposure problem at a glance.
+
+**Capture ▸ Rename current image…** renames the image currently in
+review — its RAW, sidecar, and any already-produced exports all move
+together, in place. In *Simple* mode, where renaming on the fly is the
+main way an operator corrects a name, it's bound to a dedicated key (`N`)
+instead of living menu-only.
+
+If a capture arrives once every inventory row has already been used, the
+same rename field opens automatically, empty, right on the capture
+screen — type a name and press Enter to file that image under it, no
+need to add a row to the CSV and wait. Escape leaves it stuck waiting;
+it reopens on the next capture attempt.
 
 ## Keyboard shortcuts
 
@@ -332,10 +353,17 @@ filter). The right-hand panel depends on the campaign's engine:
   pressed Enter in a field), not continuously while dragging — the screen
   locks with a status message for that one render, but the window itself
   stays responsive throughout rather than freezing. The first RAW decode
-  of a given image is the only genuinely slow step; revisiting an image
-  already opened earlier in this screen session, or committing a further
-  change to it, reuses that decode and only re-runs the much cheaper tone
-  math. The next image in the filtered list is also quietly decoded in the
+  of a given image is the only genuinely slow step, and it never blocks
+  browsing: move to another image right away and this one's decode keeps
+  going quietly in the background, landing on that image only if you're
+  still looking at it once it's done. Revisiting an image already opened
+  earlier in this screen session, or committing a further change to it,
+  reuses that decode and only re-runs the much cheaper tone math — and a
+  campaign already fully processed usually has nothing left to decode at
+  all: capture itself already did that work in the background, on the
+  same worker pool that renders the density-domain positive, so opening
+  the calibration screen for it goes straight to a ready preview. The
+  next image in the filtered list is also quietly decoded in the
   background while you're still looking at the current one, so moving on
   often finds it already waiting.
 

@@ -44,7 +44,18 @@ Depuis l'écran d'accueil, **New campaign** ouvre un assistant en plusieurs
    avec un aperçu et un rapport de validation avant l'import.
 4. **Prise de vue et recadrage** — orientation par défaut, mode de
    dimensions de sortie, marges, recadrage automatique activé ou non.
-5. **Exports** — réglages pour le TIFF, le JPEG maître et le JPEG positif.
+   C'est aussi ici que se choisit le **mode de capture** : *Full
+   processing* (le déroulé décrit dans ce guide) ou *Simple* — RAW
+   seulement, les fichiers sont renommés et déplacés sans détection de
+   cadre ni aucun export TIFF/JPEG/positif ; les étapes Recadrage et
+   Exports de l'assistant sont alors sautées, aucune des deux ne
+   s'appliquant.
+5. **Exports** — réglages pour le TIFF, le JPEG maître et le JPEG positif,
+   y compris le choix du **moteur du positif** : le moteur historique par
+   courbe de tonalité, ou un moteur en domaine de densité qui reconstitue
+   le procédé de tirage argentique (réponse du film puis réponse du
+   papier) au lieu d'étirer une image déjà inversée — voir
+   [Calibrage positif](#calibrage-positif).
 6. **Métadonnées** — champs IPTC écrits sur chaque export (créateur,
    institution, copyright, collection, mots-clés).
 7. **Récapitulatif** — vérification, puis création. Tout reste modifiable
@@ -108,6 +119,19 @@ d'aperçu positif pendant la capture : le jugement de tonalité se fait
 entièrement dans l'écran dédié [Calibrage positif](#calibrage-positif),
 après la capture — voir plus bas. La capture elle-même se juge sur le
 négatif brut et son histogramme.
+
+**Capture ▸ Rename current image…** renomme l'image en cours de revue —
+son RAW, son sidecar et tout export déjà produit sont déplacés ensemble,
+en place. En mode *Simple*, où renommer à la volée est le principal
+moyen de corriger un nom, cette action est liée à une touche dédiée (`N`)
+plutôt que réservée au menu.
+
+Si une prise arrive alors que toutes les lignes de l'inventaire ont déjà
+été utilisées, ce même champ de renommage s'ouvre automatiquement, vide,
+directement sur l'écran de capture — tapez un nom et appuyez sur Entrée
+pour classer cette image sous ce nom, sans avoir à ajouter de ligne au
+CSV. Échap laisse l'image en attente ; le champ se rouvre à la prochaine
+tentative de capture.
 
 ## Raccourcis clavier
 
@@ -359,13 +383,20 @@ panneau de droite dépend du moteur de la campagne :
   champ), jamais en continu pendant le glissement — l'écran se verrouille
   avec un message de statut le temps de ce rendu, mais la fenêtre elle-même
   reste réactive plutôt que de geler. Seul le tout premier décodage RAW
-  d'une image donnée est réellement long ; revisiter une image déjà
+  d'une image donnée est réellement long, et il ne bloque jamais la
+  navigation : passez à une autre image tout de suite, le décodage
+  continue discrètement en arrière-plan et n'atterrit sur cette image que
+  si vous la regardez encore une fois terminé. Revisiter une image déjà
   ouverte plus tôt dans cette session d'écran, ou lui valider un nouveau
   changement, réutilise ce décodage et ne relance que le calcul de
-  tonalité, bien moins coûteux. L'image suivante du filtre actif est
-  aussi décodée discrètement en arrière-plan pendant que vous regardez
-  encore l'image courante, si bien qu'elle est souvent déjà prête au
-  moment de passer à la suite.
+  tonalité, bien moins coûteux — et une campagne déjà entièrement
+  traitée n'a généralement plus rien à décoder du tout : la capture
+  elle-même a déjà fait ce travail en arrière-plan, sur le même bassin
+  d'ouvriers qui rend le positif en domaine de densité, si bien qu'ouvrir
+  l'écran de calibrage pour elle affiche directement un aperçu prêt.
+  L'image suivante du filtre actif est aussi décodée discrètement en
+  arrière-plan pendant que vous regardez encore l'image courante, si bien
+  qu'elle est souvent déjà prête au moment de passer à la suite.
 
 `Enter` (ou **Confirm & next**) applique les réglages de l'image courante
 et passe à la suivante du filtre actif. Vous n'avez pas besoin de cliquer

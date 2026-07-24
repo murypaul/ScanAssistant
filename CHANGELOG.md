@@ -1,5 +1,64 @@
 # Changelog
 
+## 1.13.0 — 2026-07-24
+
+### New / Changed
+**Capture**
+- Added a "Simple" campaign mode: watch a folder, stabilize, assign the
+  next inventory name, move the RAW — nothing else. No crop detection,
+  no TIFF/JPEG/positive exports. Meant for campaigns that only need the
+  RAWs filed under the right names. Renaming the current image on the
+  fly is its primary way to correct a name, on a dedicated key.
+- The current image can now be renamed from the Capture menu in normal
+  campaigns too, moving its RAW and any already-produced exports
+  together.
+- If a capture arrives after every inventory row has already been used,
+  a name field now opens right on the capture screen so you can name it
+  on the spot, instead of a blocking error telling you to edit the CSV.
+
+**Positive rendering**
+- Added a new positive rendering engine, selectable per campaign:
+  reconstructs the darkroom print process (film response, then paper
+  response, sampling the film base directly off the negative's own
+  border) instead of stretching an already-inverted image — meant to be
+  more physically faithful, especially on unevenly aged or stained film.
+- Added a dedicated positive calibration screen (Project ▸ Positive
+  calibration) for reviewing and adjusting positives after capture: film
+  base, exposure, contrast, and paper black/soft-clip, each starting
+  automatic with a manual override, undo/redo, and "apply to selection"
+  to copy a look across several negatives at once (the film base is
+  deliberately excluded from that propagation — it's a physical
+  measurement specific to each negative, not an aesthetic choice).
+- The positive's crop can now be dragged and adjusted on this screen for
+  the new engine too, not only the previous one.
+- Moving between images on this screen is now instant — it no longer
+  waits for the previous image's render, and a slow render can no longer
+  land on the wrong image if you've already moved on by the time it
+  finishes.
+- Opening the calibration screen for an already-processed campaign no
+  longer re-decodes every negative from scratch: captured images are
+  ready to review immediately, since capture itself already did that
+  work in the background.
+
+**Framing**
+- Support-frame detection reworked: the detected frame no longer
+  systematically excludes the negative's own unexposed border, and is
+  reliable on far more images than before.
+
+### Bug Fixes
+**Positive rendering**
+- Two confirmations submitted close together for the same image (e.g. a
+  quick edit followed immediately by another) could occasionally leave
+  the older one's render as the final result instead of the latest one.
+- Paper black/soft-clip are now applied to each color channel before the
+  monochrome conversion, instead of after — matching how a real paper's
+  response actually works.
+
+### Documentation
+- User guide: documented the simple capture mode, the positive engine
+  choice, the new positive calibration screen, and renaming an image on
+  the fly (English and French).
+
 ## 1.12.0 — 2026-07-22
 
 ### New / Changed
