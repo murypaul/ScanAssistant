@@ -123,6 +123,21 @@ def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
+class _ShutdownPanel(QWidget):
+    """The transient "exports still finishing" progress panel
+    (`MainWindow._show_shutdown_panel`) — never dismissable via its own
+    close button/Alt+F4/window-manager close. Doing so used to leave
+    `MainWindow._shutdown_panel` pointing at an already-destroyed widget
+    (nothing else ever reset it to `None`), which meant the main window's
+    own `closeEvent` guard (`if self._shutdown_panel is not None:
+    event.ignore()`) could never be satisfied again — the whole app became
+    impossible to close from then on. The only way out of this panel is
+    the explicit "Quit without waiting" button."""
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        event.ignore()
+
+
 class MainWindow(QMainWindow):
     def __init__(self, context: AppContext) -> None:
         super().__init__()
@@ -1120,7 +1135,7 @@ class MainWindow(QMainWindow):
         self._show_shutdown_panel(pending)
 
     def _show_shutdown_panel(self, pending: int) -> None:
-        panel = QWidget()
+        panel = _ShutdownPanel()
         panel.setWindowTitle(t("shutdown.title"))
         panel.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         label = QLabel(t("shutdown.pending", count=pending))
