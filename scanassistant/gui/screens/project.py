@@ -38,10 +38,10 @@ from scanassistant.core.bulk_export import export_derivatives
 from scanassistant.core.campaign_reset import reset_campaign
 from scanassistant.core.fs import RealFileSystem
 from scanassistant.gui.errors import format_business_error
-from scanassistant.imaging import framing
 from scanassistant.gui.widgets.csv_table import CsvTableWidget
 from scanassistant.gui.widgets.log_table import LogTableWidget
 from scanassistant.i18n import t
+from scanassistant.imaging import framing
 from scanassistant.journal.journal import Journal
 from scanassistant.project.campaign import Campaign, save_campaign
 from scanassistant.project.errors import InvalidCampaignError
@@ -534,9 +534,7 @@ class ProjectScreen(QWidget):
         for tier_s in sorted(framing.BUDGET_TIERS_S):
             self.detection_budget_combo.addItem(f"{tier_s:.0f} s", tier_s)
         self.detection_budget_combo.setToolTip(t("wizard.step4.detection_budget_hint"))
-        self.detection_budget_combo.currentIndexChanged.connect(
-            self._on_detection_budget_changed
-        )
+        self.detection_budget_combo.currentIndexChanged.connect(self._on_detection_budget_changed)
 
         form = QFormLayout()
         form.addRow(self.framing_enabled_check)

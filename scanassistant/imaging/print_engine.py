@@ -230,9 +230,13 @@ def render_print_from_linear(
         luminance = _local_contrast_bilateral(luminance)
         local_contrast_applied = True
 
-    paper_black = DEFAULT_PAPER_BLACK if overrides.paper_black is None else float(overrides.paper_black)
+    paper_black = (
+        DEFAULT_PAPER_BLACK if overrides.paper_black is None else float(overrides.paper_black)
+    )
     paper_soft_clip = (
-        DEFAULT_PAPER_SOFT_CLIP if overrides.paper_soft_clip is None else float(overrides.paper_soft_clip)
+        DEFAULT_PAPER_SOFT_CLIP
+        if overrides.paper_soft_clip is None
+        else float(overrides.paper_soft_clip)
     )
     luminance = np.clip(luminance + paper_black, 0.0, None)
     clipped = -(luminance - paper_soft_clip) / max(1e-6, 1.0 - paper_soft_clip)

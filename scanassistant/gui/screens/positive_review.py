@@ -143,6 +143,7 @@ class _CallWorker(QThread):
             return
         self.succeeded.emit(result)
 
+
 _DEFAULT_INSET_FRACTION = 0.05  # per side — a head start, not a guess: an
 # operator reviewing a *deferred* image (nothing confidently auto-detected)
 # still very rarely wants literally the whole support frame kept as-is.
@@ -637,7 +638,10 @@ class PositiveReviewScreen(QWidget):
             self.status_label.setText(message)
 
         self._run_async(
-            decode, _on_decoded, busy_text=t("positive_review.loading", name=name), on_failure=_on_failed
+            decode,
+            _on_decoded,
+            busy_text=t("positive_review.loading", name=name),
+            on_failure=_on_failed,
         )
 
     def _rebuild_context(self, name: str) -> ExportContext | None:
@@ -845,7 +849,9 @@ class PositiveReviewScreen(QWidget):
             content_frame_override = _print_frame_to_fraction(
                 self._current_print_frame, full_width, full_height, horizontal_flip
             )
-        overrides = replace(self.print_panel.current_overrides(), content_frame=content_frame_override)
+        overrides = replace(
+            self.print_panel.current_overrides(), content_frame=content_frame_override
+        )
 
         def _render() -> print_engine.PrintResult:
             return print_engine.render_print_from_linear(
@@ -1152,14 +1158,18 @@ class PositiveReviewScreen(QWidget):
         self.refresh_list(select_name=next_name)
 
     def apply_to_selection(self) -> None:
-        """ "Apply to selection" (06_INTERFACE.md §8ter): copies the current
-        image's print_engine overrides to every other selected image.
-        Confirms the current image first (so what's propagated is exactly
-        what's on screen), then explicit confirmation ("N images
-        affected") before touching anything else. Both steps are
+        """Copies the current image's print_engine overrides to every other
+        selected image. Confirms the current image first (so what's
+        propagated is exactly what's on screen), then explicit confirmation
+        ("N images affected") before touching anything else. Both steps are
         `_run_async` calls chained via `confirm_current`'s `on_done`."""
         session = self._session
-        if session is None or self._current_name is None or not self._using_print_engine or self._busy:
+        if (
+            session is None
+            or self._current_name is None
+            or not self._using_print_engine
+            or self._busy
+        ):
             return
         source_name = self._current_name
         targets = [n for n in self.selected_names() if n != source_name]
