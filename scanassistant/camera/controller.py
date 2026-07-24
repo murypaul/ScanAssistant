@@ -315,22 +315,14 @@ class CameraController:
         return False
 
     def _handle_trigger(self, live_view_active: bool) -> bool:
-        """Returns the live-view-active state to carry forward.
-
-        Reverted: this used to force an immediate `stop_live_view()` +
-        `start_live_view()` right after the download wait, on the theory
-        that it automated the manual (L, L) toggle an operator confirmed
-        unstuck a frozen post-capture feed. In real use this made things
-        worse, not better — live view started dropping (fully
-        disconnecting) on essentially every shot, first capture included.
-        The manual toggle likely works precisely because of the pause a
-        human naturally leaves between the two presses, which an immediate
-        automatic restart doesn't — attempting `start_live_view()` before
-        the camera has actually settled from the real exposure can itself
-        fail, and unlike a stale-but-still-arriving frame, that failure
-        genuinely drops the connection. Left to the existing read-failure
-        tolerance (`_READ_FAILURE_GRACE_S`) instead, same as before this was
-        tried."""
+        """Returns the live-view-active state to carry forward — a real
+        trigger, confirmed in real use, leaves the camera's own live-view
+        feed stale (frames keep arriving without error, but the image
+        itself never changes) until `viewfinder` is explicitly toggled off
+        and back on; doing that by hand (L, L) reliably unstuck it, so a
+        successful trigger now does the same automatically instead of
+        leaving a frozen feed for the operator to notice and fix
+        themselves."""
         if not self._connected:
             self._emit_error(CODE_NOT_DETECTED, {})
             return live_view_active
@@ -350,6 +342,9 @@ class CameraController:
         if self._on_capture_triggered is not None:
             self._on_capture_triggered()
         self._download_after_trigger()
+        if live_view_active:
+            self._safe_call(self._backend.stop_live_view)
+            return self._handle_start_live_view()
         return live_view_active
 
     def _download_after_trigger(self) -> None:
