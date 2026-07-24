@@ -95,10 +95,11 @@ class FakeCameraBackend:
 
     `busy_count` simulates the camera refusing `start_live_view()` that
     many times with `CameraBusyError` before succeeding, exercising the
-    controller's retry/backoff. `reported_capture_target` lets a test
-    simulate a body that ignores the requested value. `captured_file_names`
-    is what `download_captured_files` "produces" after each trigger — empty
-    by default, i.e. nothing ever arrives (matches a fresh double not wired
+    controller's retry/backoff — `trigger_busy_count` is the same idea for
+    `trigger_capture()`. `reported_capture_target` lets a test simulate a
+    body that ignores the requested value. `captured_file_names` is what
+    `download_captured_files` "produces" after each trigger — empty by
+    default, i.e. nothing ever arrives (matches a fresh double not wired
     for the download path).
     """
 
@@ -108,6 +109,7 @@ class FakeCameraBackend:
         connect_error: Exception | None = None,
         busy_count: int = 0,
         trigger_error: Exception | None = None,
+        trigger_busy_count: int = 0,
         reported_capture_target: str | None = None,
         captured_file_names: tuple[str, ...] = (),
         download_error: Exception | None = None,
@@ -117,6 +119,11 @@ class FakeCameraBackend:
         self.connect_error = connect_error
         self.busy_count = busy_count
         self.trigger_error = trigger_error
+        # Same idea as `busy_count` (`start_live_view`), for `trigger_capture`:
+        # the camera refuses this many attempts with `CameraBusyError` before
+        # actually firing, exercising the controller's own trigger retry.
+        self.trigger_busy_count = trigger_busy_count
+        self._trigger_attempts = 0
         self.reported_capture_target = reported_capture_target
         self.captured_file_names = captured_file_names
         self.download_error = download_error
@@ -178,6 +185,9 @@ class FakeCameraBackend:
     def trigger_capture(self) -> None:
         if not self.connected:
             raise CameraNotFoundError("not connected")
+        self._trigger_attempts += 1
+        if self._trigger_attempts <= self.trigger_busy_count:
+            raise CameraBusyError("0x2019 device busy")
         if self.trigger_error is not None:
             raise self.trigger_error
         self.triggered_count += 1

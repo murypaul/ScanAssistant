@@ -42,6 +42,21 @@ _LIVE_VIEW_RETRY_DELAYS_S: tuple[float | None, ...] = (0.5, 1.0, 2.0, None)
 # actually talk to it.
 _CONNECT_RETRY_DELAYS_S: tuple[float | None, ...] = (0.5, 1.0, 2.0, None)
 
+# Same transient PTP "device busy" condition `_LIVE_VIEW_RETRY_DELAYS_S`
+# already retries for `start_live_view()` (well-documented Nikon firmware
+# behavior, not a driver bug — see this error's own docstring) can just as
+# well hit the remote trigger itself, especially right on the first shot of
+# a session. Missing here for a long time: `trigger_capture()` raising
+# `CameraBusyError` used to propagate straight out of `_handle_trigger`,
+# past its own `except CameraIOError` (a sibling exception, not a
+# superclass — never caught there) and into `_handle_command`'s outer
+# defensive `except Exception`, which only logs it — no retry, no
+# `on_error`, nothing the operator could see. The shutter (and sometimes
+# the mirror) would fire while the app showed nothing at all, until an
+# operator's own repeated manual presses happened to land outside the
+# firmware's busy window.
+_TRIGGER_RETRY_DELAYS_S: tuple[float | None, ...] = (0.5, 1.0, 2.0, None)
+
 _IDLE_POLL_INTERVAL_S = 0.05  # while connected but live view is off
 _LIVE_VIEW_POLL_INTERVAL_S = 0.01  # while live view is on, between frame attempts
 
@@ -52,7 +67,19 @@ _LIVE_VIEW_POLL_INTERVAL_S = 0.01  # while live view is on, between frame attemp
 # indistinguishable, from a single failure, from the camera having actually
 # left the USB port. A short grace window rides out the former without
 # meaningfully delaying detection of the latter.
-_READ_FAILURE_GRACE_S = 3.0
+#
+# Widened from the original 3.0s: reported in real use as live view going
+# dark on every single capture, staying off until the operator noticed and
+# pressed L again (`start_live_view` is deliberately manual-only, never
+# auto-resumed — `gui.screens.capture.toggle_live_view`'s own docstring) —
+# i.e. reads were still failing past 3s on a real trigger often enough to
+# actually disconnect, not just the brief blip this was tuned against.
+# Comfortably under both the camera thread's own post-trigger download
+# wait (`camera.gphoto_backend._DOWNLOAD_WAIT_TIMEOUT_S`, 10s — reads
+# aren't even attempted during that wait, so none of it counts against
+# this grace window) and the GUI's overall capture-trigger deadline
+# (`gui.screens.capture._CAPTURE_TRIGGER_TIMEOUT_S`, 15s).
+_READ_FAILURE_GRACE_S = 8.0
 
 
 class _Command(Enum):
@@ -292,11 +319,19 @@ class CameraController:
         if not self._connected:
             self._emit_error(CODE_NOT_DETECTED, {})
             return
-        try:
-            self._backend.trigger_capture()
-        except CameraIOError as exc:
-            self._emit_error(CODE_TRIGGER_FAILED, {"reason": str(exc)})
-            return
+        for delay in _TRIGGER_RETRY_DELAYS_S:
+            try:
+                self._backend.trigger_capture()
+            except CameraBusyError:
+                if delay is None:
+                    self._emit_error(CODE_TRIGGER_FAILED, {"reason": "device_busy"})
+                    return
+                time.sleep(delay)
+                continue
+            except CameraIOError as exc:
+                self._emit_error(CODE_TRIGGER_FAILED, {"reason": str(exc)})
+                return
+            break
         if self._on_capture_triggered is not None:
             self._on_capture_triggered()
         self._download_after_trigger()
