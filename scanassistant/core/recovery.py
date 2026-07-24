@@ -111,4 +111,7 @@ def rebuild_export_context(
         manual_print_paper_black=override.print_paper_black if override else None,
         manual_print_paper_soft_clip=override.print_paper_soft_clip if override else None,
         manual_print_content_frame=override.print_content_frame if override else None,
+        manual_print_content_frame_angle_deg=(
+            override.print_content_frame_angle_deg if override else 0.0
+        ),
     )

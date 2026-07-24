@@ -33,6 +33,12 @@ class PositiveOverride:
     # separate decode from `master.pixels`, at its own resolution — hence
     # fractions rather than absolute pixels).
     print_content_frame: tuple[float, float, float, float] | None = None
+    # Deskew, degrees — same convention as `imaging.print_engine.
+    # ManualPrintOverrides.content_frame_angle_deg`; only meaningful
+    # alongside `print_content_frame` (an operator's own crop, never the
+    # automatic detection). `0.0`, not `None`: an axis-aligned crop is the
+    # ordinary case, not a distinct "unset" state to track separately.
+    print_content_frame_angle_deg: float = 0.0
 
 
 def load_positive_overrides(paths: CampaignPaths, fs: FileSystem) -> dict[str, PositiveOverride]:
@@ -56,6 +62,7 @@ def load_positive_overrides(paths: CampaignPaths, fs: FileSystem) -> dict[str, P
             print_content_frame=(
                 tuple(print_content_frame) if print_content_frame is not None else None  # type: ignore[arg-type]
             ),
+            print_content_frame_angle_deg=entry.get("print_content_frame_angle_deg", 0.0),
         )
     return overrides
 
@@ -99,6 +106,7 @@ def set_positive_print_overrides(
     paper_black: float | None,
     paper_soft_clip: float | None,
     content_frame: tuple[float, float, float, float] | None,
+    content_frame_angle_deg: float = 0.0,
 ) -> None:
     """Records (or replaces) the print_engine override for `name`,
     read-modify-write.
@@ -106,7 +114,11 @@ def set_positive_print_overrides(
     default): a caller not touching the crop must still pass through its
     *current* value explicitly — a default of `None` would silently clear
     a previously confirmed crop on every tonal-only confirm, exactly the
-    silent-discard this module exists to prevent."""
+    silent-discard this module exists to prevent. `content_frame_angle_deg`
+    defaults to `0.0` (not required the same way): a caller that never
+    passes it is simply not deskew-aware yet, same as before this field
+    existed, not silently clearing a rotation the way a `None` default on
+    `content_frame` itself would silently clear a crop."""
     overrides = load_positive_overrides(paths, fs)
     existing = overrides.get(name, PositiveOverride())
     overrides[name] = replace(
@@ -117,5 +129,6 @@ def set_positive_print_overrides(
         print_paper_black=paper_black,
         print_paper_soft_clip=paper_soft_clip,
         print_content_frame=content_frame,
+        print_content_frame_angle_deg=content_frame_angle_deg,
     )
     _save_positive_overrides(overrides, paths, fs)

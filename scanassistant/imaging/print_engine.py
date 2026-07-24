@@ -85,6 +85,18 @@ class ManualPrintOverrides:
     # fields, this one has no corresponding calibration-screen "group":
     # it's set by dragging the crop overlay, not a slider.
     content_frame: tuple[float, float, float, float] | None = None
+    # Deskew, degrees, same convention as `imaging.geometry.FrameGeometry.
+    # angle_deg` (Capture's own crop rotation, Ctrl+Left/Right there) —
+    # only meaningful alongside a set `content_frame` (an operator's own
+    # crop): the automatic GrabCut/inset detection never produces one.
+    # Applied only at the final crop (a real `warpAffine`, like `imaging.
+    # geometry._deskew_and_crop`), never to the density/GrabCut statistics
+    # mask, which stays the crop's plain axis-aligned bounding box — a
+    # rotated content region's stats mask including a few extra corner
+    # pixels near the border is already filtered out by `_content_mask`'s
+    # own density-based border refinement, the same tolerance an
+    # unrotated crop already relies on.
+    content_frame_angle_deg: float = 0.0
 
 
 _AUTO = ManualPrintOverrides()
@@ -115,6 +127,10 @@ class PrintResult:
     # valid stand-in when one is already available (same geometry params),
     # but a caller with no master at all (`core.positive_finalize_runner`)
     # needs it from here instead of a redundant second geometry pass.
+    content_frame_angle_deg: float = 0.0  # echoes `ManualPrintOverrides.
+    # content_frame_angle_deg` (0.0 for an automatic detection — GrabCut/
+    # inset never rotate) — same mirrored-on-flip convention as
+    # `content_frame` itself in the `crop_to_content=False` preview space.
 
 
 def render_print(
@@ -217,6 +233,11 @@ def render_print_from_linear(
     mask, mask_source, content_frame = _content_mask(
         linear, frame_in_output, dmin, manual_rect, cached_rect, cached_content_mask_source
     )
+    # Only an operator's own crop can carry a deskew — the automatic
+    # detection (`_content_mask`'s GrabCut/inset fallback) never rotates.
+    content_frame_angle_deg = (
+        float(overrides.content_frame_angle_deg) if manual_rect is not None else 0.0
+    )
 
     density = np.log10(dmin[None, None, :] / np.maximum(linear, _THRESHOLD))
     density = np.clip(density, 0.0, None)
@@ -276,6 +297,21 @@ def render_print_from_linear(
     full_height, full_width = pixels16.shape[:2]
     if crop_to_content:
         cx, cy, cw, ch = content_frame
+        if content_frame_angle_deg != 0.0:
+            # True deskew, same approach `imaging.geometry._deskew_and_crop`
+            # already uses for the support frame: rotate the whole array
+            # around the crop's own center so the crop becomes axis-aligned
+            # in the rotated result, then take the same (cx, cy, cw, ch)
+            # slice — center-preserving, so it's still exactly this rect.
+            center = (cx + cw / 2, cy + ch / 2)
+            matrix = cv2.getRotationMatrix2D(center, content_frame_angle_deg, 1.0)
+            pixels16 = cv2.warpAffine(
+                pixels16,
+                matrix,
+                (full_width, full_height),
+                flags=cv2.INTER_CUBIC,
+                borderMode=cv2.BORDER_REPLICATE,
+            )
         pixels16 = pixels16[cy : cy + ch, cx : cx + cw]
         if horizontal_flip:
             # Negatives are captured emulsion-side up (more detail) —
@@ -289,6 +325,9 @@ def render_print_from_linear(
             pixels16 = np.fliplr(pixels16)
             cx, cy, cw, ch = content_frame
             content_frame = (full_width - cx - cw, cy, cw, ch)
+            # A horizontal mirror reverses the sense of rotation too — same
+            # correction `content_frame`'s own x just went through.
+            content_frame_angle_deg = -content_frame_angle_deg
 
     return PrintResult(
         pixels=pixels16,
@@ -302,6 +341,7 @@ def render_print_from_linear(
         local_contrast_applied=local_contrast_applied,
         content_frame=content_frame,
         support_shape=(linear.shape[0], linear.shape[1]),
+        content_frame_angle_deg=content_frame_angle_deg,
     )
 
 

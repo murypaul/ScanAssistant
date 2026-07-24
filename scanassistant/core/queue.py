@@ -71,6 +71,10 @@ class ExportContext:
     manual_print_paper_black: float | None = None
     manual_print_paper_soft_clip: float | None = None
     manual_print_content_frame: tuple[float, float, float, float] | None = None
+    # Mirrors `imaging.print_engine.ManualPrintOverrides.
+    # content_frame_angle_deg` — only meaningful alongside
+    # `manual_print_content_frame` (an operator's own crop).
+    manual_print_content_frame_angle_deg: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -93,6 +97,10 @@ class ContentFrameOutcome:
     # knowing what resolution `master.pixels` was at this particular export
     # (see `ExportContext.manual_print_content_frame` above for why fractions).
     fraction: tuple[float, float, float, float] | None = None
+    # Mirrors `imaging.print_engine.PrintResult.content_frame_angle_deg` —
+    # `0.0` for every automatic detection, never set outside of `source ==
+    # "manual"`.
+    angle_deg: float = 0.0
     # `imaging.print_engine.PrintResult.flagged`: the density/tonal
     # estimate itself was unconfident (contrast capped, or exposure shift
     # beyond tolerance) — independent of crop confidence, an image can have

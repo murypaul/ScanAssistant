@@ -117,6 +117,7 @@ class PositiveFinalizeRunner:
             paper_black=context.manual_print_paper_black,
             paper_soft_clip=context.manual_print_paper_soft_clip,
             content_frame=context.manual_print_content_frame,
+            content_frame_angle_deg=context.manual_print_content_frame_angle_deg,
         )
         final_dimensions_px = _final_dimensions(framing.final_dimensions_px)
         user_wb = self._campaign.imaging.white_balance
@@ -210,6 +211,7 @@ class PositiveFinalizeRunner:
                 if support_width > 0 and support_height > 0
                 else None
             ),
+            angle_deg=print_result.content_frame_angle_deg,
         )
         return path, outcome
 

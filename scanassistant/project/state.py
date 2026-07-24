@@ -26,9 +26,7 @@ class FramingState:
 @dataclass
 class ContentFramingState:
     """Content frame within the support frame (`imaging.content_framing`),
-    for the reading positive only — never applied to the master. Always
-    axis-aligned (no `angle_deg`: the support frame's own deskew already
-    resolves this)."""
+    for the reading positive only — never applied to the master."""
 
     x: int = 0
     y: int = 0
@@ -43,6 +41,10 @@ class ContentFramingState:
     # this particular export. `None` for entries recorded before this field
     # existed.
     content_frame_fraction: tuple[float, float, float, float] | None = None
+    # Deskew, degrees — only ever set for `outcome == "manual"` (an
+    # operator's own crop, calibration screen); `0.0` for every automatic
+    # detection.
+    angle_deg: float = 0.0
 
 
 @dataclass

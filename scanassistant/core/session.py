@@ -748,6 +748,7 @@ class CaptureSession:
             return []
         existing = load_positive_overrides(self.paths, self.fs).get(name)
         content_frame = existing.print_content_frame if existing else None
+        content_frame_angle_deg = existing.print_content_frame_angle_deg if existing else 0.0
         set_positive_print_overrides(
             self.paths,
             self.fs,
@@ -758,6 +759,7 @@ class CaptureSession:
             paper_black=paper_black,
             paper_soft_clip=paper_soft_clip,
             content_frame=content_frame,
+            content_frame_angle_deg=content_frame_angle_deg,
         )
         context = replace(
             context,
@@ -767,6 +769,7 @@ class CaptureSession:
             manual_print_paper_black=paper_black,
             manual_print_paper_soft_clip=paper_soft_clip,
             manual_print_content_frame=content_frame,
+            manual_print_content_frame_angle_deg=content_frame_angle_deg,
         )
         self.enqueue_export_context(name, ["jpeg_positive"], context)
         events = self._drain_exports(self._new_deadline())
@@ -854,6 +857,9 @@ class CaptureSession:
             manual_print_paper_black=override.print_paper_black if override else None,
             manual_print_paper_soft_clip=override.print_paper_soft_clip if override else None,
             manual_print_content_frame=override.print_content_frame if override else None,
+            manual_print_content_frame_angle_deg=(
+                override.print_content_frame_angle_deg if override else 0.0
+            ),
         )
         self.enqueue_export_context(name, ["jpeg_positive"], context)
         events = self._drain_exports(self._new_deadline())
@@ -915,6 +921,7 @@ class CaptureSession:
                 area_ratio=content_frame.area_ratio,
                 outcome=outcome,
                 content_frame_fraction=content_frame.fraction,
+                angle_deg=content_frame.angle_deg,
             )
         else:
             state = ContentFramingState(outcome="deferred")
@@ -932,6 +939,7 @@ class CaptureSession:
                 "fill": state.fill,
                 "area_ratio": state.area_ratio,
                 "content_frame_fraction": state.content_frame_fraction,
+                "angle_deg": state.angle_deg,
             },
         )
 
