@@ -109,6 +109,13 @@ from scanassistant.project.positive_overrides import (
 # re-render instead of a second full decode.
 _LINEAR_CACHE_MAX = 3
 
+# How many images ahead of the current one `_maybe_prefetch_next` decodes
+# in the background — `_LINEAR_CACHE_MAX - 1`: the current image already
+# occupies one of the cache's own slots, prefetching further than the
+# cache can actually hold would just evict what it had barely finished
+# decoding before it was ever looked at.
+_PREFETCH_LOOKAHEAD = _LINEAR_CACHE_MAX - 1
+
 # linear array, its geometry frame, a cached auto content-frame detection
 # (fractions, pre-flip convention) if one was available, its mask source
 # ("grabcut"/"inset_fallback", never "manual" — see `positive_linear_cache`),
@@ -848,28 +855,43 @@ class PositiveReviewScreen(QWidget):
             self._linear_cache.popitem(last=False)
 
     def _maybe_prefetch_next(self, name: str) -> None:
-        """Silently decodes the *next* image in the current filtered list
-        while the operator is still looking at `name` — by the time they
-        move on, the following image is often already decoded, instead of
-        every single navigation paying the full RAW decode cost even for a
-        plain, unhurried "look at the next flagged image" workflow. Never
-        sets `_busy` (`_run_async(silent=True)`): this is a pure
-        head-start, not something the operator should ever have to wait on
-        directly. Its own completion renders `next_name` itself, via
-        `_render_from_cached_linear`'s usual freshness check, if the
-        operator has already navigated onto it by the time it's ready."""
+        """Silently decodes up to `_PREFETCH_LOOKAHEAD` images ahead of
+        `name` in the current filtered list while the operator is still
+        looking at it — by the time they move on (once, or several times
+        in a row), each following image is often already decoded, instead
+        of every single navigation paying the full RAW decode cost even
+        for a plain, unhurried review workflow. Strictly sequential (one
+        decode in flight at a time, never two at once — each step only
+        starts the next once its own decode has actually finished): a
+        `_LINEAR_CACHE_MAX`-sized cache and a single background decode
+        already dominates the machine enough on its own (I-179's own
+        finalize-pool sizing already accounts for exactly this kind of
+        concurrent RAW decode cost) without a second one racing it purely
+        for a look-ahead that isn't even on screen yet. Never sets `_busy`
+        (`_run_async(silent=True)`): this is a pure head-start, not
+        something the operator should ever have to wait on directly."""
         if name not in self._names:
             return
         index = self._names.index(name)
-        if index + 1 >= len(self._names):
+        self._prefetch_ahead(index, _PREFETCH_LOOKAHEAD)
+
+    def _prefetch_ahead(self, from_index: int, remaining: int) -> None:
+        if remaining <= 0:
             return
-        next_name = self._names[index + 1]
+        index = from_index + 1
+        if index >= len(self._names):
+            return
+        next_name = self._names[index]
+        already_cached = next_name in self._linear_cache
         already_pending = (
-            next_name in self._linear_cache
-            or next_name in self._prefetching
-            or next_name in self._pending_decode_names
+            already_cached or next_name in self._prefetching or next_name in self._pending_decode_names
         )
         if already_pending:
+            # Already covered (a cache hit, or another decode already in
+            # flight for it) — keep the chain going one step further out
+            # rather than stalling the look-ahead depth on a step that
+            # needed no work here.
+            self._prefetch_ahead(index, remaining - 1)
             return
         decode = self._build_decode_task(next_name)
         if decode is None:
@@ -881,9 +903,16 @@ class PositiveReviewScreen(QWidget):
             self._cache_linear(
                 next_name, linear, frame_in_output, content_frame, content_mask_source, fingerprint
             )
-            self._render_from_cached_linear(
-                next_name, linear, frame_in_output, content_frame, content_mask_source, fingerprint
-            )
+            if next_name == self._current_name:
+                self._render_from_cached_linear(
+                    next_name,
+                    linear,
+                    frame_in_output,
+                    content_frame,
+                    content_mask_source,
+                    fingerprint,
+                )
+            self._prefetch_ahead(index, remaining - 1)
 
         def _on_failed(_message: str) -> None:
             self._prefetching.discard(next_name)
