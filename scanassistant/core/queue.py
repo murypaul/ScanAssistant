@@ -374,6 +374,19 @@ class ExportQueue:
 
     _tasks: deque[ExportTask] = field(default_factory=deque)
     _in_flight: deque[ExportTask] = field(default_factory=deque)
+    # Kinds `checkout_next()` must never hand out a second (name, kind) of
+    # while an earlier one for the same pair is still in flight — see its
+    # own docstring. Empty by default (every kind behaves exactly as
+    # before this existed): a single-worker `ThreadedExportExecutor` never
+    # actually needs this (its own backlog always drains strictly in
+    # order, nothing else ever in flight concurrently to collide with), so
+    # `CaptureSession` opts a kind in only once it has actually wired that
+    # kind to a real multi-worker pool (`PooledExportExecutor`) — never
+    # unconditionally by kind name alone, which would otherwise also catch
+    # test/CLI configurations that route the same kind through a single
+    # executor, where the protection has nothing to protect against and
+    # only adds an artificial wait.
+    serialized_kinds: frozenset[str] = field(default_factory=frozenset)
 
     def enqueue(self, name: str, kinds: list[str], context: ExportContext | None = None) -> None:
         """Coalesces a repeat request for the same (name, kind) that hasn't
@@ -422,12 +435,43 @@ class ExportQueue:
         return [*self._in_flight, *self._tasks]
 
     def checkout_next(self) -> ExportTask | None:
-        """Pops the next backlog task and marks it in-flight until `complete()`."""
-        if not self._tasks:
-            return None
-        task = self._tasks.popleft()
-        self._in_flight.append(task)
-        return task
+        """Pops the next backlog task and marks it in-flight until
+        `complete()`. `None` if the backlog is empty, *or* — for a kind in
+        `serialized_kinds` only — if everything left in it is blocked
+        behind a matching in-flight task: `has_backlog()` alone no longer
+        guarantees a checkout will succeed for those kinds; a caller must
+        handle `None` without assuming otherwise.
+
+        The skip only ever applies to a kind actually in
+        `serialized_kinds` (empty by default — see its own comment):
+        without it, checking out a second task for a `(name, kind)` still
+        in flight let two workers of a real multi-worker pool
+        (`core.queue.PooledExportExecutor`, the `positive_finalize` pool)
+        write the same file concurrently, with no guarantee the one
+        carrying the *later* confirmation's context is the one whose
+        write lands last on disk — silently contradicting `enqueue()`'s
+        own docstring ("the last confirmation always wins"), confirmed as
+        a real, if narrow, race. A kind that only ever goes through a
+        single-worker `ThreadedExportExecutor` never needs this (its own
+        backlog always drains strictly in order, nothing else ever in
+        flight concurrently to collide with) — scoping the skip by kind,
+        rather than applying it unconditionally to every kind, matters in
+        practice: an earlier version of this check applying to every kind
+        broke a real, ordinary case (a re-detected support frame
+        re-enqueuing `tiff`/`jpeg_master` for an image whose earlier copy
+        the single worker hadn't picked up yet — expected and harmless,
+        FIFO on one worker already guarantees the right file ends up on
+        disk)."""
+        for _ in range(len(self._tasks)):
+            task = self._tasks.popleft()
+            if task.kind in self.serialized_kinds and any(
+                t.name == task.name and t.kind == task.kind for t in self._in_flight
+            ):
+                self._tasks.append(task)  # still queued; retried once the in-flight one completes
+                continue
+            self._in_flight.append(task)
+            return task
+        return None
 
     def complete(self, task: ExportTask) -> None:
         """Un-marks a task as in-flight once its result has been collected."""

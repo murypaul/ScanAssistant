@@ -55,6 +55,7 @@ from scanassistant.core.queue import (
     ExportRunner,
     ExportTask,
     InlineExportExecutor,
+    PooledExportExecutor,
 )
 from scanassistant.core.recovery import rebuild_export_context
 from scanassistant.journal.journal import Journal
@@ -170,6 +171,14 @@ class CaptureSession:
         self._export_queue_warn_threshold = export_queue_warn_threshold
 
         self.export_queue = ExportQueue.from_state_entries(state.export_queue)
+        if isinstance(self._positive_finalize_executor, PooledExportExecutor):
+            # Only once a real multi-worker pool is actually consuming
+            # `jpeg_positive` tasks concurrently (`ExportQueue.
+            # checkout_next`'s own docstring) — never unconditionally, or
+            # every test/CLI configuration routing `jpeg_positive` through
+            # a single executor would pay for a protection it has nothing
+            # to protect against.
+            self.export_queue.serialized_kinds = frozenset({"jpeg_positive"})
         # Carried over from a previous `CaptureSession` for this same
         # campaign (`gui.screens.capture.CaptureScreen` keeps it across a
         # stop/start capture-mode cycle, keyed by campaign root) — the
@@ -580,6 +589,7 @@ class CaptureSession:
         `state.export_queue` keeps an exact record of both the backlog and
         anything still in flight, so a crash never drops a task that is
         merely still running (`ExportQueue.to_state_entries()`).
+
         """
         events: list[SessionEvent] = []
         if self._suspended_code is not None:
@@ -593,7 +603,13 @@ class CaptureSession:
             if deadline is not None and submitted_any and time.monotonic() >= deadline:
                 break
             task = self.export_queue.checkout_next()
-            assert task is not None
+            if task is None:
+                # Everything left in the backlog is a `jpeg_positive` task
+                # blocked behind a same-name one still in flight
+                # (`ExportQueue.checkout_next`'s own docstring) — nothing
+                # more to submit until that one completes and this is
+                # called again.
+                break
             executor, runner = self._executor_and_runner_for(task.kind)
             executor.submit(task, runner)
             submitted_any = True
