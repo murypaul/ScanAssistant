@@ -283,6 +283,9 @@ STRINGS: dict[str, str] = {
     "capture.resume_processing": "Resume processing",
     "capture.recovery_report_title": "Recovery after interruption",
     "capture.go_to_name_placeholder": "Go to name… (Enter to jump, Escape to cancel)",
+    "capture.exhaustion_name_placeholder": (
+        "No name left in the inventory — type one (Enter to confirm, Escape to cancel)"
+    ),
     "capture.confidence_reliable": "● RELIABLE {score}",
     "capture.confidence_review": "● TO CHECK {score}",
     "capture.confidence_impossible": "● IMPOSSIBLE {score}",
@@ -472,7 +475,10 @@ STRINGS: dict[str, str] = {
     ),
     "error.E-10": "Invalid campaign file: {field} — {detail}.",
     "error.E-11": "The CSV cannot be imported: {count} problem(s).",
-    "error.E-12": "No name left in the inventory. Add rows to the CSV or finish the campaign.",
+    "error.E-12": (
+        "No name left in the inventory. Type one for this image, or add rows to the"
+        " CSV and finish the campaign."
+    ),
     "error.E-13": "The inventory was modified by another program.",
     "error.E-14": "This campaign is already open (host {host}, PID {pid}).",
     "error.E-15": "The processing queue is growing ({queue_size} pending).",

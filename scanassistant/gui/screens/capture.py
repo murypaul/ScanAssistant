@@ -349,6 +349,11 @@ class CaptureScreen(QWidget):
         # does — otherwise looking a name up, or renaming, silently
         # finalizes whatever image happens to be on screen as a side effect.
         self._suppress_next_capture_key = False
+        # Which action `rename_edit`'s next submit resolves — the same
+        # field is reused for two different session calls (renaming the
+        # already-current image vs. naming a RAW stuck on E-12 exhaustion,
+        # which doesn't have a current image yet to rename).
+        self._rename_mode: str | None = None
         # Carries `CaptureSession.session_history()` forward across a
         # stop/start capture-mode cycle (`self` — unlike `self.session` — is
         # never recreated during the app's lifetime), keyed by campaign root
@@ -816,7 +821,13 @@ class CaptureScreen(QWidget):
             self._show_conflict_panel(event)
         elif isinstance(event, CriticalError):
             self._set_status(format_critical(event.code, event.details))
-            self._show_critical_banner(event.code, event.details)
+            if event.code == "E-12":
+                # Handled inline (name field), not the blocking banner —
+                # the operator can resolve it in one keystroke without
+                # leaving the capture screen to edit the CSV externally.
+                self._open_exhaustion_name_field()
+            else:
+                self._show_critical_banner(event.code, event.details)
         elif isinstance(event, CriticalResolved):
             self._hide_critical_banner()
         elif isinstance(event, WarningEvent):
@@ -1984,23 +1995,53 @@ class CaptureScreen(QWidget):
         if self.session is None or self.session.state.current_image is None:
             return
         current = self.session.state.current_image.assigned_name
+        self._rename_mode = "rename"
+        self.rename_edit.setPlaceholderText("")
         self.rename_edit.setText(current)
         self.rename_edit.selectAll()
         self.rename_edit.setVisible(True)
         self.rename_edit.setFocus()
 
+    def _open_exhaustion_name_field(self) -> None:
+        """The inventory ran out of `todo` rows (E-12) while a RAW was
+        waiting to be ingested — opens the same field `rename_current_image`
+        uses, empty, so the operator can name it on the spot instead of
+        adding a CSV row and waiting for the next pump to pick it up.
+        Re-fired every pump while still exhausted (`CaptureSession` doesn't
+        deduplicate the event itself past the journal entry) — a no-op if
+        the field is already open, so it never yanks focus away mid-type."""
+        if self.rename_edit.isVisible():
+            return
+        self._rename_mode = "exhaustion"
+        self.rename_edit.clear()
+        self.rename_edit.setPlaceholderText(t("capture.exhaustion_name_placeholder"))
+        self.rename_edit.setVisible(True)
+        self.rename_edit.setFocus()
+
     def _close_rename(self) -> None:
         self.rename_edit.setVisible(False)
+        self.rename_edit.setPlaceholderText("")
         self.rename_edit.clear()
+        self._rename_mode = None
         self.setFocus()
 
     def _submit_rename(self) -> None:
         if self.session is None:
             return
         new_name = self.rename_edit.text().strip()
+        mode = self._rename_mode
         self._suppress_next_capture_key = True
         self._close_rename()
         if not new_name:
+            return
+        if mode == "exhaustion":
+            try:
+                events = self.session.resolve_exhaustion(new_name)
+            except ValueError as exc:
+                self._set_status(str(exc))
+                return
+            self._dispatch(events)
+            self._refresh_banner()
             return
         try:
             self.session.rename_current(new_name)

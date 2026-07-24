@@ -1239,6 +1239,34 @@ class CaptureSession:
             events.extend(self._ingest_one(conflict.path, target, csv_row=None))
         return events
 
+    def resolve_exhaustion(self, new_name: str) -> list[SessionEvent]:
+        """Assigns an explicit name to the RAW file stuck waiting for
+        ingestion because the inventory ran out of `todo` rows (E-12) —
+        the capture screen opens its name-entry field automatically the
+        moment that happens, the operator types a name on the spot instead
+        of having to add a row to the CSV and wait for the next pump to
+        pick it up. Ingested off-list (`csv_row=None`), same fallback
+        `_resolve_conflict_rename_incoming` uses when the given name isn't
+        itself a pending `todo` row: there's no CSV row here to consume in
+        the first place, exhaustion means there wasn't one to begin with.
+
+        Raises `ValueError` for an invalid or already-used name (same
+        validation `resolve_conflict` applies) rather than silently
+        ignoring it — the caller (the GUI's submit handler) is expected to
+        catch it and let the operator correct the field, not lose the
+        image still waiting in `_pending_ingest`.
+        """
+        if not self._pending_ingest:
+            raise ValueError("no image waiting for a name")
+        validate_name(new_name, max_name_length=self._max_name_length)
+        if find_conflicting_path(new_name, self.paths, self.fs) is not None:
+            raise ValueError(f"Name already in use: {new_name!r}")
+        source_path = self._pending_ingest.popleft()
+        self.journal.log(
+            "NAMING", "exhaustion_resolved", image=new_name, details={"name": new_name}
+        )
+        return self._ingest_one(source_path, new_name, csv_row=None)
+
     def _resolve_conflict_replace_existing(self, conflict: _PendingConflict) -> list[SessionEvent]:
         stamp = self._now_wall.now().strftime("%Y%m%dT%H%M%S")
         for attr in ("raw_dir", *_DERIVATIVE_DIRS):
