@@ -69,9 +69,9 @@ class ExportContext:
     content_frame_override: tuple[float, float, float, float] | None = None  # x, y, w, h fractions
     manual_positive_settings: tuple[float, int, int, int] | None = None  # exposure_ev, contrast,
     # shadows, highlights — legacy engine only (`imaging.positive`).
-    # print_engine manual overrides (13_INVERSION_NEGATIFS.md §9, DECISIONS.md
-    # I-181): a parallel, independent set of fields — never converted to or
-    # from `manual_positive_settings` above. Each `None` means that group
+    # print_engine manual overrides: a parallel, independent set of fields
+    # — never converted to or from `manual_positive_settings` above. Each
+    # `None` means that group
     # stays automatic. Mirrors `imaging.print_engine.ManualPrintOverrides`,
     # redefined in primitives here rather than imported: same principle as
     # `ContentFrameOutcome` below, which must not import the `imaging` type
@@ -104,9 +104,9 @@ class ContentFrameOutcome:
     # knowing what resolution `master.pixels` was at this particular export
     # (see `ExportContext.content_frame_override` above for why fractions).
     fraction: tuple[float, float, float, float] | None = None
-    # `imaging.print_engine.PrintResult.flagged` (13_INVERSION_NEGATIFS.md
-    # §9): the density/tonal estimate itself was unconfident (contrast
-    # capped, or exposure shift beyond tolerance) — independent of crop
+    # `imaging.print_engine.PrintResult.flagged`: the density/tonal
+    # estimate itself was unconfident (contrast capped, or exposure shift
+    # beyond tolerance) — independent of crop
     # confidence, an image can have a perfectly good crop and still need a
     # tonal review. Always `False` for the legacy engine, which has no
     # equivalent signal. Drives `CaptureSession._log_positive_framing`'s
@@ -292,8 +292,8 @@ class PooledExportExecutor:
     .PositiveFinalizeRunner` is (holds no cross-call state on `self`);
     `MasterExportRunner` is not, and must never be submitted here.
 
-    Built for the positive-finalize pass (DECISIONS.md I-179): a separate
-    pool from the single-worker master/quick-positive export path, so a
+    Built for the positive-finalize pass: a separate pool from the
+    single-worker master/quick-positive export path, so a
     deliberately more expensive finalize pass can never slow down the
     TIFF/JPEG master export, which must never fall behind capture.
     """
@@ -380,7 +380,20 @@ class ExportQueue:
     _in_flight: deque[ExportTask] = field(default_factory=deque)
 
     def enqueue(self, name: str, kinds: list[str], context: ExportContext | None = None) -> None:
+        """Coalesces a repeat request for the same (name, kind) that hasn't
+        been checked out yet into a single task carrying the *latest*
+        context, instead of appending a second one behind it — the last
+        confirmation always wins. A task already checked out (running on a
+        worker, possibly already writing a file) can't be touched from
+        here, but since this still appends fresh work for that (name,
+        kind), it's guaranteed to run again afterwards with this latest
+        context: whichever in-flight write happens first ends up
+        superseded by the one that runs last, never the other way round.
+        """
         for kind in kinds:
+            self._tasks = deque(
+                task for task in self._tasks if not (task.name == name and task.kind == kind)
+            )
             self._tasks.append(ExportTask(name=name, kind=kind, context=context))
 
     def cancel(self, name: str) -> list[ExportTask]:

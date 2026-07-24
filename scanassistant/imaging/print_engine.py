@@ -37,7 +37,7 @@ _FILM_SHOULDER_STRENGTH = 6.0
 
 # Paper response: contrast and exposure are computed separately (bundling
 # them into one pivot/stretch was found, empirically, to misdiagnose which
-# correction a given negative actually needs — DECISIONS.md I-178).
+# correction a given negative actually needs).
 _CONTRAST_TARGET_SPREAD = 0.75
 _CONTRAST_CAP_LOW = 0.6
 _CONTRAST_CAP_HIGH = 2.2
@@ -54,9 +54,9 @@ _CONTENT_INSET_FRACTION = 0.15
 _DENSITY_PERCENTILE_HIGH = 99.5
 
 # Local contrast (bilateral filter — not CLAHE, which was found to force
-# contrast into flat/uniform regions instead of leaving them alone,
-# I-178): only ever applied to images the confidence signal already
-# flagged, never as a default step.
+# contrast into flat/uniform regions instead of leaving them alone): only
+# ever applied to images the confidence signal already flagged, never as a
+# default step.
 _BILATERAL_SIGMA_COLOR = 0.12
 _BILATERAL_SIGMA_SPACE = 15.0
 _BILATERAL_DETAIL_BOOST = 2.2
@@ -64,12 +64,11 @@ _BILATERAL_DETAIL_BOOST = 2.2
 
 @dataclass(frozen=True)
 class ManualPrintOverrides:
-    """Explicit per-group manual overrides (13_INVERSION_NEGATIFS.md §9,
-    06_INTERFACE.md §8ter): each field maps 1:1 to one of the calibration
-    screen's groups — film base (Dmin), scan exposure, paper model
-    (contrast/black/soft-clip) — `None` means that group stays automatic.
-    No field for the film model group (toe/shoulder): I-178 fixed it as a
-    property of the film stock, not recomputed per image — the screen
+    """Explicit per-group manual overrides: each field maps 1:1 to one of
+    the calibration screen's groups — film base (Dmin), scan exposure,
+    paper model (contrast/black/soft-clip) — `None` means that group stays
+    automatic. No field for the film model group (toe/shoulder): fixed as
+    a property of the film stock, not recomputed per image — the screen
     surfaces it read-only, nothing to override here."""
 
     dmin: tuple[float, float, float] | None = None
@@ -94,7 +93,7 @@ _AUTO = ManualPrintOverrides()
 @dataclass(frozen=True)
 class PrintResult:
     """16-bit monochrome positive, plus the diagnostics the calibration
-    screen and the journal need — never silently dropped (I-176)."""
+    screen and the journal need — never silently dropped."""
 
     pixels: np.ndarray  # (H, W) uint16, monochrome, already cropped to `content_frame`
     dmin: tuple[float, float, float]
@@ -158,12 +157,12 @@ def render_print_from_linear(
     horizontal_flip: bool = True,
     crop_to_content: bool = True,
 ) -> PrintResult:
-    """Core algorithm (13_INVERSION_NEGATIFS.md §3-§8) on an already linear,
-    already geometry-cropped array — `linear` is RGB, float64, [0, 1].
+    """Core algorithm on an already linear, already geometry-cropped array
+    — `linear` is RGB, float64, [0, 1].
 
     Any `overrides` field left `None` computes exactly as before (fully
     automatic); a set field short-circuits that group's own computation.
-    `flagged` (the tonal-confidence signal, I-178/I-176) only ever reflects
+    `flagged` (the tonal-confidence signal) only ever reflects
     groups still on auto — once an operator has set a value by hand, its
     own automatic estimate being out of bounds is no longer a reason to
     ask them to look at it again.
@@ -223,13 +222,11 @@ def render_print_from_linear(
         flagged = flagged or abs(exposure_shift) > _EXPOSURE_SHIFT_FLAG
     v = np.clip(v + exposure_shift, 0.0, 1.0)
 
-    luminance = v @ _REC709
-
-    local_contrast_applied = False
-    if flagged:
-        luminance = _local_contrast_bilateral(luminance)
-        local_contrast_applied = True
-
+    # Paper black/soft-clip, per channel (R, G, B) — same order the darkroom
+    # print process itself follows (paper responds to the exposing light
+    # before any monochrome conversion exists to speak of) and what the
+    # normative spec for this engine describes: the whole paper model runs
+    # before the monochrome step below, not after.
     paper_black = (
         DEFAULT_PAPER_BLACK if overrides.paper_black is None else float(overrides.paper_black)
     )
@@ -238,15 +235,18 @@ def render_print_from_linear(
         if overrides.paper_soft_clip is None
         else float(overrides.paper_soft_clip)
     )
-    luminance = np.clip(luminance + paper_black, 0.0, None)
-    clipped = -(luminance - paper_soft_clip) / max(1e-6, 1.0 - paper_soft_clip)
-    above = luminance > paper_soft_clip
-    luminance = np.where(
-        above,
-        paper_soft_clip + (1 - np.exp(clipped)) * (1 - paper_soft_clip),
-        luminance,
-    )
-    luminance = np.clip(luminance, 0.0, 1.0)
+    v = np.clip(v + paper_black, 0.0, None)
+    clipped = -(v - paper_soft_clip) / max(1e-6, 1.0 - paper_soft_clip)
+    above = v > paper_soft_clip
+    v = np.where(above, paper_soft_clip + (1 - np.exp(clipped)) * (1 - paper_soft_clip), v)
+    v = np.clip(v, 0.0, 1.0)
+
+    luminance = v @ _REC709
+
+    local_contrast_applied = False
+    if flagged:
+        luminance = _local_contrast_bilateral(luminance)
+        local_contrast_applied = True
 
     pixels16 = np.clip(np.round(luminance * 65535.0), 0, 65535).astype(np.uint16)
     full_height, full_width = pixels16.shape[:2]
@@ -288,7 +288,7 @@ def _softplus(x: np.ndarray, k: float) -> np.ndarray:
 
 def _film_curve(d_norm: np.ndarray) -> np.ndarray:
     """Toe/shoulder compression on normalized density [0, 1] — a fixed
-    shape, not recomputed per image (§5: a property of the film stock)."""
+    shape, not recomputed per image: a property of the film stock."""
     toe = _softplus(d_norm, _FILM_TOE_STRENGTH) / _softplus(1.0, _FILM_TOE_STRENGTH)
     shoulder = 1.0 - _softplus(1.0 - toe, _FILM_SHOULDER_STRENGTH) / _softplus(
         1.0, _FILM_SHOULDER_STRENGTH
@@ -320,7 +320,7 @@ def _ring_mask(shape: tuple[int, int], x: int, y: int, w: int, h: int) -> np.nda
 def _sample_dmin(linear: np.ndarray, frame: FrameGeometry) -> np.ndarray:
     """Robust (90th percentile, not mean/max) per-channel sample of the
     unexposed border just inside the support frame — a dust speck or
-    scratch in the ring shouldn't pull the whole estimate off (§4)."""
+    scratch in the ring shouldn't pull the whole estimate off."""
     x, y, w, h = round(frame.x), round(frame.y), round(frame.width), round(frame.height)
     mask = _ring_mask(linear.shape[:2], x, y, w, h)
     if mask.sum() < 100:
@@ -346,7 +346,7 @@ def _content_mask(
     than the measured Dmin everywhere, so by definition not exposed
     content — found on a real sample where the inset fallback let 30% of a
     support frame's own unexposed border leak into the "content"
-    statistics (I-177)."""
+    statistics."""
     shape = linear.shape[:2]
     if manual_rect is not None:
         x, y, w, h = manual_rect
@@ -388,7 +388,7 @@ def _local_contrast_bilateral(luminance: np.ndarray) -> np.ndarray:
     near-uniform regions alone by construction (unlike CLAHE, which forces
     contrast into a flat tile regardless of whether there's real detail to
     recover there, measured to turn a genuinely saturated black region
-    into flat mid-grey — I-178)."""
+    into flat mid-grey)."""
     luminance32 = luminance.astype(np.float32)
     smooth = cv2.bilateralFilter(
         luminance32, d=0, sigmaColor=_BILATERAL_SIGMA_COLOR, sigmaSpace=_BILATERAL_SIGMA_SPACE
