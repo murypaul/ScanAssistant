@@ -215,6 +215,7 @@ la grille.
 | Touche | Action |
 | ------ | ------ |
 | Entrée | Confirmer et suivant — applique les réglages de l'image courante, avance dans le filtre actif |
+| Ctrl+← / Ctrl+→ | Fait pivoter le cadre de contenu de 0,1° (Maj : 1,0°), borné à ±45° — même convention que la rotation du cadre support en Capture |
 | Haut / Bas | Image précédente / suivante dans la liste filtrée |
 | Page préc. / Page suiv. | Saut plus large dans la même liste |
 | Ctrl+A | Sélectionner toutes les images du filtre actif |

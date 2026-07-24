@@ -202,6 +202,7 @@ Mouse Ctrl+click/Shift+click also multi-selects thumbnails in the grid.
 | Key | Action |
 | --- | --- |
 | Enter | Confirm and next — applies the current image's settings, advances in the active filter |
+| Ctrl+Left / Ctrl+Right | Rotate the content-frame crop by 0.1° (Shift: 1.0°), bounded to ±45° — same convention as the support-frame rotation in Capture |
 | Up / Down | Previous / next image in the filtered list |
 | Page Up / Page Down | Jump further in the same list |
 | Ctrl+A | Select every image in the active filter |

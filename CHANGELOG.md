@@ -1,5 +1,66 @@
 # Changelog
 
+## 1.15.0 — 2026-07-25
+
+### New / Changed
+**Positive calibration**
+- The content-frame crop can now be rotated (deskewed) with Ctrl+Left/Right,
+  same behavior and shortcut as the support-frame crop already has in
+  Capture — useful when a negative was laid down slightly askew on the
+  light table, independently of any support-frame correction already made
+  during capture.
+- Dragging a tonal slider (exposure, contrast, paper black/soft-clip) now
+  shows a real-time preview while dragging, instead of only updating once
+  the slider is released.
+
+### Bug Fixes
+**Capture**
+- The remote shutter trigger could fail silently on a well-known transient
+  "camera busy" condition — the shutter (and sometimes the mirror) would
+  fire with nothing shown on screen at all, and no automatic retry. Now
+  retries automatically, the same way live view startup already did.
+- Live view could drop out after a real capture more often than expected;
+  widened the tolerance for the brief interruption a real exposure causes.
+- Repeated, identical camera-connection error messages while the camera
+  stays disconnected no longer flood the technical log.
+- The app could become impossible to close if the "exports still
+  finishing" panel shown while quitting was dismissed by its own close
+  button instead of the "Quit without waiting" button.
+
+**Positive calibration**
+- Confirming an image, or moving to the next one, no longer waits for the
+  actual export to finish rendering in the background — matches how
+  Capture already handles its own exports, and removes the pause that
+  used to follow every single confirmation.
+- A confirmed image could stay listed as still needing review even though
+  it had already been processed.
+- Fixed a rare race where two background renders of the same positive
+  image could finish out of order, letting an older tonal/crop adjustment
+  silently overwrite a more recent one on disk.
+
+**Exports & Metadata**
+- A stuck metadata-writing step could freeze all further exports
+  indefinitely with nothing shown on screen — now gives up after 30
+  seconds and continues, same as any other metadata failure already does.
+- Fixed a rare crash from two parts of the app saving campaign state at
+  the same moment.
+
+### Performance
+- Reduced CPU contention between the background workers finalizing
+  positive images concurrently.
+- The positive calibration screen now prepares two upcoming images in
+  advance instead of just one.
+- Browsing between images in the positive calibration screen no longer
+  re-reads the whole campaign log on every single navigation — this was
+  the main reason the screen kept getting slower as a campaign grew
+  larger.
+- The on-screen histogram is now computed on a lighter sample instead of
+  scanning every pixel of the full preview on every render.
+
+### Documentation
+- Keyboard shortcuts guide updated with the new content-frame rotation
+  shortcut in the positive calibration screen.
+
 ## 1.14.0 — 2026-07-24
 
 ### New / Changed
