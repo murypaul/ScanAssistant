@@ -25,16 +25,15 @@ flat objects) run by a single operator over long, interruptible sessions.
   instead of the camera's own per-shot balance drifting with whatever's in
   the frame.
 - **Exports** — 16-bit TIFF master, JPEG master, and a JPEG reading positive,
-  generated in the background. Two interchangeable positive engines per
-  campaign: the original tone-curve pipeline (three rendering modes), or a
+  generated in the background. The reading positive is rendered by a
   density-domain engine modeled on the darkroom print process itself
-  (per-channel film base, film response curve, paper response) for a more
-  physically grounded inversion. The reading positive also automatically
-  excludes the negative's unexposed border from its crop when confident
-  enough, with a dedicated calibration screen — grid view, per-image or
-  batch adjustment, undo/redo — for the cases it isn't or that need a
-  manual touch — the archival master files always keep the full framed
-  negative.
+  (per-channel film base, sampled directly off the negative or picked by
+  hand, film response curve, paper response) for a physically grounded
+  inversion. It also automatically excludes the negative's unexposed border
+  from its crop when confident enough, with a dedicated calibration screen
+  — grid view, per-image or batch adjustment, undo/redo — for the cases it
+  isn't or that need a manual touch — the archival master files always keep
+  the full framed negative.
 - **Metadata** — EXIF preserved, IPTC/XMP written from campaign settings,
   ICC profiles embedded.
 - **Keyboard-first capture mode** — every action during capture (accept,
@@ -184,17 +183,17 @@ et interruptibles.
   balance propre à chaque prise du boîtier qui dérive selon ce qui se
   trouve dans le cadre.
 - **Exports** — TIFF maître 16 bits, JPEG maître, et un JPEG positif de
-  lecture, générés en arrière-plan. Deux moteurs de positif interchangeables
-  par campagne : le pipeline historique par courbe de tonalité (trois modes
-  de rendu), ou un moteur en domaine de densité qui reconstruit le procédé
-  de tirage argentique lui-même (base du film par canal, courbe de réponse
-  du film, réponse du papier) pour une inversion plus fidèle au fonctionnement
-  physique du négatif. Le positif de lecture exclut aussi automatiquement la
-  bordure non exposée du négatif de son cadrage quand la confiance est
-  suffisante, avec un écran de calibrage dédié — grille de vignettes,
-  réglage par image ou par lot, annulation/rétablissement — pour les cas où
-  elle ne l'est pas ou qui demandent une retouche manuelle — les fichiers
-  maîtres archivistiques gardent toujours le négatif entier.
+  lecture, générés en arrière-plan. Le positif de lecture est produit par un
+  moteur en domaine de densité qui reconstruit le procédé de tirage
+  argentique lui-même (base du film par canal, échantillonnée directement
+  sur le négatif ou prélevée à la main, courbe de réponse du film, réponse
+  du papier) pour une inversion fidèle au fonctionnement physique du
+  négatif. Il exclut aussi automatiquement la bordure non exposée du
+  négatif de son cadrage quand la confiance est suffisante, avec un écran
+  de calibrage dédié — grille de vignettes, réglage par image ou par lot,
+  annulation/rétablissement — pour les cas où elle ne l'est pas ou qui
+  demandent une retouche manuelle — les fichiers maîtres archivistiques
+  gardent toujours le négatif entier.
 - **Métadonnées** — EXIF conservé, IPTC/XMP écrits à partir des réglages
   de campagne, profils ICC intégrés.
 - **Mode capture tout au clavier** — chaque action pendant la capture

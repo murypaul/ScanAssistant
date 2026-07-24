@@ -44,11 +44,10 @@ From the home screen, **New campaign** opens a short wizard:
    *Simple* — RAW only, files renamed and moved with no crop detection
    and no TIFF/JPEG/positive exports at all; the Framing and Exports
    wizard steps are skipped for it, since neither applies.
-5. **Exports** — settings for TIFF, JPEG master, and JPEG positive,
-   including which **positive engine** to use: the original tone-curve
-   engine, or a density-domain engine that reconstructs the darkroom
-   print process (film response, then paper response) instead of
-   stretching an already-inverted image — see
+5. **Exports** — settings for TIFF, JPEG master, and JPEG positive. The
+   positive is rendered by a density-domain engine that reconstructs the
+   darkroom print process (film base, then film response, then paper
+   response) instead of stretching an already-inverted image — see
    [Positive calibration](#positive-calibration).
 6. **Metadata** — IPTC fields written to every export (creator, institution,
    copyright, collection, keywords).
@@ -300,32 +299,25 @@ outside capture), a dedicated screen that takes over the main window, same
 as capture mode rather than a separate floating window. Capture itself is
 judged on the raw negative and its histogram.
 
-Two interchangeable positive engines, set per campaign:
-
-- **Legacy** — the original tone-curve pipeline, three rendering modes
-  (**simple**: plain linear min/max normalization; **auto**, the default:
-  a deterministic exposure/gamma optimization, no machine learning, same
-  output every time for the same input; **manual**: campaign-wide
-  exposure/shadows/highlights/contrast).
-- **Density-domain** (`print_engine`) — reconstructs the darkroom print
-  process itself instead of stretching an already-inverted curve: a
-  per-channel film base (Dmin, sampled from the negative's own unexposed
-  border — this is what absorbs a yellowed or stained base into a neutral
-  result), a fixed film response curve, and a paper response (exposure,
-  contrast, black point, highlight soft-clip). More physically grounded,
-  at a real cost: a dedicated RAW decode and a much heavier render (several
-  seconds to tens of seconds per image, depending on your machine) — during
-  capture it runs on a separate worker pool sized by **Preferences ▸
-  Processing ▸ Positive finalize workers**, so it never slows down the
-  TIFF/JPEG master export.
+A density-domain engine reconstructs the darkroom print process itself
+instead of stretching an already-inverted curve: a per-channel film base
+(Dmin, sampled from the negative's own unexposed border by default — this
+is what absorbs a yellowed or stained base into a neutral result, and can
+also be set by hand, see *Picking the film base* below), a fixed film
+response curve, and a paper response (exposure, contrast, black point,
+highlight soft-clip). A dedicated RAW decode and a real render (several
+seconds to tens of seconds per image, depending on your machine) — during
+capture it runs on a separate worker pool sized by **Preferences ▸
+Processing ▸ Positive finalize workers**, so it never slows down the
+TIFF/JPEG master export.
 
 The reading positive also automatically excludes the negative's unexposed
 border from its crop whenever it can confidently tell the two apart — the
 master TIFF and JPEG keep the full framed negative regardless, border
 included, for archival fidelity. Automatic exposure is never thrown off by
 that border either way, whether or not the extra crop above succeeds. An
-image the engine isn't confident about — crop or, for the density-domain
-engine, tone — is left flagged for review rather than silently accepted.
+image the engine isn't confident about — crop or tone — is left flagged
+for review rather than silently accepted.
 
 ### The calibration screen
 
@@ -334,38 +326,46 @@ decode) on the left, filterable by checkable category — flagged for
 review by default, but also already applied confidently or already
 confirmed manually, if you want to double-check either — with multi-select
 (click, Ctrl/Shift-click, or `Ctrl+A` for everything in the current
-filter). The right-hand panel depends on the campaign's engine:
+filter). The right-hand panel shows a draggable crop rectangle on the full
+(uncropped) preview, with a **Redetect frame** button for the rare case
+where you want a fresh automatic detection instead of the one already
+computed during capture, and four tone groups — film base (Dmin), scan
+exposure, film model (fixed, shown for reference only — not adjustable
+here, it's a single response curve applied to every image regardless of
+film stock, not a per-image or per-campaign choice), and paper model
+(contrast, with black point/soft-clip under an **Advanced** toggle that
+stays open or closed as you move between images). Each group starts on
+**Auto** — its own switch (labeled *Auto*, on by default) takes it to
+**Manual** when switched off, without disturbing the others, and back to
+the automatic estimate when switched on again.
 
-- **Legacy engine**: the same exposure/shadows/highlights/contrast
-  controls as capture-time manual mode, plus a draggable crop rectangle on
-  the preview, live-updated as you adjust.
-- **Density-domain engine**: a draggable crop rectangle too, on the full
-  (uncropped) preview, and four tone groups — film base (Dmin), scan
-  exposure, film model (fixed, shown for reference only — not adjustable
-  here, it's a single response curve applied to every image regardless of
-  film stock, not a per-image or per-campaign choice), and paper model
-  (contrast, with black point/soft-clip under an **Advanced** toggle that
-  stays open or closed as you move between images). Each group starts on
-  **Auto** — its own switch (labeled *Auto*, on by default) takes it to
-  **Manual** when switched off, without disturbing the others. Because a
-  real render is expensive, the preview only updates once a change is
-  committed (released a slider or the crop handle, toggled a switch,
-  pressed Enter in a field), not continuously while dragging — the screen
-  locks with a status message for that one render, but the window itself
-  stays responsive throughout rather than freezing. The first RAW decode
-  of a given image is the only genuinely slow step, and it never blocks
-  browsing: move to another image right away and this one's decode keeps
-  going quietly in the background, landing on that image only if you're
-  still looking at it once it's done. Revisiting an image already opened
-  earlier in this screen session, or committing a further change to it,
-  reuses that decode and only re-runs the much cheaper tone math — and a
-  campaign already fully processed usually has nothing left to decode at
-  all: capture itself already did that work in the background, on the
-  same worker pool that renders the density-domain positive, so opening
-  the calibration screen for it goes straight to a ready preview. The
-  next image in the filtered list is also quietly decoded in the
-  background while you're still looking at the current one, so moving on
-  often finds it already waiting.
+#### Picking the film base
+
+Deciding the film base (Dmin) by eye on three RGB sliders is hard to get
+right. The **Pick from image** button next to the Dmin group arms a
+crosshair: click anywhere on the negative — ideally its own unexposed
+border — and the three sliders are set from the actual color sampled
+there, switching that group to Manual. Fine-tune with the sliders
+afterwards if needed.
+
+Because a real render is expensive, the preview only updates once a change
+is committed (released a slider or the crop handle, toggled a switch,
+pressed Enter in a field, or a pick), not continuously while dragging —
+the screen locks with a status message for that one render, but the window
+itself stays responsive throughout rather than freezing. The first RAW
+decode of a given image is the only genuinely slow step, and it never
+blocks browsing: move to another image right away and this one's decode
+keeps going quietly in the background, landing on that image only if
+you're still looking at it once it's done. Revisiting an image already
+opened earlier in this screen session, or committing a further change to
+it, reuses that decode and only re-runs the much cheaper tone math — and a
+campaign already fully processed usually has nothing left to decode, or
+even to detect a crop for, at all: capture itself already did both in the
+background, on the same worker pool that renders the positive, so opening
+the calibration screen for it goes straight to a ready preview instead of
+redetecting the crop from scratch. The next image in the filtered list is
+also quietly decoded in the background while you're still looking at the
+current one, so moving on often finds it already waiting.
 
 `Enter` (or **Confirm & next**) applies the current image's settings and
 moves to the next one in the filtered list. You don't have to click it for
@@ -373,10 +373,9 @@ every image, though: any real edit (dragging the crop, changing a tone
 setting) auto-confirms on its own, either when you move to another image
 or after a few quiet seconds with no further change — the same behavior
 as adjusting the frame during capture. It runs in the background and never
-blocks you from moving on to the next image, even for the density-domain
-engine's much slower render. For the density-domain
-engine, **Apply to selection** (button, or `Ctrl+Enter`) copies the
-current image's tone settings to every other selected image at once —
+blocks you from moving on to the next image, even though the render itself
+takes real time. **Apply to selection** (button, or `Ctrl+Enter`) copies
+the current image's tone settings to every other selected image at once —
 useful for a whole roll shot under the same conditions. Dmin is excluded
 from that propagation by default (tick **Include Dmin** to override): it's
 a physical measurement specific to that one negative's own border, not an

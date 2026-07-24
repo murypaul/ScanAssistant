@@ -50,12 +50,11 @@ Depuis l'écran d'accueil, **New campaign** ouvre un assistant en plusieurs
    cadre ni aucun export TIFF/JPEG/positif ; les étapes Recadrage et
    Exports de l'assistant sont alors sautées, aucune des deux ne
    s'appliquant.
-5. **Exports** — réglages pour le TIFF, le JPEG maître et le JPEG positif,
-   y compris le choix du **moteur du positif** : le moteur historique par
-   courbe de tonalité, ou un moteur en domaine de densité qui reconstitue
-   le procédé de tirage argentique (réponse du film puis réponse du
-   papier) au lieu d'étirer une image déjà inversée — voir
-   [Calibrage positif](#calibrage-positif).
+5. **Exports** — réglages pour le TIFF, le JPEG maître et le JPEG positif.
+   Le positif est produit par un moteur en domaine de densité qui
+   reconstitue le procédé de tirage argentique (base du film, puis réponse
+   du film, puis réponse du papier) au lieu d'étirer une image déjà
+   inversée — voir [Calibrage positif](#calibrage-positif).
 6. **Métadonnées** — champs IPTC écrits sur chaque export (créateur,
    institution, copyright, collection, mots-clés).
 7. **Récapitulatif** — vérification, puis création. Tout reste modifiable
@@ -324,36 +323,26 @@ fenêtre principale, comme le mode capture plutôt qu'une fenêtre flottante
 à part. La capture elle-même se juge sur le négatif brut et son
 histogramme.
 
-Deux moteurs de positif interchangeables, réglés par campagne :
-
-- **Historique** — le pipeline par courbe de tonalité d'origine, trois
-  modes de rendu (**simple** : normalisation min/max linéaire, rien
-  d'autre ; **auto**, par défaut : une optimisation exposition/gamma
-  déterministe, sans apprentissage automatique, résultat identique à
-  chaque fois pour une même entrée ; **manual** : réglages de campagne
-  exposition/ombres/hautes lumières/contraste).
-- **Domaine de densité** (`print_engine`) — reconstruit le procédé de
-  tirage argentique lui-même plutôt que d'étirer une courbe déjà
-  inversée : une base du film par canal (Dmin, échantillonnée sur la
-  bordure non exposée du négatif lui-même — c'est ce qui absorbe un
-  support jauni ou taché dans un résultat neutre), une courbe de réponse
-  du film fixe, et une réponse papier (exposition, contraste, point noir,
-  compression douce des hautes lumières). Plus fidèle au fonctionnement
-  physique, à un coût réel : un décodage RAW dédié et un rendu bien plus
-  lourd (de quelques secondes à plusieurs dizaines de secondes par image
-  selon la machine) — pendant la capture, il tourne sur un bassin
-  d'ouvriers séparé, dimensionné par **Préférences ▸ Traitement ▸
-  Ouvriers de finalisation du positif**, pour ne jamais ralentir l'export
-  TIFF/JPEG maître.
+Un moteur en domaine de densité reconstruit le procédé de tirage argentique
+lui-même plutôt que d'étirer une courbe déjà inversée : une base du film
+par canal (Dmin, échantillonnée par défaut sur la bordure non exposée du
+négatif lui-même — c'est ce qui absorbe un support jauni ou taché dans un
+résultat neutre, et peut aussi se régler à la main, voir *Prélever la base
+du film* plus bas), une courbe de réponse du film fixe, et une réponse
+papier (exposition, contraste, point noir, compression douce des hautes
+lumières). Un décodage RAW dédié et un rendu réel (de quelques secondes à
+plusieurs dizaines de secondes par image selon la machine) — pendant la
+capture, il tourne sur un bassin d'ouvriers séparé, dimensionné par
+**Préférences ▸ Traitement ▸ Ouvriers de finalisation du positif**, pour ne
+jamais ralentir l'export TIFF/JPEG maître.
 
 Le positif de lecture exclut aussi automatiquement la bordure non exposée
 du négatif de son cadrage, dès qu'il peut distinguer les deux avec
 confiance — le TIFF et le JPEG maîtres gardent toujours le négatif entier,
 bordure comprise, pour la fidélité archivistique. L'exposition automatique
 n'est plus faussée par cette bordure, que ce rognage supplémentaire
-réussisse ou non. Une image dont le moteur n'est pas confiant — cadrage,
-ou pour le moteur en domaine de densité, tonalité — reste signalée pour
-vérification plutôt qu'acceptée en silence.
+réussisse ou non. Une image dont le moteur n'est pas confiant — cadrage ou
+tonalité — reste signalée pour vérification plutôt qu'acceptée en silence.
 
 ### L'écran de calibrage
 
@@ -361,42 +350,50 @@ Une grille de vignettes (réutilisant les JPEG déjà exportés, sans nouveau
 décodage) à gauche, filtrable par catégorie à cocher — à vérifier par
 défaut, mais aussi déjà appliquées avec confiance ou déjà confirmées
 manuellement, si vous voulez les revérifier — avec sélection multiple
-(clic, Ctrl/Maj+clic, ou `Ctrl+A` pour tout le filtre courant). Le
-panneau de droite dépend du moteur de la campagne :
+(clic, Ctrl/Maj+clic, ou `Ctrl+A` pour tout le filtre courant). Le panneau
+de droite montre un rectangle de recadrage déplaçable sur l'aperçu complet
+(non recadré), avec un bouton **Redetect frame** pour le cas rare où vous
+voulez une nouvelle détection automatique plutôt que celle déjà calculée
+pendant la capture, et quatre groupes de tonalité — base du film (Dmin),
+exposition du scan, modèle du film (fixe, affiché à titre indicatif
+seulement — non réglable ici, c'est une seule et même courbe de réponse
+appliquée à toutes les images quelle que soit la pellicule, pas un choix
+par image ou par campagne), et modèle du papier (contraste, avec point
+noir/compression douce sous un bouton **Avancé** dont l'état ouvert/fermé
+persiste d'une image à l'autre). Chaque groupe démarre en **Auto** — son
+propre interrupteur (étiqueté *Auto*, activé par défaut) bascule en
+**Manual** quand on le désactive, sans toucher aux autres, et revient à
+l'estimation automatique quand on le réactive.
 
-- **Moteur historique** : les mêmes réglages exposition/ombres/hautes
-  lumières/contraste que le mode manuel en capture, plus un rectangle de
-  recadrage déplaçable sur l'aperçu, mis à jour en direct.
-- **Moteur en domaine de densité** : un rectangle de recadrage déplaçable
-  aussi, sur l'aperçu complet (non recadré), et quatre groupes de
-  tonalité — base du film (Dmin), exposition du scan, modèle du film
-  (fixe, affiché à titre indicatif seulement — non réglable ici, c'est
-  une seule et même courbe de réponse appliquée à toutes les images quelle
-  que soit la pellicule, pas un choix par image ou par campagne), et
-  modèle du papier (contraste, avec point noir/compression douce sous un
-  bouton **Avancé** dont l'état ouvert/fermé persiste d'une image à
-  l'autre). Chaque groupe démarre en **Auto** — son propre interrupteur
-  (étiqueté *Auto*, activé par défaut) bascule en **Manual** quand on le
-  désactive, sans toucher aux autres. Le rendu étant coûteux, l'aperçu ne
-  se met à jour qu'une fois un changement validé (curseur relâché ou
-  poignée de recadrage relâchée, interrupteur basculé, Entrée dans un
-  champ), jamais en continu pendant le glissement — l'écran se verrouille
-  avec un message de statut le temps de ce rendu, mais la fenêtre elle-même
-  reste réactive plutôt que de geler. Seul le tout premier décodage RAW
-  d'une image donnée est réellement long, et il ne bloque jamais la
-  navigation : passez à une autre image tout de suite, le décodage
-  continue discrètement en arrière-plan et n'atterrit sur cette image que
-  si vous la regardez encore une fois terminé. Revisiter une image déjà
-  ouverte plus tôt dans cette session d'écran, ou lui valider un nouveau
-  changement, réutilise ce décodage et ne relance que le calcul de
-  tonalité, bien moins coûteux — et une campagne déjà entièrement
-  traitée n'a généralement plus rien à décoder du tout : la capture
-  elle-même a déjà fait ce travail en arrière-plan, sur le même bassin
-  d'ouvriers qui rend le positif en domaine de densité, si bien qu'ouvrir
-  l'écran de calibrage pour elle affiche directement un aperçu prêt.
-  L'image suivante du filtre actif est aussi décodée discrètement en
-  arrière-plan pendant que vous regardez encore l'image courante, si bien
-  qu'elle est souvent déjà prête au moment de passer à la suite.
+#### Prélever la base du film
+
+Décider la base du film (Dmin) à l'œil sur trois curseurs RVB est difficile
+à faire correctement. Le bouton **Pick from image** à côté du groupe Dmin
+arme un viseur en croix : cliquez n'importe où sur le négatif — idéalement
+sur sa propre bordure non exposée — et les trois curseurs se règlent sur la
+couleur réellement échantillonnée à cet endroit, le groupe passant en
+Manuel. Affinez ensuite avec les curseurs si besoin.
+
+Le rendu étant coûteux, l'aperçu ne se met à jour qu'une fois un changement
+validé (curseur relâché ou poignée de recadrage relâchée, interrupteur
+basculé, Entrée dans un champ, ou un prélèvement), jamais en continu
+pendant le glissement — l'écran se verrouille avec un message de statut le
+temps de ce rendu, mais la fenêtre elle-même reste réactive plutôt que de
+geler. Seul le tout premier décodage RAW d'une image donnée est réellement
+long, et il ne bloque jamais la navigation : passez à une autre image tout
+de suite, le décodage continue discrètement en arrière-plan et n'atterrit
+sur cette image que si vous la regardez encore une fois terminé. Revisiter
+une image déjà ouverte plus tôt dans cette session d'écran, ou lui valider
+un nouveau changement, réutilise ce décodage et ne relance que le calcul de
+tonalité, bien moins coûteux — et une campagne déjà entièrement traitée n'a
+généralement plus rien à décoder, ni même à détecter comme cadrage, du
+tout : la capture elle-même a déjà fait les deux en arrière-plan, sur le
+même bassin d'ouvriers qui rend le positif, si bien qu'ouvrir l'écran de
+calibrage pour elle affiche directement un aperçu prêt au lieu de
+redétecter le cadrage depuis zéro. L'image suivante du filtre actif est
+aussi décodée discrètement en arrière-plan pendant que vous regardez encore
+l'image courante, si bien qu'elle est souvent déjà prête au moment de
+passer à la suite.
 
 `Enter` (ou **Confirm & next**) applique les réglages de l'image courante
 et passe à la suivante du filtre actif. Vous n'avez pas besoin de cliquer
@@ -405,9 +402,8 @@ dessus pour chaque image cela dit : tout réglage réellement modifié
 tout seul, soit en passant à une autre image, soit après quelques secondes
 sans nouvelle modification — le même comportement que l'ajustement du
 cadre pendant la capture. Cela tourne en arrière-plan et ne vous bloque
-jamais pour passer à l'image suivante, même pour le rendu bien plus lent
-du moteur en domaine de densité. Pour le moteur en domaine de
-densité, **Apply to selection** (bouton, ou `Ctrl+Enter`) copie les
+jamais pour passer à l'image suivante, même si le rendu lui-même prend un
+temps réel. **Apply to selection** (bouton, ou `Ctrl+Enter`) copie les
 réglages de tonalité de l'image courante vers toutes les autres images
 sélectionnées d'un coup — utile pour toute une pellicule prise dans les
 mêmes conditions. Le Dmin est exclu de cette propagation par défaut

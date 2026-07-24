@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.14.0 — 2026-07-24
+
+### New / Changed
+**Positive rendering**
+- Removed the older positive rendering engine entirely: the darkroom-print
+  engine introduced in 1.13.0 is now the only one. There's no longer a
+  per-campaign engine choice, and the simple/auto/manual mode selector is
+  gone from the project screen — the calibration screen's own per-image
+  Auto/Manual controls already covered that need, and covered it correctly
+  (the campaign-wide selector didn't, see Bug Fixes below).
+- Added a way to set the film base (Dmin) by clicking directly on the
+  negative instead of deciding three RGB sliders by eye on the rendered
+  positive — picks up the actual color at the clicked point.
+
+### Bug Fixes
+**Positive rendering**
+- Opening the positive calibration screen, or moving between images there,
+  still took a couple of seconds even on an already-processed campaign: the
+  content-frame detection ran a second time from scratch instead of reusing
+  the one already computed during capture. A "Redetect frame" button covers
+  the rare case where a fresh detection is actually wanted.
+- Switching a calibration setting back to Auto after adjusting it manually
+  left the slider showing the old manual value instead of the automatic
+  estimate — the calculation itself already ignored that stale value, only
+  the display was wrong.
+- The simple/auto/manual positive mode was a single setting for the whole
+  campaign rather than per image: changing it on the project screen could
+  silently affect every negative not yet regenerated, including ones
+  already reviewed. Resolved by removing the setting along with the rest of
+  the older engine (see above) — the calibration screen's per-image
+  Auto/Manual controls don't have this problem.
+
 ## 1.13.0 — 2026-07-24
 
 ### New / Changed
