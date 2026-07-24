@@ -126,6 +126,15 @@ _DecodeResult = tuple[
 # deliberately shared convention, not independently tuned.
 _CONFIRM_DEBOUNCE_MS = 2500
 
+# How often this screen's own periodic drain (`_poll_export_progress`)
+# collects whatever a confirm/propagate/undo/redo's regenerate has
+# finished in the background — same order of magnitude as `gui.screens.
+# capture`'s own pump interval (`_MIN_PUMP_INTERVAL_MS`), not tied to it:
+# nothing time-critical (no live capture) depends on this one being fast,
+# just on it happening at all.
+_EXPORT_POLL_INTERVAL_MS = 400
+_THUMBNAIL_REFRESH_ATTEMPTS = 40  # ~16s at the interval above
+
 # Cap on the long edge fed to `render_print_from_linear` for a *live* preview
 # (`PrintCalibrationPanel.live_changed`, fired on every slider-drag tick —
 # see that signal's own docstring for why it can never be wired straight to
@@ -272,6 +281,34 @@ class PositiveReviewScreen(QWidget):
         self._confirm_debounce_timer = QTimer(self)
         self._confirm_debounce_timer.setSingleShot(True)
         self._confirm_debounce_timer.timeout.connect(self._commit_pending_confirm)
+
+        # A confirmed/propagated/restored regenerate is only *submitted*
+        # here (`session.regenerate_positive`/`propagate_print_overrides`/
+        # `restore_positive_override` already return once the export task
+        # is queued, same contract `gui.screens.capture` relies on for its
+        # own master/positive exports) — never waited out synchronously the
+        # way this screen used to (`session.wait_for_pending_exports()`),
+        # which held the screen busy and blocked moving to the next image
+        # for as long as the actual render took (RAW decode + density math,
+        # ~16.7s+ on a real image). `capture.py` gets away with never
+        # waiting because its own pump timer keeps draining the export
+        # queue on every tick; this screen has no such pump outside of a
+        # confirm/navigation action, so it needs its own periodic drain
+        # instead — same primitive `capture.py` uses while waiting out a
+        # `stop(wait_for_exports=False)` (`CaptureSession.
+        # collect_export_progress`, cheap/non-blocking by its own
+        # contract), just polled continuously here rather than only during
+        # shutdown.
+        self._export_poll_timer = QTimer(self)
+        self._export_poll_timer.timeout.connect(self._poll_export_progress)
+        self._export_poll_timer.start(_EXPORT_POLL_INTERVAL_MS)
+        # Names with a regenerate submitted but not yet visually confirmed
+        # done — each poll tick retries their thumbnail icon (cheap: a
+        # JPEG read + rescale) until `_THUMBNAIL_REFRESH_ATTEMPTS` have
+        # passed, well past what a real regenerate normally takes; the
+        # image itself is never stale (only the thumbnail icon can lag),
+        # so giving up early here costs nothing but a slightly late icon.
+        self._pending_thumbnail_refresh: dict[str, int] = {}
 
         self.category_deferred_checkbox = QCheckBox(t("positive_review.category_deferred"))
         self.category_deferred_checkbox.setChecked(True)
@@ -502,6 +539,7 @@ class PositiveReviewScreen(QWidget):
         self._live_preview_source_cache = None
         self._prefetching.clear()
         self._pending_decode_names.clear()
+        self._pending_thumbnail_refresh.clear()
         self._print_engine_loaded_for = None
         self.refresh_list()
 
@@ -1261,6 +1299,32 @@ class PositiveReviewScreen(QWidget):
         self._confirm_pending = False
         self._auto_confirm_silently()
 
+    def _poll_export_progress(self) -> None:
+        """Periodic, non-blocking drain of whatever a confirm/propagate/
+        undo/redo's regenerate has finished in the background since the
+        last tick (`CaptureSession.collect_export_progress` — journals and
+        persists state, submits nothing new) — the counterpart, for this
+        screen, of `gui.screens.capture`'s own pump timer doing the same
+        thing on every tick while a session is running. Also retries the
+        thumbnail icon of any name still in `_pending_thumbnail_refresh`
+        (see its own docstring)."""
+        session = self._session
+        if session is None:
+            return
+        session.collect_export_progress()
+        if not self._pending_thumbnail_refresh:
+            return
+        for name, attempts_left in list(self._pending_thumbnail_refresh.items()):
+            row = self._names.index(name) if name in self._names else -1
+            item = self.list_widget.item(row) if row >= 0 else None
+            if item is not None:
+                item.setIcon(self._thumbnail_icon(name))
+            remaining = attempts_left - 1
+            if remaining <= 0 or item is None:
+                del self._pending_thumbnail_refresh[name]
+            else:
+                self._pending_thumbnail_refresh[name] = remaining
+
     def _auto_confirm_silently(self) -> None:
         """The debounced/navigate-away half of the auto-confirm: persists
         whatever the operator just changed without an explicit Confirm
@@ -1281,8 +1345,9 @@ class PositiveReviewScreen(QWidget):
         self._persist_print_overrides_for_current(name)
 
         def _regenerate() -> None:
+            # Submits the regenerate and returns — never waits for it to
+            # actually finish (`_poll_export_progress`'s own docstring).
             session.regenerate_positive(name)
-            session.wait_for_pending_exports()
 
         def _on_regenerated(_result: object) -> None:
             self._record_confirm(name, before, row)
@@ -1321,7 +1386,11 @@ class PositiveReviewScreen(QWidget):
     ) -> None:
         """Undo-stack entry + thumbnail refresh only — no list navigation
         (shared by `_finish_confirm`, which adds that, and the silent
-        auto-confirm, which deliberately doesn't)."""
+        auto-confirm, which deliberately doesn't). The icon set here is
+        immediate but likely stale — the regenerate this follows is only
+        just submitted, not finished (`_poll_export_progress`'s own
+        docstring) — so `name` is also queued for a few more retries once
+        the real file is actually ready."""
         session = self._session
         assert session is not None
         after = _snapshot(session.paths, session.fs, [name])
@@ -1329,6 +1398,7 @@ class PositiveReviewScreen(QWidget):
         item = self.list_widget.item(row)
         if item is not None:
             item.setIcon(self._thumbnail_icon(name))
+        self._pending_thumbnail_refresh[name] = _THUMBNAIL_REFRESH_ATTEMPTS
 
     def confirm_current(self, *, on_done: Callable[[], None] | None = None) -> None:
         """Applies the current crop/exposure and advances to the next
@@ -1341,11 +1411,14 @@ class PositiveReviewScreen(QWidget):
         re-select the same image forever whenever it's also the very first
         one ever logged in the campaign.
 
-        `session.regenerate_positive` is a real render (~16.7s) — routed
-        through `_run_async` (`on_done` lets `apply_to_selection` chain its
-        own propagation step after this completes, instead of assuming
-        it's already done by the time this method returns, as it used to
-        when this was synchronous)."""
+        `session.regenerate_positive` only submits the real render
+        (~16.7s+, RAW decode + density math) to the background export
+        queue and returns — never waited out here (`_poll_export_progress`
+        drains it later, same as `gui.screens.capture`'s own pump timer),
+        so Enter/next-image navigation stays fast regardless of how long
+        the actual render takes. Still routed through `_run_async`
+        (`on_done` lets `apply_to_selection` chain its own propagation step
+        after this completes)."""
         session = self._session
         row = self.list_widget.currentRow()
         if session is None or self._current_name is None or row < 0 or self._busy:
@@ -1362,7 +1435,6 @@ class PositiveReviewScreen(QWidget):
 
         def _regenerate() -> None:
             session.regenerate_positive(name)
-            session.wait_for_pending_exports()
 
         def _on_regenerated(_result: object) -> None:
             self._finish_confirm(name, next_name, before, row)
@@ -1419,16 +1491,20 @@ class PositiveReviewScreen(QWidget):
             before = _snapshot(session.paths, session.fs, targets)
 
             def _propagate() -> None:
+                # Submits every target's regenerate and returns — never
+                # waits for them to finish (`_poll_export_progress`'s own
+                # docstring).
                 session.propagate_print_overrides(
                     source_name, targets, include_dmin=self.include_dmin_checkbox.isChecked()
                 )
-                session.wait_for_pending_exports()
 
             def _on_propagated(_result: object) -> None:
                 after = _snapshot(session.paths, session.fs, targets)
                 self._push_undo(_UndoCommand("propagate", tuple(targets), before, after))
                 self.status_label.setText(t("positive_review.propagation_done", count=len(targets)))
                 self.refresh_list(select_name=source_name)
+                for target in targets:
+                    self._pending_thumbnail_refresh[target] = _THUMBNAIL_REFRESH_ATTEMPTS
 
             self._run_async(
                 _propagate,
@@ -1484,11 +1560,17 @@ class PositiveReviewScreen(QWidget):
             return
 
         def _restore() -> None:
+            # Submits each name's regenerate and returns — never waits for
+            # them to finish (`_poll_export_progress`'s own docstring).
             for name in names:
                 session.restore_positive_override(name, snapshots.get(name))
-            session.wait_for_pending_exports()
 
-        self._run_async(_restore, on_done, busy_text=t("positive_review.undo"))
+        def _on_restored(result: object) -> None:
+            for name in names:
+                self._pending_thumbnail_refresh[name] = _THUMBNAIL_REFRESH_ATTEMPTS
+            on_done(result)
+
+        self._run_async(_restore, _on_restored, busy_text=t("positive_review.undo"))
 
     # --- misc ------------------------------------------------------------------
 
