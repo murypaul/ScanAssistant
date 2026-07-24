@@ -26,10 +26,11 @@ from scanassistant.imaging import master as master_pipeline
 from scanassistant.imaging import positive as positive_pipeline
 from scanassistant.imaging import print_engine
 from scanassistant.imaging.content_framing import detect_content_frame
-from scanassistant.imaging.geometry import FrameGeometry
+from scanassistant.imaging.geometry import FrameGeometry, apply_geometry
 from scanassistant.imaging.raw import RawDecoder
 from scanassistant.journal.journal import Journal
 from scanassistant.metadata.writer import MetadataWriter, ProductionInfo
+from scanassistant.project import positive_linear_cache
 from scanassistant.project.campaign import Campaign, JpegPositiveExportConfig
 from scanassistant.project.layout import CampaignPaths
 
@@ -156,7 +157,7 @@ class MasterExportRunner:
             positive_cfg = self._campaign.exports.jpeg_positive
             path = self._paths.jpeg_positive_dir / f"{name}{positive_cfg.suffix}.jpg"
             if positive_cfg.engine == "print_engine":
-                outcome = self._write_jpeg_positive_print_engine(path, master, context)
+                outcome = self._write_jpeg_positive_print_engine(name, path, master, context)
                 return path, outcome
             source_pixels, outcome = self._positive_source_pixels(master, context)
             mode, manual_settings = self._positive_render_settings(positive_cfg, context)
@@ -228,7 +229,7 @@ class MasterExportRunner:
         return source_pixels, outcome
 
     def _write_jpeg_positive_print_engine(
-        self, path: Path, master: master_pipeline.DevelopedMaster, context: ExportContext
+        self, name: str, path: Path, master: master_pipeline.DevelopedMaster, context: ExportContext
     ) -> ContentFrameOutcome:
         """`exports.jpeg_positive.engine == "print_engine"`:
         density-domain render, own linear RAW development — never derived
@@ -239,7 +240,14 @@ class MasterExportRunner:
         step (crop/rotate/scale) depends only on `frame`/`rotation_deg`/
         `size_mode`/`final_dimensions_px`, identical for both engines, so
         `master.pixels.shape` is a valid stand-in without a second geometry
-        pass."""
+        pass.
+
+        Decoded here (not via `print_engine.render_print`, which would
+        hide the intermediate linear array) so this — the default
+        single-worker export path every capture goes through, not just a
+        campaign with a positive-finalize pool configured — also seeds
+        `positive_linear_cache` for the calibration screen, the same as
+        `core.positive_finalize_runner` already does."""
         positive_cfg = self._campaign.exports.jpeg_positive
         framing = self._campaign.framing
         frame = FrameGeometry(
@@ -257,14 +265,34 @@ class MasterExportRunner:
             paper_soft_clip=context.manual_print_paper_soft_clip,
             content_frame=context.manual_print_content_frame,
         )
-        result = print_engine.render_print(
-            self._decoder,
-            context.raw_path,
+        final_dimensions_px = _final_dimensions(framing.final_dimensions_px)
+        user_wb = self._campaign.imaging.white_balance
+        development = self._decoder.develop(context.raw_path, user_wb=user_wb, linear=True)
+        geometry = apply_geometry(
+            development.pixels,
             frame,
             rotation_deg=context.rotation_deg,
             size_mode=framing.size_mode,
-            final_dimensions_px=_final_dimensions(framing.final_dimensions_px),
-            user_wb=self._campaign.imaging.white_balance,
+            final_dimensions_px=final_dimensions_px,
+        )
+        linear = geometry.pixels.astype(np.float64) / 65535.0
+        positive_linear_cache.save(
+            self._paths,
+            name,
+            linear,
+            geometry.frame_in_output,
+            positive_linear_cache.DecodeFingerprint.for_decode(
+                raw_path=context.raw_path,
+                frame=frame,
+                rotation_deg=context.rotation_deg,
+                size_mode=framing.size_mode,
+                final_dimensions_px=final_dimensions_px,
+                white_balance=user_wb,
+            ),
+        )
+        result = print_engine.render_print_from_linear(
+            linear,
+            geometry.frame_in_output,
             overrides=overrides,
             horizontal_flip=positive_cfg.horizontal_flip,
         )
