@@ -216,6 +216,7 @@ STRINGS: dict[str, str] = {
     "preferences.shortcut_master_preview": "Master preview",
     "preferences.shortcut_cycle_preview": "Cycle preview (negative → master)",
     "preferences.shortcut_go_to_name": "Go to name",
+    "preferences.shortcut_rename_current": "Rename current image (simple capture mode)",
     "preferences.shortcut_trigger_capture": "Trigger the camera remotely",
     "preferences.shortcut_pause_resume": "Pause / Resume",
     "preferences.shortcut_toggle_live_view": "Toggle live view",
@@ -315,6 +316,9 @@ STRINGS: dict[str, str] = {
     "capture.resume_processing": "Resume processing",
     "capture.recovery_report_title": "Recovery after interruption",
     "capture.go_to_name_placeholder": "Go to name… (Enter to jump, Escape to cancel)",
+    "capture.exhaustion_name_placeholder": (
+        "No name left in the inventory — type one (Enter to confirm, Escape to cancel)"
+    ),
     "capture.confidence_reliable": "● RELIABLE {score}",
     "capture.confidence_review": "● TO CHECK {score}",
     "capture.confidence_impossible": "● IMPOSSIBLE {score}",
@@ -351,6 +355,14 @@ STRINGS: dict[str, str] = {
     "wizard.step1.operator": "Operator",
     "wizard.step1.institution": "Institution",
     "wizard.step1.negative_format": "Negative format (documentary label)",
+    "wizard.step1.mode": "Capture mode",
+    "wizard.step1.mode_full": "Full processing",
+    "wizard.step1.mode_simple": "Simple (RAW only)",
+    "wizard.step1.mode_hint": (
+        "Simple mode only renames and files incoming RAWs — no crop detection, "
+        "no positive, no TIFF/JPEG exports. The Framing and Exports steps are "
+        "skipped."
+    ),
     "wizard.step1.clone_button": "Clone settings from an existing campaign…",
     "wizard.step1.clone_browse_title": "Select an existing campaign folder",
     "wizard.step1.clone_failed_title": "Could not clone settings",
@@ -506,7 +518,10 @@ STRINGS: dict[str, str] = {
     ),
     "error.E-10": "Invalid campaign file: {field} — {detail}.",
     "error.E-11": "The CSV cannot be imported: {count} problem(s).",
-    "error.E-12": "No name left in the inventory. Add rows to the CSV or finish the campaign.",
+    "error.E-12": (
+        "No name left in the inventory. Type one for this image, or add rows to the"
+        " CSV and finish the campaign."
+    ),
     "error.E-13": "The inventory was modified by another program.",
     "error.E-14": "This campaign is already open (host {host}, PID {pid}).",
     "error.E-15": "The processing queue is growing ({queue_size} pending).",

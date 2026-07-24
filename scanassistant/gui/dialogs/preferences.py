@@ -60,6 +60,7 @@ _ACTION_LABEL_KEYS: dict[str, dict[str, str]] = {
         "master_preview": "preferences.shortcut_master_preview",
         "cycle_preview": "preferences.shortcut_cycle_preview",
         "go_to_name": "preferences.shortcut_go_to_name",
+        "rename_current": "preferences.shortcut_rename_current",
         "trigger_capture": "preferences.shortcut_trigger_capture",
         "pause_resume": "preferences.shortcut_pause_resume",
         "toggle_live_view": "preferences.shortcut_toggle_live_view",

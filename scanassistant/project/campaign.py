@@ -182,6 +182,12 @@ class Campaign:
     institution: str = ""
     media_type: str = "photo_negative"
     negative_format: str = ""
+    # "full": crop detection + positive + TIFF/JPEG exports (the original
+    # behavior). "simple": watch → stabilize → assign name → move the RAW
+    # as-is, nothing else — enforced by validate() forcing framing/exports
+    # off below rather than trusting every caller to have set them
+    # consistently.
+    mode: str = "full"  # full | simple
     equipment: EquipmentConfig = field(default_factory=EquipmentConfig)
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     naming: NamingConfig = field(default_factory=NamingConfig)
@@ -199,6 +205,20 @@ class Campaign:
             )
         if not self.name or _INVALID_FOLDER_NAME_CHARS.search(self.name):
             raise InvalidCampaignError("name", f"not a valid folder name: {self.name!r}")
+
+        if self.mode not in {"full", "simple"}:
+            raise InvalidCampaignError("mode", f"must be one of full, simple: {self.mode!r}")
+        if self.mode == "simple":
+            if self.framing.enabled:
+                raise InvalidCampaignError("framing.enabled", "must be false when mode is 'simple'")
+            if (
+                self.exports.tiff.enabled
+                or self.exports.jpeg_master.enabled
+                or self.exports.jpeg_positive.enabled
+            ):
+                raise InvalidCampaignError(
+                    "exports", "every export kind must be disabled when mode is 'simple'"
+                )
 
         if self.capture.watch_mode not in {"auto", "native", "polling"}:
             raise InvalidCampaignError(
@@ -442,6 +462,7 @@ def _from_dict(data: dict[str, Any]) -> Campaign:
             institution=data.get("institution", ""),
             media_type=data.get("media_type", "photo_negative"),
             negative_format=data.get("negative_format", ""),
+            mode=data.get("mode", "full"),
             equipment=EquipmentConfig(**data.get("equipment", {})),
             capture=CaptureConfig(**data.get("capture", {})),
             naming=NamingConfig(**data.get("naming", {})),
