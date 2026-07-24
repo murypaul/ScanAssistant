@@ -30,6 +30,15 @@ this screen session (`_linear_cache`) — a repeat visit or a committed
 settings/crop change re-runs only the cheap density-math half
 (`render_print_from_linear`), never a second decode.
 
+A committed change is still not free, though (~1.8-2.8s on the cached
+array — density math + GrabCut, I-190): `PrintCalibrationPanel.live_changed`
+(every tick while a slider is still being dragged) additionally drives a
+*further* downsampled re-render (`_on_print_settings_live`,
+`_LIVE_PREVIEW_MAX_DIM`), upscaled back to display resolution before
+showing — a live preview an operator can actually judge tone by while
+dragging, without paying that per-tick cost at full resolution (which
+would fall behind the drag itself, backing up render after render).
+
 Every operation that can still take real time runs off the GUI thread
 (`_CallWorker`/`_run_async`), so a `~16.7s` block with no `processEvents()`
 never reads to the OS as a hung, unresponsive application (the most likely
@@ -52,6 +61,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 from PIL import Image
 from PySide6.QtCore import QPointF, QSize, Qt, QThread, QTimer, Signal
@@ -115,6 +125,23 @@ _DecodeResult = tuple[
 # debounce (`_FRAME_COMMIT_DELAY_MS`/`_ROTATION_COMMIT_DELAY_MS`) — a
 # deliberately shared convention, not independently tuned.
 _CONFIRM_DEBOUNCE_MS = 2500
+
+# Cap on the long edge fed to `render_print_from_linear` for a *live* preview
+# (`PrintCalibrationPanel.live_changed`, fired on every slider-drag tick —
+# see that signal's own docstring for why it can never be wired straight to
+# the cached array: a full render there costs ~1.8-2.8s even on the disk
+# cache's already-downsampled 2200px array, I-190). Deliberately well under
+# 1080p (this screen has no zoom — the preview area, itself narrower than
+# the full window, never actually displays more than roughly a 1920x1080
+# screen's worth of pixels regardless of the source array's own
+# resolution), so this loses nothing an operator could actually see while
+# judging a tonal change by eye. At this size the same render is a small
+# fraction of a second, and the result is upscaled back to the cached
+# array's own resolution before display (`_apply_live_render_result_to_
+# preview`), so the crop overlay/histogram — both keyed to whatever
+# resolution `preview_area.show_image` last received — never need their
+# own separate coordinate space for it.
+_LIVE_PREVIEW_MAX_DIM = 1024
 
 
 class _CallWorker(QThread):
@@ -211,6 +238,24 @@ class PositiveReviewScreen(QWidget):
         # somewhere; a second navigation back onto it must not start a
         # duplicate RAW decode, just wait for whichever is already going.
         self._pending_decode_names: set[str] = set()
+        # Downsampled linear + scaled `FrameGeometry` for the live-preview
+        # path, memoized against `(name, id(full-resolution linear array))`
+        # so a drag's many `live_changed` ticks resize once, not per tick —
+        # `id()` is enough to detect the array being replaced (a fresh
+        # decode/prefetch landing) since `_linear_cache` never mutates an
+        # array in place.
+        self._live_preview_source_cache: (
+            tuple[str, int, np.ndarray, FrameGeometry] | None
+        ) = None
+        # A live render already in flight never gets a second one started on
+        # top of it (`_run_async` has no cancellation) — a tick arriving
+        # meanwhile just marks `_live_render_pending` and gets folded into
+        # one more render, with whatever the panel's values are by the time
+        # the in-flight one finishes, once it does. This is what actually
+        # throttles a drag's many ticks/second down to the pipeline's own
+        # throughput, not a fixed timer interval.
+        self._live_render_busy = False
+        self._live_render_pending = False
         self._workers: set[_CallWorker] = set()
         self._foreground_workers: set[_CallWorker] = set()
         self._busy = False
@@ -264,6 +309,7 @@ class PositiveReviewScreen(QWidget):
         self.print_panel = PrintCalibrationPanel()
         self.print_panel.settled_changed.connect(self._on_print_settings_committed)
         self.print_panel.settled_changed.connect(self._mark_edited)
+        self.print_panel.live_changed.connect(self._on_print_settings_live)
         self.print_panel.pick_dmin_requested.connect(self._on_pick_dmin_requested)
 
         self.redetect_frame_button = QPushButton(t("positive_review.redetect_frame"))
@@ -453,6 +499,7 @@ class PositiveReviewScreen(QWidget):
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._linear_cache.clear()
+        self._live_preview_source_cache = None
         self._prefetching.clear()
         self._pending_decode_names.clear()
         self._print_engine_loaded_for = None
@@ -936,6 +983,121 @@ class PositiveReviewScreen(QWidget):
             self._apply_render_result_to_preview(result)
 
         self._run_async(_render, _on_rendered, busy_text=t("positive_review.rendering", name=name))
+
+    def _live_preview_source(
+        self, name: str, linear: np.ndarray, frame_in_output: FrameGeometry
+    ) -> tuple[np.ndarray, FrameGeometry]:
+        """The (memoized) downsampled `linear`/`frame_in_output` pair a live
+        render actually runs on — see `_LIVE_PREVIEW_MAX_DIM`. Recomputed
+        only when `name` or the underlying array identity changes, never
+        per slider tick."""
+        cached = self._live_preview_source_cache
+        if cached is not None and cached[0] == name and cached[1] == id(linear):
+            return cached[2], cached[3]
+        height, width = linear.shape[:2]
+        scale = min(1.0, _LIVE_PREVIEW_MAX_DIM / max(height, width))
+        if scale >= 1.0:
+            small_linear, small_frame = linear, frame_in_output
+        else:
+            small_linear = cv2.resize(
+                linear.astype(np.float32),
+                (round(width * scale), round(height * scale)),
+                interpolation=cv2.INTER_AREA,
+            )
+            small_frame = FrameGeometry(
+                x=frame_in_output.x * scale,
+                y=frame_in_output.y * scale,
+                width=frame_in_output.width * scale,
+                height=frame_in_output.height * scale,
+                angle_deg=frame_in_output.angle_deg,
+            )
+        self._live_preview_source_cache = (name, id(linear), small_linear, small_frame)
+        return small_linear, small_frame
+
+    def _on_print_settings_live(self) -> None:
+        """`PrintCalibrationPanel.live_changed`: a cheap, reduced-resolution
+        re-render while a slider is still being dragged — the full-quality
+        commit still happens separately on release (`settled_changed` →
+        `_on_print_settings_committed`), unaffected by this. Reuses
+        `self._current_print_frame` for the crop, same as a committed
+        render — a live tonal drag must not move or reset a crop the
+        operator already placed.
+
+        Coalesced, not queued: while a live render is already in flight,
+        a tick just sets `_live_render_pending` and returns — the next
+        render (once the in-flight one finishes) reads the panel's values
+        fresh, so it always reflects wherever the drag actually is by then,
+        never a backlog of stale intermediate positions."""
+        if self._current_name is None or self._print_engine_loaded_for != self._current_name:
+            return
+        if self._live_render_busy:
+            self._live_render_pending = True
+            return
+        name = self._current_name
+        cached = self._linear_cache.get(name)
+        if cached is None:
+            return
+        linear, frame_in_output, _content_frame, _content_mask_source, _fingerprint = cached
+        small_linear, small_frame = self._live_preview_source(name, linear, frame_in_output)
+        session = self._session
+        assert session is not None
+        horizontal_flip = session.campaign.exports.jpeg_positive.horizontal_flip
+        full_height, full_width = linear.shape[:2]
+        content_frame_override = None
+        if self._current_print_frame is not None:
+            content_frame_override = _print_frame_to_fraction(
+                self._current_print_frame, full_width, full_height, horizontal_flip
+            )
+        overrides = replace(
+            self.print_panel.current_overrides(), content_frame=content_frame_override
+        )
+        target_shape = (linear.shape[0], linear.shape[1])
+
+        def _render() -> print_engine.PrintResult:
+            return print_engine.render_print_from_linear(
+                small_linear.astype(np.float64),
+                small_frame,
+                overrides=overrides,
+                horizontal_flip=horizontal_flip,
+                crop_to_content=False,
+            )
+
+        def _on_rendered(result: print_engine.PrintResult) -> None:
+            self._live_render_busy = False
+            pending = self._live_render_pending
+            self._live_render_pending = False
+            if name == self._current_name:
+                self._apply_live_render_result_to_preview(result, target_shape)
+            if pending:
+                self._on_print_settings_live()
+
+        def _on_failed(_message: str) -> None:
+            self._live_render_busy = False
+            self._live_render_pending = False
+
+        self._live_render_busy = True
+        self._run_async(_render, _on_rendered, on_failure=_on_failed, silent=True)
+
+    def _apply_live_render_result_to_preview(
+        self, result: print_engine.PrintResult, target_shape: tuple[int, int]
+    ) -> None:
+        """Same tail as `_apply_render_result_to_preview`, but the rendered
+        array is upscaled back to `target_shape` (the cached array's own
+        resolution, whatever `preview_area` is currently showing) first —
+        cheap next to the tonal render itself, and it means the crop
+        overlay/histogram never need a separate reduced-resolution
+        coordinate space of their own for this path."""
+        positive8 = (result.pixels // 257).astype(np.uint8)
+        if positive8.shape[:2] != target_shape:
+            positive8 = cv2.resize(
+                positive8,
+                (target_shape[1], target_shape[0]),
+                interpolation=cv2.INTER_LINEAR,
+            )
+        rgb = np.stack([positive8, positive8, positive8], axis=-1)
+        self.preview_area.show_image(rgb)
+        self.histogram_widget.set_pixels(rgb)
+        self._reposition_histogram()
 
     def _apply_render_result_to_preview(self, result: print_engine.PrintResult) -> None:
         """Shared tail of every re-render that only touches the preview/

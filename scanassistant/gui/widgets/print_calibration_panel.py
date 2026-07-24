@@ -7,12 +7,25 @@ film-model group (toe/shoulder): fixed as a property
 of the film stock, not recomputed per image; shown here as a read-only
 caption, not a dead slider.
 
-Deliberately does *not* re-render live while dragging (`live_value_changed`,
-per SliderField): a full `imaging.print_engine.render_print` measured
-~16.7s on a real image (RAW decode + density-domain render)
-— re-rendering on every slider tick would be unusable. Only
-`committed` (drag released, field edited, or reset) requests a refresh,
-via this panel's own `settled_changed`.
+Never re-renders anything itself: it only relays `live`/`committed` from
+its `SliderField`s as `live_changed`/`settled_changed` (see each signal's
+own docstring below) and leaves what to do with them to the caller.
+
+`live_changed` fires on every drag tick (`SliderField.live_value_changed`)
+— a `SliderField` drag can emit dozens of times a second. The caller
+(`gui.screens.positive_review.PositiveReviewScreen`) must never wire this
+straight to a full-resolution `render_print_from_linear`: even on an
+already-decoded, cached array that render costs ~1.8-2.8s (density math +
+GrabCut, I-190) — one render per tick would fall further and further
+behind the drag itself, backing up a growing queue of renders the operator
+has already moved past by the time each one finishes, exactly the kind of
+per-tick full render this panel used to (deliberately) skip altogether.
+The screen's own live handler instead renders a further-downsampled copy
+and upscales the result back for display, and coalesces ticks that arrive
+while one such render is still in flight rather than queuing them.
+`committed` (drag released, field edited, or reset) is unaffected either
+way — it always requests the one full-quality refresh, via
+`settled_changed`.
 """
 
 from __future__ import annotations
@@ -136,9 +149,11 @@ class _Group(QWidget):
 
 class PrintCalibrationPanel(QWidget):
     """`settled_changed`: request a full-quality preview refresh (any group
-    toggled or a field committed). `live_changed`: request a cheap,
-    reduced-cost refresh if the caller has one — this panel has none of
-    its own (see module docstring), so callers may simply ignore it.
+    toggled or a field committed). `live_changed`: fires on every slider
+    drag tick — request a cheap, reduced-cost refresh if the caller has one
+    (see module docstring for why a caller must never just wire this to
+    the same full-quality render `settled_changed` triggers); a caller with
+    no such cheap path may simply ignore it, same as today.
     `pick_dmin_requested`: "Pick from image" clicked — the caller (the
     calibration screen, which owns the preview and the decoded negative)
     arms picking mode and reports the sampled color back via `dmin_r`/
