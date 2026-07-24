@@ -19,14 +19,24 @@ from scanassistant.project.layout import CampaignPaths
 
 
 def list_positives_by_category(
-    paths: CampaignPaths, fs: FileSystem, categories: frozenset[str]
+    paths: CampaignPaths,
+    fs: FileSystem,
+    categories: frozenset[str],
+    *,
+    entries: list[dict] | None = None,
 ) -> list[str]:
     """Names whose most recent `POSITIVE_FRAMING` entry's action is in
     `categories` (`deferred`/`applied`/`manual`), in the order they first
-    appear in the journal."""
+    appear in the journal.
+
+    `entries` lets a caller that already has a fresh read of the journal
+    (or, for a call where staleness genuinely doesn't matter, a cached
+    one) skip a second full re-read/re-parse of every `LOGS/events_*.jsonl`
+    file — `None` (the default) re-reads from disk, same as before this
+    parameter existed."""
     latest_action: dict[str, str] = {}
     order: list[str] = []
-    for entry in read_journal_entries(paths, fs):
+    for entry in entries if entries is not None else read_journal_entries(paths, fs):
         if entry.get("type") != "POSITIVE_FRAMING":
             continue
         name = entry.get("image")

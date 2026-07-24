@@ -82,7 +82,7 @@ from PySide6.QtWidgets import (
 
 from scanassistant.core.positive_review import list_positives_by_category
 from scanassistant.core.queue import ExportContext
-from scanassistant.core.recovery import rebuild_export_context
+from scanassistant.core.recovery import read_journal_entries, rebuild_export_context
 from scanassistant.core.session import CaptureSession
 from scanassistant.gui.widgets.histogram_widget import HistogramWidget
 from scanassistant.gui.widgets.preview_area import PreviewArea
@@ -321,6 +321,17 @@ class PositiveReviewScreen(QWidget):
         # the next tick must skip rather than pile up a second background
         # read on top of one still running.
         self._export_poll_in_flight = False
+        # Loaded once per screen session, not re-read on every image
+        # navigation/prefetch (`_journal_entries`'s own docstring) — the
+        # journal grows with the whole campaign and used to be re-read and
+        # re-parsed in full on every single `rebuild_export_context` call,
+        # the dominant cost of just browsing between images on a large
+        # campaign. Safe: this screen never itself writes a NAMING/FRAMING
+        # entry (support-frame data, capture-only — `core.session.
+        # apply_frame` requires the image to be `IN_REVIEW`, a state this
+        # screen's images are never in), the only entry types
+        # `rebuild_export_context` actually reads.
+        self._journal_entries_cache: list[dict] | None = None
 
         self.category_deferred_checkbox = QCheckBox(t("positive_review.category_deferred"))
         self.category_deferred_checkbox.setChecked(True)
@@ -571,7 +582,15 @@ class PositiveReviewScreen(QWidget):
         if session is None or not categories:
             self._names = []
         else:
-            self._names = list_positives_by_category(session.paths, session.fs, categories)
+            # A deliberate, infrequent action (screen open, a filter
+            # checkbox toggled) — worth a guaranteed-fresh read rather than
+            # `_journal_entries()`'s cache, so a background regenerate that
+            # landed since the cache was last filled is never shown under
+            # the wrong category here even momentarily.
+            self._journal_entries_cache = read_journal_entries(session.paths, session.fs)
+            self._names = list_positives_by_category(
+                session.paths, session.fs, categories, entries=self._journal_entries_cache
+            )
         self.list_widget.blockSignals(True)
         self.list_widget.clear()
         for name in self._names:
@@ -763,11 +782,30 @@ class PositiveReviewScreen(QWidget):
         self._pending_decode_names.add(name)
         self._run_async(decode, _on_decoded, on_failure=_on_failed, silent=True)
 
+    def _journal_entries(self) -> list[dict]:
+        """The campaign journal, read once per screen session and reused —
+        see `self._journal_entries_cache`'s own comment for why this is
+        safe here. `_poll_export_progress`'s own category check
+        deliberately does *not* use this cache (a fresh read, on its own
+        background thread): that one specifically exists to notice a
+        background regenerate's `POSITIVE_FRAMING` entry landing, which
+        this cache would otherwise never see for the rest of the
+        session."""
+        session = self._session
+        assert session is not None
+        if self._journal_entries_cache is None:
+            self._journal_entries_cache = read_journal_entries(session.paths, session.fs)
+        return self._journal_entries_cache
+
     def _rebuild_context(self, name: str) -> ExportContext | None:
         session = self._session
         assert session is not None
         return rebuild_export_context(
-            name, session.paths, session.fs, session.campaign.capture.extensions
+            name,
+            session.paths,
+            session.fs,
+            session.campaign.capture.extensions,
+            entries=self._journal_entries(),
         )
 
     def _build_decode_task(self, name: str) -> Callable[[], _DecodeResult] | None:
