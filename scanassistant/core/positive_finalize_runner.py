@@ -1,4 +1,4 @@
-"""`ExportRunner` for the positive-finalize pass (DECISIONS.md I-179):
+"""`ExportRunner` for the positive-finalize pass:
 recomputes `JPEG_POSITIVE/<NAME><suffix>.jpg` with `imaging.print_engine`
 (density-domain, calibrated for fidelity) after the quick capture-time
 export already produced a first version with `imaging.positive`.
@@ -15,8 +15,8 @@ built for exactly this.
 Ignores `ExportContext.content_frame_override`/`manual_positive_settings`
 (the "Recadrage des positifs" screen's manual fields, `imaging.positive`'s
 own parameter model — a different engine's parameter space). Does honor
-`manual_print_*` (the print_engine calibration screen's own overrides,
-DECISIONS.md I-181) and reports `PrintResult.flagged` back as
+`manual_print_*` (the print_engine calibration screen's own overrides)
+and reports `PrintResult.flagged` back as
 `ContentFrameOutcome.tonal_flagged`, same as `core.export_runner`'s own
 print_engine path — an image finalized through this pool must classify
 into deferred/applied/manual exactly the same way regardless of which of

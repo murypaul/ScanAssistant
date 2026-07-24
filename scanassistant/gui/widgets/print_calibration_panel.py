@@ -1,17 +1,16 @@
-"""Print-engine settings panel for the positive calibration screen
-(specifications/13_INVERSION_NEGATIFS.md §9, 06_INTERFACE.md §8ter).
+"""Print-engine settings panel for the positive calibration screen.
 
 Four groups, each starting on **Auto** (the automatic estimate, shown
 read-only) with its own toggle to switch to **Manual** (editable) and back
 — never a single combined on/off for the whole panel. No control for the
-film-model group (toe/shoulder): DECISIONS.md I-178 fixed it as a property
+film-model group (toe/shoulder): fixed as a property
 of the film stock, not recomputed per image; shown here as a read-only
 caption, not a dead slider.
 
 Deliberately does *not* re-render live while dragging (`live_value_changed`,
 per SliderField): a full `imaging.print_engine.render_print` measured
-~16.7s on a real image (RAW decode + density-domain render, DECISIONS.md
-I-182) — re-rendering on every slider tick would be unusable. Only
+~16.7s on a real image (RAW decode + density-domain render)
+— re-rendering on every slider tick would be unusable. Only
 `committed` (drag released, field edited, or reset) requests a refresh,
 via this panel's own `settled_changed`.
 """
@@ -138,8 +137,8 @@ class PrintCalibrationPanel(QWidget):
             t("positive_calibration.exposure_shift"), *_EXPOSURE_RANGE
         )
 
-        # Film model: no override (DECISIONS.md I-178) — a read-only caption,
-        # not a group with a dead toggle.
+        # Film model: no override, a fixed property of the film stock — a
+        # read-only caption, not a group with a dead toggle.
         film_model_box = QGroupBox(t("positive_calibration.group_film_model"))
         film_model_layout = QVBoxLayout(film_model_box)
         film_model_caption = QLabel(t("positive_calibration.film_model_caption"))
@@ -190,8 +189,8 @@ class PrintCalibrationPanel(QWidget):
     def load(self, auto: AutoValues, override: PositiveOverride | None) -> None:
         """(Re)binds the panel to the image currently loaded — safe to call
         again on every navigation. `advanced_toggle`'s expanded/collapsed
-        state is deliberately left untouched here (06_INTERFACE.md §8ter:
-        persists across images within the screen session).
+        state is deliberately left untouched here: it persists across
+        images within the screen session.
 
         Every group's switch is set with its own `committed`/`live` signals
         blocked: `set_manual` below can flip a switch's checked state
@@ -200,7 +199,7 @@ class PrintCalibrationPanel(QWidget):
         that flip alone fires `settled_changed` as if the operator had just
         edited *this* freshly-loaded image, triggering a wasted extra
         render and (once the operator's own edits start a debounced
-        auto-confirm, 06_INTERFACE.md §8ter) could even mark it dirty before
+        auto-confirm) could even mark it dirty before
         they have touched anything."""
         override = override or PositiveOverride()
         blockers = [

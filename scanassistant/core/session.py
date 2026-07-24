@@ -155,8 +155,8 @@ class CaptureSession:
         # (DECISIONS.md I-92/I-98).
         self.export_executor = export_executor or InlineExportExecutor()
         # Dedicated pool for jpeg_positive when exports.jpeg_positive.engine
-        # == "print_engine" (DECISIONS.md I-179/I-182): measured at ~16.7s
-        # for a real image (RAW decode + density-domain render) versus
+        # == "print_engine": measured at ~16.7s for a real image (RAW
+        # decode + density-domain render) versus
         # ~1.8s for the legacy pipeline's incremental cost on top of the
         # master decode tiff/jpeg_master already need — routing it through
         # `self.export_executor` (the same single worker as tiff/jpeg_master)
@@ -561,9 +561,9 @@ class CaptureSession:
 
     def _executor_and_runner_for(self, kind: str) -> tuple[ExportExecutor, ExportRunner]:
         """Routes `jpeg_positive` to the dedicated finalize pool when the
-        campaign uses `print_engine` and one was configured (DECISIONS.md
-        I-179/I-182) — every other kind, and jpeg_positive on the legacy
-        engine, stays on the regular single-worker path."""
+        campaign uses `print_engine` and one was configured — every other
+        kind, and jpeg_positive on the legacy engine, stays on the regular
+        single-worker path."""
         if (
             kind == "jpeg_positive"
             and self.campaign.exports.jpeg_positive.engine == "print_engine"
@@ -773,12 +773,11 @@ class CaptureSession:
         paper_soft_clip: float | None = None,
     ) -> list[SessionEvent]:
         """Regenerates `jpeg_positive` for `name` using an operator's manual
-        print_engine overrides from the calibration screen
-        (13_INVERSION_NEGATIFS.md §9, 06_INTERFACE.md §8ter) — each `None`
+        print_engine overrides from the calibration screen — each `None`
         means that group stays automatic. Persisted (`project.
         positive_overrides.set_positive_print_overrides`), independent of
-        the crop override (`apply_manual_positive_override`, DECISIONS.md
-        I-181) — never touches TIFF/JPEG master.
+        the crop override (`apply_manual_positive_override`) — never
+        touches TIFF/JPEG master.
 
         Same journal-rebuild + jpeg_positive-only scope as
         `regenerate_positive`; does nothing (empty list) if the RAW or its
@@ -823,17 +822,16 @@ class CaptureSession:
         self, source_name: str, target_names: list[str], *, include_dmin: bool = False
     ) -> list[SessionEvent]:
         """Copies `source_name`'s persisted print_engine overrides to every
-        name in `target_names` (06_INTERFACE.md §8ter "Apply to selection")
-        — `source_name` must already have a confirmed override (usually via
+        name in `target_names` ("Apply to selection") — `source_name` must
+        already have a confirmed override (usually via
         `apply_manual_print_overrides` on it first); nothing to propagate
         otherwise (empty list).
 
         Dmin excluded by default (`include_dmin`): a physical measurement
         local to *that* negative's own border — propagating it without
-        discernment would reintroduce a color cast rather than correct one
-        (13_INVERSION_NEGATIFS.md §9). Paper-model settings (contrast,
-        exposure, black, soft-clip) are an aesthetic choice, consistent to
-        propagate across one film/box.
+        discernment would reintroduce a color cast rather than correct one.
+        Paper-model settings (contrast, exposure, black, soft-clip) are an
+        aesthetic choice, consistent to propagate across one film/box.
 
         Regenerates `jpeg_positive` for exactly the targets that could be
         rebuilt, journals a dedicated event listing them (whether or not
@@ -879,7 +877,7 @@ class CaptureSession:
     ) -> list[SessionEvent]:
         """Replaces `name`'s override wholesale with an exact prior snapshot
         and regenerates `jpeg_positive` — the calibration screen's Ctrl+Z/
-        Ctrl+Y primitive (06_INTERFACE.md §8ter): unlike
+        Ctrl+Y primitive: unlike
         `apply_manual_positive_override`/`apply_manual_print_overrides`,
         which each only ever touch their own half of the entry, this
         overwrites both at once from a snapshot the caller captured before
@@ -945,7 +943,7 @@ class CaptureSession:
             # is a distinct outcome from "applied" (automatic, confident
             # detection) — a manually-confirmed image must not keep
             # reappearing in the "needs review" list. `tonal_flagged`
-            # (13_INVERSION_NEGATIFS.md §9) overrides both: a confident crop
+            # overrides both: a confident crop
             # doesn't make an unconfident density/tonal estimate trustworthy
             # — an operator override of the crop wouldn't have touched the
             # tonal estimate either, so a flagged tonal render still needs a
@@ -1647,7 +1645,7 @@ class CaptureSession:
     def shutdown_executors(self) -> None:
         """Releases both background executors' worker thread(s), if any —
         `self.export_executor` and, when configured, the print_engine
-        finalize pool (DECISIONS.md I-179/I-182). Call after `stop()`."""
+        finalize pool. Call after `stop()`."""
         self.export_executor.shutdown()
         if self._positive_finalize_executor is not None:
             self._positive_finalize_executor.shutdown()

@@ -230,7 +230,7 @@ class MasterExportRunner:
     def _write_jpeg_positive_print_engine(
         self, path: Path, master: master_pipeline.DevelopedMaster, context: ExportContext
     ) -> ContentFrameOutcome:
-        """`exports.jpeg_positive.engine == "print_engine"` (I-172/I-178):
+        """`exports.jpeg_positive.engine == "print_engine"`:
         density-domain render, own linear RAW development — never derived
         from `master.pixels` (already gamma-encoded/sRGB, geometry only).
         `master` is used solely for its already-computed output dimensions,

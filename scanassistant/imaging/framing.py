@@ -7,7 +7,7 @@ the intrinsic geometric quality of the **detected** rectangle (before
 margin): no dependency on a target ratio or size. No dependency on
 PySide6.
 
-**Not Otsu-threshold-based** (DECISIONS.md I-185, revises the original
+**Not Otsu-threshold-based** (revises the original
 design): a single global brightness split can't tell the negative's own
 light-toned unexposed border apart from the light table behind it, so it
 systematically excludes that border from the detected rectangle — measured
@@ -33,7 +33,7 @@ to help (94% agreement between the two, and ≈0 correlation between that
 agreement and actual accuracy, on the same real sample) — both methods
 share this specific blind spot rather than failing independently, so
 agreement between them isn't informative. Documented as a known,
-unresolved limitation rather than papered over; see DECISIONS.md I-185.
+unresolved limitation rather than papered over.
 """
 
 from __future__ import annotations
@@ -71,8 +71,8 @@ _DEFAULT_GRABCUT_ITERS = 8
 # 0.0) — conservative enough not to misfire on subtle-but-real content.
 _MIN_STD_FOR_SEGMENTATION = 1.0
 
-# Capture-time processing-budget tiers (06_INTERFACE.md / DECISIONS.md
-# I-185): (working_long_edge_px, grabcut_iters) pairs, empirically timed and
+# Capture-time processing-budget tiers:
+# (working_long_edge_px, grabcut_iters) pairs, empirically timed and
 # accuracy-checked against 120 real auto/manual pairs from `2024_5_1`
 # (`working_long_edge_px=1300, grabcut_iters=8` — the tier below labeled
 # "4s" — is the one actually validated end-to-end; the others are the same

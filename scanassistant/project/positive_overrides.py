@@ -26,8 +26,8 @@ class PositiveOverride:
     settings: tuple[float, int, int, int] | None = (
         None  # exposure_ev, contrast, shadows, highlights — legacy engine only
     )
-    # print_engine manual overrides (13_INVERSION_NEGATIFS.md §9, DECISIONS.md
-    # I-181): a parallel, independent set of fields — never converted to or
+    # print_engine manual overrides: a parallel, independent set of
+    # fields — never converted to or
     # from `settings` above, the two engines' parameter spaces don't
     # correspond 1:1. Each `None` means that group stays automatic.
     print_dmin: tuple[float, float, float] | None = None
@@ -91,7 +91,7 @@ def set_positive_override(
     """Records (or replaces) the crop/legacy-engine override for `name`,
     read-modify-write — preserves any existing print_engine override
     (`set_positive_print_overrides`) for the same image, a separate
-    concern (DECISIONS.md I-181)."""
+    concern."""
     overrides = load_positive_overrides(paths, fs)
     existing = overrides.get(name, PositiveOverride())
     overrides[name] = replace(existing, content_frame=content_frame, settings=settings)
@@ -128,7 +128,7 @@ def set_positive_print_overrides(
 ) -> None:
     """Records (or replaces) the print_engine override for `name`,
     read-modify-write — preserves any existing crop/legacy-engine override
-    (`set_positive_override`) for the same image (DECISIONS.md I-181).
+    (`set_positive_override`) for the same image.
     `content_frame` is required, same as every other field here (no
     default): a caller not touching the crop must still pass through its
     *current* value explicitly — a default of `None` would silently clear

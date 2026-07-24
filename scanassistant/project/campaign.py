@@ -66,8 +66,8 @@ class FramingConfig:
     enabled: bool = True
     default_orientation: str = "horizontal"  # horizontal | vertical
     margin_pct: float = 2.0
-    # I-176 calibrated these against 2024_5_1's journal under the *original*
-    # Otsu-based detector. **Superseded by DECISIONS.md I-185**: the
+    # Originally calibrated against 2024_5_1's journal under the *original*
+    # Otsu-based detector. **Superseded**: the
     # detector itself was replaced (GrabCut, `imaging.framing.detect_frame`)
     # after confirming Otsu systematically under-crops (excludes the
     # negative's own unexposed border) — re-measured on the same campaign's
@@ -83,12 +83,12 @@ class FramingConfig:
     reliable_threshold: float = 0.93
     review_threshold: float = 0.85
     max_deskew_deg: float = 5.0
-    # Deprecated, Otsu-specific (I-185 retired the Otsu-based detector) —
+    # Deprecated, Otsu-specific (the Otsu-based detector was retired) —
     # kept only so an existing campaign.json with this key still loads;
     # `imaging.framing.detect_frame` no longer reads it.
     threshold_bias: int = 0
-    # Capture-time detection quality/time budget (DECISIONS.md I-185,
-    # `imaging.framing.BUDGET_TIERS_S`) — one of the defined tiers in
+    # Capture-time detection quality/time budget
+    # (`imaging.framing.BUDGET_TIERS_S`) — one of the defined tiers in
     # seconds (currently 2/3/4/5/7/10/15); an unrecognized value falls back
     # to the nearest tier at or below it, or the cheapest tier if lower
     # than all of them (`imaging.framing.budget_to_params`).
@@ -130,13 +130,12 @@ class JpegPositiveExportConfig:
     suffix: str = "-POS"  # appended to <NAME> in JPEG_POSITIVE/<NAME><suffix>.jpg
     manual_settings: ManualPositiveSettings = field(default_factory=ManualPositiveSettings)
     engine: str = "legacy"  # legacy (imaging.positive, `mode` above) |
-    # print_engine (imaging.print_engine, density-domain — specifications/
-    # 13_INVERSION_NEGATIFS.md). Never on by default: an existing campaign's
+    # print_engine (imaging.print_engine, density-domain). Never on by
+    # default: an existing campaign's
     # positives never change render engine without an explicit, conscious
-    # choice (DECISIONS.md I-172/I-176 — no cutover without validation).
+    # choice — no cutover without validation.
     # `mode`/`manual_settings` above are ignored when this is "print_engine";
-    # that engine has no manual override yet (specifications/
-    # 13_INVERSION_NEGATIFS.md §9, calibration screen, not built).
+    # that engine has no manual override yet (calibration screen, not built).
 
 
 @dataclass

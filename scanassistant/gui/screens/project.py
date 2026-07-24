@@ -685,7 +685,7 @@ class ProjectScreen(QWidget):
         self.jpeg_positive_enabled_check = QCheckBox(t("wizard.step5.enabled"))
         self.jpeg_positive_enabled_check.toggled.connect(self._on_jpeg_positive_enabled_changed)
         # Which engine renders jpeg_positive at all — mode/manual settings
-        # below only ever apply to "legacy" (DECISIONS.md I-181: the two
+        # below only ever apply to "legacy" (the two
         # engines' parameter spaces are independent, never converted into
         # each other), so switching to "print_engine" disables them rather
         # than leaving controls on screen that silently do nothing.
@@ -869,8 +869,8 @@ class ProjectScreen(QWidget):
         self._apply_engine_enabled_state(engine)
 
     def _apply_engine_enabled_state(self, engine: str) -> None:
-        """Mode/manual settings only ever apply to the legacy engine
-        (DECISIONS.md I-181) — disabled rather than hidden for print_engine,
+        """Mode/manual settings only ever apply to the legacy engine —
+        disabled rather than hidden for print_engine,
         so the values stay visible (and still editable if switched back)
         instead of vanishing."""
         legacy = engine == "legacy"

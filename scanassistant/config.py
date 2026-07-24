@@ -53,7 +53,7 @@ class ProcessingConfig:
     # `workers`: the positive-finalize pass (imaging.print_engine, run
     # after capture rather than during it) must never compete with or slow
     # down the TIFF/JPEG master export path, which must never fall behind
-    # capture (DECISIONS.md I-179).
+    # capture.
 
 
 @dataclass

@@ -101,7 +101,7 @@ _STATUS_MESSAGE_DURATION_MS = 5000
 _MIN_PUMP_INTERVAL_MS = 100
 _ROTATION_COMMIT_DELAY_MS = 2500
 _FRAME_COMMIT_DELAY_MS = 2500
-# `imaging.framing.detect_frame` (GrabCut, DECISIONS.md I-185) measured up
+# `imaging.framing.detect_frame` (GrabCut) measured up
 # to ~14.5s at the highest quality/time budget tier (`BUDGET_TIERS_S`) plus
 # preview extraction — comfortable margin above that so quitting mid-
 # detection waits it out rather than risking Qt aborting the process over
@@ -304,7 +304,7 @@ class CaptureScreen(QWidget):
         # user-facing instantiation passes a `ThreadedExportExecutor`, so a
         # slow export never freezes the Qt thread (DECISIONS.md I-92/I-98).
         self._export_executor_override = export_executor
-        # `processing.positive_finalize_workers` (DECISIONS.md I-179):
+        # `processing.positive_finalize_workers`:
         # sizes the dedicated pool built per-session below, only ever used
         # for a print_engine campaign's jpeg_positive.
         self._positive_finalize_workers = positive_finalize_workers
@@ -601,7 +601,7 @@ class CaptureScreen(QWidget):
             metadata_writer=ExifToolMetadataWriter(executable=exiftool_executable),
             journal=journal,
         )
-        # Dedicated pool for jpeg_positive (DECISIONS.md I-179/I-182): only
+        # Dedicated pool for jpeg_positive: only
         # for a print_engine campaign — a real render measured ~16.7s
         # (RAW decode + density-domain), enough to make the master export
         # queue fall behind capture if it ran on the same single worker as
@@ -1055,7 +1055,7 @@ class CaptureScreen(QWidget):
     def cycle_preview_action(self, *, direction: int = 1) -> None:
         """K key: negative ↔ master (Shift+K: the other way around) — a
         2-state cycle, same underlying toggle as T. Positive judgment no
-        longer lives in capture at all (DECISIONS.md I-173): tonal review
+        longer lives in capture at all: tonal review
         happens post-capture, in the dedicated calibration screen."""
         if self._current_preview_pixels is None:
             return
