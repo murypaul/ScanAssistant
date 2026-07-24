@@ -14,6 +14,13 @@ from PySide6.QtWidgets import QWidget
 from scanassistant.gui.theme import PREVIEW_BACKGROUND, TEXT_PRIMARY
 
 _BIN_COUNT = 64
+# Every Nth pixel in each dimension (a 16x pixel-count reduction at 4) —
+# purely a peak-relative bar-height diagnostic, not a value any export
+# depends on, so a few thousand sampled pixels already look identical to
+# the full array on screen. Recomputed on every render (each navigation,
+# each committed tonal setting), on the full multi-megapixel preview
+# array in float64, this was real, avoidable per-render cost.
+_SAMPLE_STRIDE = 4
 _BACKGROUND_COLOR = QColor(PREVIEW_BACKGROUND)
 _BACKGROUND_COLOR.setAlpha(120)
 _BAR_COLOR = QColor(TEXT_PRIMARY)
@@ -33,11 +40,12 @@ class HistogramWidget(QWidget):
         if pixels is None:
             self._bins = None
         else:
-            luminance = (
-                0.2126 * pixels[:, :, 0].astype(np.float64)
-                + 0.7152 * pixels[:, :, 1].astype(np.float64)
-                + 0.0722 * pixels[:, :, 2].astype(np.float64)
-            )
+            # Subsampled, and Rec.709 luminance in integer arithmetic
+            # (54/183/19 out of 256, the standard fixed-point approximation
+            # of 0.2126/0.7152/0.0722) rather than a float64 pass over
+            # every pixel — see `_SAMPLE_STRIDE`'s own comment.
+            sample = pixels[::_SAMPLE_STRIDE, ::_SAMPLE_STRIDE].astype(np.uint32)
+            luminance = (sample[:, :, 0] * 54 + sample[:, :, 1] * 183 + sample[:, :, 2] * 19) >> 8
             counts, _ = np.histogram(luminance, bins=_BIN_COUNT, range=(0, 255))
             self._bins = counts.astype(np.float64)
         self.update()
