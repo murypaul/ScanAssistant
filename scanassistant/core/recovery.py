@@ -105,8 +105,6 @@ def rebuild_export_context(
         width=int(frame["width"]),  # type: ignore[call-overload]
         height=int(frame["height"]),  # type: ignore[call-overload]
         angle_deg=float(frame["angle_deg"]),  # type: ignore[arg-type]
-        content_frame_override=override.content_frame if override else None,
-        manual_positive_settings=override.settings if override else None,
         manual_print_dmin=override.print_dmin if override else None,
         manual_print_exposure_shift=override.print_exposure_shift if override else None,
         manual_print_contrast=override.print_contrast if override else None,

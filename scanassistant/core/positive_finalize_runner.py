@@ -1,7 +1,7 @@
 """`ExportRunner` for the positive-finalize pass:
 recomputes `JPEG_POSITIVE/<NAME><suffix>.jpg` with `imaging.print_engine`
 (density-domain, calibrated for fidelity) after the quick capture-time
-export already produced a first version with `imaging.positive`.
+export already produced a first version.
 
 Deliberately a *separate* `ExportRunner`, not a branch inside
 `MasterExportRunner`: this one holds no cached state on `self` between
@@ -12,11 +12,8 @@ under concurrent calls — instances of this runner may be called from
 multiple worker threads at once. `core.queue.PooledExportExecutor` is
 built for exactly this.
 
-Ignores `ExportContext.content_frame_override`/`manual_positive_settings`
-(the "Recadrage des positifs" screen's manual fields, `imaging.positive`'s
-own parameter model — a different engine's parameter space). Does honor
-`manual_print_*` (the print_engine calibration screen's own overrides)
-and reports `PrintResult.flagged` back as
+Honors `manual_print_*` (the print_engine calibration screen's own
+overrides) and reports `PrintResult.flagged` back as
 `ContentFrameOutcome.tonal_flagged`, same as `core.export_runner`'s own
 print_engine path — an image finalized through this pool must classify
 into deferred/applied/manual exactly the same way regardless of which of
@@ -36,9 +33,9 @@ from scanassistant.core.queue import (
     ExportResult,
     ExportTask,
 )
-from scanassistant.imaging import positive as positive_pipeline
 from scanassistant.imaging import print_engine
 from scanassistant.imaging.geometry import FrameGeometry, apply_geometry
+from scanassistant.imaging.jpeg_io import write_jpeg_positive
 from scanassistant.imaging.raw import RawDecoder
 from scanassistant.journal.journal import Journal
 from scanassistant.metadata.writer import MetadataWriter, ProductionInfo
@@ -139,6 +136,27 @@ class PositiveFinalizeRunner:
             final_dimensions_px=final_dimensions_px,
         )
         linear = geometry.pixels.astype(np.float64) / 65535.0
+        print_result = print_engine.render_print_from_linear(
+            linear,
+            geometry.frame_in_output,
+            overrides=overrides,
+            horizontal_flip=positive_cfg.horizontal_flip,
+        )
+        support_height, support_width = print_result.support_shape
+        cx, cy, cw, ch = print_result.content_frame
+        # Only an *automatic* detection belongs in this cache (see
+        # `positive_linear_cache`'s own contract) — when `overrides.
+        # content_frame` was set, `print_result.content_mask_source` is
+        # `"manual"`, and caching it would let a later cache hit report an
+        # operator-confirmed crop as if it were still automatic.
+        cached_content_frame = (
+            (cx / support_width, cy / support_height, cw / support_width, ch / support_height)
+            if overrides.content_frame is None and support_width > 0 and support_height > 0
+            else None
+        )
+        cached_content_mask_source = (
+            print_result.content_mask_source if overrides.content_frame is None else None
+        )
         positive_linear_cache.save(
             self._paths,
             name,
@@ -152,15 +170,11 @@ class PositiveFinalizeRunner:
                 final_dimensions_px=final_dimensions_px,
                 white_balance=user_wb,
             ),
-        )
-        print_result = print_engine.render_print_from_linear(
-            linear,
-            geometry.frame_in_output,
-            overrides=overrides,
-            horizontal_flip=positive_cfg.horizontal_flip,
+            content_frame=cached_content_frame,
+            content_mask_source=cached_content_mask_source,
         )
         path = self._paths.jpeg_positive_dir / f"{name}{positive_cfg.suffix}.jpg"
-        positive_pipeline.write_jpeg_positive(
+        write_jpeg_positive(
             print_result.pixels,
             path,
             quality=positive_cfg.quality,
@@ -181,20 +195,18 @@ class PositiveFinalizeRunner:
             },
             result="ok",
         )
-        x, y, w, h = print_result.content_frame
-        support_height, support_width = print_result.support_shape
         support_area = support_width * support_height
         outcome = ContentFrameOutcome(
-            x=x,
-            y=y,
-            width=w,
-            height=h,
+            x=cx,
+            y=cy,
+            width=cw,
+            height=ch,
             fill=1.0,
-            area_ratio=(w * h) / support_area if support_area > 0 else 0.0,
+            area_ratio=(cw * ch) / support_area if support_area > 0 else 0.0,
             source="manual" if print_result.content_mask_source == "manual" else "auto",
             tonal_flagged=print_result.flagged,
             fraction=(
-                (x / support_width, y / support_height, w / support_width, h / support_height)
+                (cx / support_width, cy / support_height, cw / support_width, ch / support_height)
                 if support_width > 0 and support_height > 0
                 else None
             ),

@@ -1,7 +1,7 @@
-"""Reading-positive pipeline, second generation: reconstructs the darkroom
-print process (density relative to the film's own base, a film response
-curve, then a paper response) instead of stretching an already inverted,
-gamma-encoded array (`imaging.positive`).
+"""Reading-positive pipeline: reconstructs the darkroom print process
+(density relative to the film's own base, a film response curve, then a
+paper response) instead of stretching an already inverted, gamma-encoded
+array.
 
 Starts from a *linear* RAW development (`imaging.raw.RawDecoder.develop(...,
 linear=True)`), then the same geometry crop the master pipeline uses
@@ -41,7 +41,7 @@ _FILM_SHOULDER_STRENGTH = 6.0
 _CONTRAST_TARGET_SPREAD = 0.75
 _CONTRAST_CAP_LOW = 0.6
 _CONTRAST_CAP_HIGH = 2.2
-_TARGET_MEAN = 0.45  # same target `imaging.positive._auto` uses
+_TARGET_MEAN = 0.45  # empirically a well-exposed reading positive's own mean
 _EXPOSURE_SHIFT_FLAG = 0.20
 DEFAULT_PAPER_BLACK = 0.02
 DEFAULT_PAPER_SOFT_CLIP = 0.85
@@ -102,13 +102,13 @@ class PrintResult:
     raw_contrast: float
     exposure_shift: float
     flagged: bool
-    content_mask_source: str  # "grabcut" | "inset_fallback"
+    content_mask_source: str  # "grabcut" | "inset_fallback" | "manual"
     local_contrast_applied: bool
     content_frame: tuple[int, int, int, int]  # x, y, w, h in the geometry
     # (post support-frame-crop) coordinate space `render_print_from_linear`
     # received — same space `imaging.content_framing.ContentFrameResult`
     # already uses elsewhere, so callers can build a `ContentFrameOutcome`
-    # from it exactly like the existing `imaging.positive` pipeline does.
+    # from it directly.
     support_shape: tuple[int, int]  # (height, width) of that same coordinate
     # space — callers building a `ContentFrameOutcome.fraction` need this as
     # the denominator; `imaging.master.DevelopedMaster.pixels.shape` is a
@@ -156,6 +156,8 @@ def render_print_from_linear(
     overrides: ManualPrintOverrides = _AUTO,
     horizontal_flip: bool = True,
     crop_to_content: bool = True,
+    cached_content_frame: tuple[float, float, float, float] | None = None,
+    cached_content_mask_source: str | None = None,
 ) -> PrintResult:
     """Core algorithm on an already linear, already geometry-cropped array
     — `linear` is RGB, float64, [0, 1].
@@ -166,6 +168,16 @@ def render_print_from_linear(
     groups still on auto — once an operator has set a value by hand, its
     own automatic estimate being out of bounds is no longer a reason to
     ask them to look at it again.
+
+    `cached_content_frame`/`cached_content_mask_source` (x/y/w/h fractions
+    of `linear`'s own width/height, plus the detector name that produced
+    them — same convention as `overrides.content_frame`, but from a prior
+    *automatic* detection, e.g. `project.positive_linear_cache`, not an
+    operator confirmation): skips GrabCut/inset detection and reuses that
+    rectangle verbatim, still reporting the real detector as the source —
+    never `"manual"` — so review/completeness signals stay accurate. Only
+    consulted when `overrides.content_frame is None`; an operator override
+    always wins.
 
     `crop_to_content=False` (the calibration screen's crop-editing preview
     only — every export path keeps the default) skips the final crop: the
@@ -192,7 +204,19 @@ def render_print_from_linear(
             max(1, round(wf * full_w)),
             max(1, round(hf * full_h)),
         )
-    mask, mask_source, content_frame = _content_mask(linear, frame_in_output, dmin, manual_rect)
+    cached_rect: tuple[int, int, int, int] | None = None
+    if manual_rect is None and cached_content_frame is not None:
+        full_h, full_w = linear.shape[:2]
+        xf, yf, wf, hf = cached_content_frame
+        cached_rect = (
+            round(xf * full_w),
+            round(yf * full_h),
+            max(1, round(wf * full_w)),
+            max(1, round(hf * full_h)),
+        )
+    mask, mask_source, content_frame = _content_mask(
+        linear, frame_in_output, dmin, manual_rect, cached_rect, cached_content_mask_source
+    )
 
     density = np.log10(dmin[None, None, :] / np.maximum(linear, _THRESHOLD))
     density = np.clip(density, 0.0, None)
@@ -255,11 +279,10 @@ def render_print_from_linear(
         pixels16 = pixels16[cy : cy + ch, cx : cx + cw]
         if horizontal_flip:
             # Negatives are captured emulsion-side up (more detail) —
-            # geometrically mirrored left-right versus the actual scene,
-            # same correction `imaging.positive.render_positive` applies.
+            # geometrically mirrored left-right versus the actual scene.
             # Done last, on the already-cropped output, so `content_frame`
             # stays in the un-mirrored support-frame coordinate space other
-            # callers expect (same convention the legacy pipeline uses).
+            # callers expect.
             pixels16 = np.fliplr(pixels16)
     else:
         if horizontal_flip:
@@ -328,29 +351,59 @@ def _sample_dmin(linear: np.ndarray, frame: FrameGeometry) -> np.ndarray:
     return np.percentile(linear[mask], 90, axis=0)
 
 
+_DMIN_PICK_RADIUS_PX = 8
+
+
+def sample_dmin_at_point(linear: np.ndarray, x: int, y: int) -> tuple[float, float, float]:
+    """Per-channel film-base color at an operator-picked point (the
+    calibration screen's "pick from image" tool) — `x`/`y` in `linear`'s own
+    coordinate space (the caller mirrors `x` first if the picked point came
+    from a horizontally-flipped preview). Median over a small local window,
+    not the single clicked pixel, for the same reason `_sample_dmin`'s own
+    border ring uses a percentile rather than a single sample: one dust
+    speck/grain under the cursor shouldn't set the whole estimate."""
+    height, width = linear.shape[:2]
+    y0, y1 = max(0, y - _DMIN_PICK_RADIUS_PX), min(height, y + _DMIN_PICK_RADIUS_PX + 1)
+    x0, x1 = max(0, x - _DMIN_PICK_RADIUS_PX), min(width, x + _DMIN_PICK_RADIUS_PX + 1)
+    patch = linear[y0:y1, x0:x1].reshape(-1, linear.shape[-1])
+    r, g, b = np.median(patch, axis=0)
+    return float(r), float(g), float(b)
+
+
 def _content_mask(
     linear: np.ndarray,
     frame: FrameGeometry,
     dmin: np.ndarray,
     manual_rect: tuple[int, int, int, int] | None = None,
+    cached_rect: tuple[int, int, int, int] | None = None,
+    cached_source: str | None = None,
 ) -> tuple[np.ndarray, str, tuple[int, int, int, int]]:
     """Content region for the density statistics *and* the final crop.
 
     `manual_rect` (an operator-confirmed crop, `ManualPrintOverrides.
     content_frame`) wins outright — no GrabCut/inset fallback runs at all.
-    Otherwise: GrabCut (`imaging.content_framing`, same detector already in
-    production) when confident, else a rectangular inset. Either way
-    (including a manual rect), a second pass removes any pixel whose
-    density clips to 0 on every channel from the *statistics* mask only
-    (never the crop rectangle, which stays a clean rectangle): brighter
-    than the measured Dmin everywhere, so by definition not exposed
-    content — found on a real sample where the inset fallback let 30% of a
-    support frame's own unexposed border leak into the "content"
-    statistics."""
+    Otherwise, `cached_rect` (a prior *automatic* detection, e.g. from
+    `project.positive_linear_cache`) wins next, on the same terms, but
+    reports `cached_source` instead of `"manual"` — reusing a detection is
+    not an operator confirming one. Otherwise: GrabCut
+    (`imaging.content_framing`, same detector already in production) when
+    confident, else a rectangular inset. In every case, a second pass
+    removes any pixel whose density clips to 0 on every channel from the
+    *statistics* mask only (never the crop rectangle, which stays a clean
+    rectangle): brighter than the measured Dmin everywhere, so by
+    definition not exposed content — found on a real sample where the
+    inset fallback let 30% of a support frame's own unexposed border leak
+    into the "content" statistics."""
     shape = linear.shape[:2]
-    if manual_rect is not None:
-        x, y, w, h = manual_rect
-        mask, source, rect = _rect_mask(shape, x, y, w, h), "manual", manual_rect
+    if manual_rect is not None or cached_rect is not None:
+        if manual_rect is not None:
+            x, y, w, h = manual_rect
+            rect, source = manual_rect, "manual"
+        else:
+            assert cached_rect is not None
+            x, y, w, h = cached_rect
+            rect, source = cached_rect, cached_source or "grabcut"
+        mask = _rect_mask(shape, x, y, w, h)
         density = np.log10(dmin[None, None, :] / np.maximum(linear, _THRESHOLD))
         not_border = (density > 0.0).any(axis=-1)
         refined = mask & not_border

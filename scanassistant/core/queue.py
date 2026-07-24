@@ -3,7 +3,7 @@
 `ExportRunner` is the pluggable interface: `FakeExportRunner` produces no
 pixels and is used by tests; the production implementation
 (`core.export_runner.MasterExportRunner`) assembles `imaging.master`,
-`imaging.positive`, and `metadata.writer` without this module depending
+`imaging.print_engine`, and `metadata.writer` without this module depending
 on any of them.
 
 `ExportExecutor` decides *where* `ExportRunner.run()` actually executes.
@@ -60,22 +60,11 @@ class ExportContext:
     # this one regeneration — `core.recovery.rebuild_export_context` also
     # replays it from `project.positive_overrides` on any later, unrelated
     # regeneration, so an explicit value passed here (this one call) still
-    # wins if it ever diverges from what's persisted.
-    # Fractions of `master.pixels`' own width/height (each in [0, 1]), not
-    # absolute pixels: the review screen displays an already-exported JPEG
-    # that may be a different resolution (`exports.jpeg_master.long_edge_px`)
-    # — fractions need no reconciliation, `master.pixels` is only ever
-    # sliced back into absolute pixels once actually re-developed here.
-    content_frame_override: tuple[float, float, float, float] | None = None  # x, y, w, h fractions
-    manual_positive_settings: tuple[float, int, int, int] | None = None  # exposure_ev, contrast,
-    # shadows, highlights — legacy engine only (`imaging.positive`).
-    # print_engine manual overrides: a parallel, independent set of fields
-    # — never converted to or from `manual_positive_settings` above. Each
-    # `None` means that group
-    # stays automatic. Mirrors `imaging.print_engine.ManualPrintOverrides`,
-    # redefined in primitives here rather than imported: same principle as
-    # `ContentFrameOutcome` below, which must not import the `imaging` type
-    # it mirrors either.
+    # wins if it ever diverges from what's persisted. Mirrors
+    # `imaging.print_engine.ManualPrintOverrides`, redefined in primitives
+    # here rather than imported: same principle as `ContentFrameOutcome`
+    # below, which must not import the `imaging` type it mirrors either.
+    # Each `None` means that group stays automatic.
     manual_print_dmin: tuple[float, float, float] | None = None
     manual_print_exposure_shift: float | None = None
     manual_print_contrast: float | None = None
@@ -102,15 +91,14 @@ class ContentFrameOutcome:
     # Same crop as x/y/width/height, as fractions of `master.pixels`' own
     # width/height — lets a reviewer re-open this exact crop later without
     # knowing what resolution `master.pixels` was at this particular export
-    # (see `ExportContext.content_frame_override` above for why fractions).
+    # (see `ExportContext.manual_print_content_frame` above for why fractions).
     fraction: tuple[float, float, float, float] | None = None
     # `imaging.print_engine.PrintResult.flagged`: the density/tonal
     # estimate itself was unconfident (contrast capped, or exposure shift
-    # beyond tolerance) — independent of crop
-    # confidence, an image can have a perfectly good crop and still need a
-    # tonal review. Always `False` for the legacy engine, which has no
-    # equivalent signal. Drives `CaptureSession._log_positive_framing`'s
-    # `deferred` classification alongside crop confidence, not just it.
+    # beyond tolerance) — independent of crop confidence, an image can have
+    # a perfectly good crop and still need a tonal review. Drives
+    # `CaptureSession._log_positive_framing`'s `deferred` classification
+    # alongside crop confidence, not just it.
     tonal_flagged: bool = False
 
 

@@ -113,29 +113,12 @@ class JpegMasterExportConfig:
 
 
 @dataclass
-class ManualPositiveSettings:
-    exposure_ev: float = 0.0
-    contrast: int = 0
-    shadows: int = 0
-    highlights: int = 0
-
-
-@dataclass
 class JpegPositiveExportConfig:
     enabled: bool = True
     quality: int = 90
     long_edge_px: int = 0  # 0 = full size
-    mode: str = "auto"  # simple | auto | manual
     horizontal_flip: bool = True
     suffix: str = "-POS"  # appended to <NAME> in JPEG_POSITIVE/<NAME><suffix>.jpg
-    manual_settings: ManualPositiveSettings = field(default_factory=ManualPositiveSettings)
-    engine: str = "legacy"  # legacy (imaging.positive, `mode` above) |
-    # print_engine (imaging.print_engine, density-domain). Never on by
-    # default: an existing campaign's
-    # positives never change render engine without an explicit, conscious
-    # choice — no cutover without validation.
-    # `mode`/`manual_settings` above are ignored when this is "print_engine";
-    # that engine has no manual override yet (calibration screen, not built).
 
 
 @dataclass
@@ -302,35 +285,10 @@ class Campaign:
                     f"exports.{label}.long_edge_px", "must be 0 or within [512, 20000]"
                 )
 
-        if self.exports.jpeg_positive.mode not in {"simple", "auto", "manual"}:
-            raise InvalidCampaignError(
-                "exports.jpeg_positive.mode", "must be one of simple, auto, manual"
-            )
-        if self.exports.jpeg_positive.engine not in {"legacy", "print_engine"}:
-            raise InvalidCampaignError(
-                "exports.jpeg_positive.engine", "must be one of legacy, print_engine"
-            )
         if _INVALID_FOLDER_NAME_CHARS.search(self.exports.jpeg_positive.suffix):
             raise InvalidCampaignError(
                 "exports.jpeg_positive.suffix",
                 "must not contain path separators or control characters",
-            )
-        manual = self.exports.jpeg_positive.manual_settings
-        if not -3 <= manual.exposure_ev <= 3:
-            raise InvalidCampaignError(
-                "exports.jpeg_positive.manual_settings.exposure_ev", "must be within [-3, 3]"
-            )
-        if not -100 <= manual.contrast <= 100:
-            raise InvalidCampaignError(
-                "exports.jpeg_positive.manual_settings.contrast", "must be within [-100, 100]"
-            )
-        if not 0 <= manual.shadows <= 100:
-            raise InvalidCampaignError(
-                "exports.jpeg_positive.manual_settings.shadows", "must be within [0, 100]"
-            )
-        if not 0 <= manual.highlights <= 100:
-            raise InvalidCampaignError(
-                "exports.jpeg_positive.manual_settings.highlights", "must be within [0, 100]"
             )
 
         if self.imaging.white_balance is not None:
@@ -478,11 +436,14 @@ def _from_dict(data: dict[str, Any]) -> Campaign:
 
 def _exports_from_dict(data: dict[str, Any]) -> ExportsConfig:
     jpeg_positive_data = dict(data.get("jpeg_positive", {}))
-    manual_settings_data = jpeg_positive_data.pop("manual_settings", {})
+    # Deprecated, legacy-engine-only keys (the legacy engine was removed) —
+    # popped rather than passed through so a campaign.json written before
+    # the removal still loads instead of raising on an unexpected kwarg.
+    jpeg_positive_data.pop("mode", None)
+    jpeg_positive_data.pop("manual_settings", None)
+    jpeg_positive_data.pop("engine", None)
     return ExportsConfig(
         tiff=TiffExportConfig(**data.get("tiff", {})),
         jpeg_master=JpegMasterExportConfig(**data.get("jpeg_master", {})),
-        jpeg_positive=JpegPositiveExportConfig(
-            manual_settings=ManualPositiveSettings(**manual_settings_data), **jpeg_positive_data
-        ),
+        jpeg_positive=JpegPositiveExportConfig(**jpeg_positive_data),
     )

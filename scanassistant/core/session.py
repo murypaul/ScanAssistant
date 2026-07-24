@@ -70,7 +70,6 @@ from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.positive_overrides import (
     PositiveOverride,
     load_positive_overrides,
-    set_positive_override,
     set_positive_print_overrides,
     write_positive_override,
 )
@@ -155,16 +154,13 @@ class CaptureSession:
         # (`gui.main_window`), so a slow export never freezes the Qt thread
         # (DECISIONS.md I-92/I-98).
         self.export_executor = export_executor or InlineExportExecutor()
-        # Dedicated pool for jpeg_positive when exports.jpeg_positive.engine
-        # == "print_engine": measured at ~16.7s for a real image (RAW
-        # decode + density-domain render) versus
-        # ~1.8s for the legacy pipeline's incremental cost on top of the
-        # master decode tiff/jpeg_master already need — routing it through
+        # Dedicated pool for jpeg_positive: measured at ~16.7s for a real
+        # image (RAW decode + density-domain render) — routing it through
         # `self.export_executor` (the same single worker as tiff/jpeg_master)
         # would make the master export queue fall behind capture, the one
-        # thing it must never do. `None` (the default: CLI, tests, a
-        # legacy-engine campaign) keeps jpeg_positive on the regular path,
-        # unchanged from before this existed.
+        # thing it must never do. `None` (the default: CLI, tests) keeps
+        # jpeg_positive on the regular path, unchanged from before this
+        # existed.
         self._positive_finalize_runner = positive_finalize_runner
         self._positive_finalize_executor = positive_finalize_executor
         self._now_wall = now_wall
@@ -561,13 +557,11 @@ class CaptureSession:
         }[kind]
 
     def _executor_and_runner_for(self, kind: str) -> tuple[ExportExecutor, ExportRunner]:
-        """Routes `jpeg_positive` to the dedicated finalize pool when the
-        campaign uses `print_engine` and one was configured — every other
-        kind, and jpeg_positive on the legacy engine, stays on the regular
-        single-worker path."""
+        """Routes `jpeg_positive` to the dedicated finalize pool when one was
+        configured — every other kind stays on the regular single-worker
+        path."""
         if (
             kind == "jpeg_positive"
-            and self.campaign.exports.jpeg_positive.engine == "print_engine"
             and self._positive_finalize_executor is not None
             and self._positive_finalize_runner is not None
         ):
@@ -724,45 +718,6 @@ class CaptureSession:
         self._persist_state()
         return events
 
-    def apply_manual_positive_override(
-        self,
-        name: str,
-        *,
-        content_frame: tuple[float, float, float, float] | None = None,
-        settings: tuple[float, int, int, int] | None = None,
-    ) -> list[SessionEvent]:
-        """Regenerates `jpeg_positive` for `name` using an operator's manual
-        choice from the "Recadrage des positifs" screen: `content_frame`
-        (x, y, width, height, each a fraction in [0, 1] of `master.pixels`'
-        own dimensions — resolution-independent, so the screen doesn't need
-        to know `master.pixels`' actual size to build this) always wins over
-        automatic detection; `settings` (exposure_ev, contrast, shadows,
-        highlights) always wins over the campaign's own exposure settings.
-        Also persisted (`project.positive_overrides`), so a later, unrelated
-        regeneration of the same image (crash recovery, `retry_error_image`)
-        reapplies it too instead of reverting to automatic detection.
-
-        Same journal-rebuild + jpeg_positive-only scope as
-        `regenerate_positive`; does nothing (empty list) if the RAW or its
-        support frame can't be reconstructed.
-        """
-        context = rebuild_export_context(
-            name, self.paths, self.fs, self.campaign.capture.extensions
-        )
-        if context is None:
-            return []
-        set_positive_override(
-            self.paths, self.fs, name, content_frame=content_frame, settings=settings
-        )
-        if content_frame is not None:
-            context = replace(context, content_frame_override=content_frame)
-        if settings is not None:
-            context = replace(context, manual_positive_settings=settings)
-        self.enqueue_export_context(name, ["jpeg_positive"], context)
-        events = self._drain_exports(self._new_deadline())
-        self._persist_state()
-        return events
-
     def apply_manual_print_overrides(
         self,
         name: str,
@@ -776,9 +731,8 @@ class CaptureSession:
         """Regenerates `jpeg_positive` for `name` using an operator's manual
         print_engine overrides from the calibration screen — each `None`
         means that group stays automatic. Persisted (`project.
-        positive_overrides.set_positive_print_overrides`), independent of
-        the crop override (`apply_manual_positive_override`) — never
-        touches TIFF/JPEG master.
+        positive_overrides.set_positive_print_overrides`) — never touches
+        TIFF/JPEG master.
 
         Same journal-rebuild + jpeg_positive-only scope as
         `regenerate_positive`; does nothing (empty list) if the RAW or its
@@ -878,12 +832,11 @@ class CaptureSession:
     ) -> list[SessionEvent]:
         """Replaces `name`'s override wholesale with an exact prior snapshot
         and regenerates `jpeg_positive` — the calibration screen's Ctrl+Z/
-        Ctrl+Y primitive: unlike
-        `apply_manual_positive_override`/`apply_manual_print_overrides`,
-        which each only ever touch their own half of the entry, this
-        overwrites both at once from a snapshot the caller captured before
-        the change being undone. `override=None` removes the entry
-        entirely (undoing the very first override ever set for `name`).
+        Ctrl+Y primitive: unlike `apply_manual_print_overrides`, which only
+        ever touches its own half of the entry, this overwrites the whole
+        entry at once from a snapshot the caller captured before the change
+        being undone. `override=None` removes the entry entirely (undoing
+        the very first override ever set for `name`).
 
         Does nothing (empty list) if the RAW or its support frame can't be
         reconstructed, same as every other regeneration entry point."""
@@ -895,8 +848,6 @@ class CaptureSession:
         write_positive_override(self.paths, self.fs, name, override)
         context = replace(
             context,
-            content_frame_override=override.content_frame if override else None,
-            manual_positive_settings=override.settings if override else None,
             manual_print_dmin=override.print_dmin if override else None,
             manual_print_exposure_shift=override.print_exposure_shift if override else None,
             manual_print_contrast=override.print_contrast if override else None,
@@ -940,7 +891,7 @@ class CaptureSession:
         entry alone. Also updates `state.json` for the image still current —
         once it's moved to history, the journal is the only durable copy."""
         if content_frame is not None:
-            # "manual" (operator-confirmed, `apply_manual_positive_override`)
+            # "manual" (operator-confirmed, `apply_manual_print_overrides`)
             # is a distinct outcome from "applied" (automatic, confident
             # detection) — a manually-confirmed image must not keep
             # reappearing in the "needs review" list. `tonal_flagged`
@@ -1798,8 +1749,7 @@ class CaptureSession:
         """Blocks until every export currently queued or in flight (either
         executor) has actually finished and been journaled/logged.
 
-        `regenerate_positive`/`apply_manual_positive_override`/
-        `apply_manual_print_overrides`/etc. all submit through
+        `regenerate_positive`/`apply_manual_print_overrides`/etc. all submit through
         `_drain_exports` with a short, bounded deadline — by design, meant
         for a caller with its own periodic pump (`CaptureScreen`'s pump
         timer) that will collect the result on a *later* call, not this

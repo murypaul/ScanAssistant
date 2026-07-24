@@ -15,9 +15,8 @@ finalized campaign is instant instead of paying that decode again for
 every single image.
 
 Downsampled (`_MAX_DIM`), not full resolution: the interactive preview
-this feeds doesn't need native resolution to judge tone/crop by eye (same
-reasoning the legacy engine's own preview already applies at a smaller
-scale) and a full-resolution float cache would be enormous. Confirm/
+this feeds doesn't need native resolution to judge tone/crop by eye, and a
+full-resolution float cache would be enormous. Confirm/
 regenerate/Apply-to-selection always re-decode at full resolution
 regardless of what's cached here, so final export quality is never
 affected by this cache — losing or discarding it is always safe, just
@@ -118,6 +117,20 @@ class DecodeFingerprint:
         )
 
 
+@dataclass(frozen=True)
+class CachedLinear:
+    """`load()`'s result: the decoded array plus, when the render that
+    produced it also detected a content frame, that detection — carried
+    here rather than in `PositiveOverride.print_content_frame`, which means
+    "operator-confirmed" elsewhere and must not be set by an automatic
+    detection (see `render_print_from_linear`'s `cached_content_frame`)."""
+
+    linear: np.ndarray
+    frame_in_output: FrameGeometry
+    content_frame: tuple[float, float, float, float] | None
+    content_mask_source: str | None
+
+
 def _paths(paths: CampaignPaths, name: str) -> tuple[Path, Path]:
     directory = paths.print_cache_dir
     return directory / f"{name}.npy", directory / f"{name}.json"
@@ -129,8 +142,18 @@ def save(
     linear: np.ndarray,
     frame_in_output: FrameGeometry,
     fingerprint: DecodeFingerprint,
+    *,
+    content_frame: tuple[float, float, float, float] | None = None,
+    content_mask_source: str | None = None,
 ) -> None:
     """Downsamples and persists `linear`/`frame_in_output`, atomically.
+
+    `content_frame` (x/y/w/h fractions of `linear`'s own width/height) and
+    `content_mask_source` are the *automatic* content-frame detection the
+    caller's own render already computed (GrabCut or the inset fallback) —
+    optional, since a caller re-seeding a never-finalized image may not
+    have rendered yet. Persisted purely so a later reader can skip
+    recomputing that detection; never treated as an operator confirmation.
 
     Never raises on a write failure (disk full, permission, a removable
     campaign volume gone read-only): this cache is a pure optimization,
@@ -173,19 +196,21 @@ def save(
                 "angle_deg": scaled_frame.angle_deg,
             },
             "fingerprint": fingerprint.to_json(),
+            "content_frame": list(content_frame) if content_frame is not None else None,
+            "content_mask_source": content_mask_source,
         }
         atomic_write_bytes(meta_path, json.dumps(meta).encode("utf-8"))
     except OSError:
         pass
 
 
-def load(
-    paths: CampaignPaths, name: str, fingerprint: DecodeFingerprint
-) -> tuple[np.ndarray, FrameGeometry] | None:
+def load(paths: CampaignPaths, name: str, fingerprint: DecodeFingerprint) -> CachedLinear | None:
     """`None` if there's no cache entry, it doesn't match `fingerprint`
     (stale), or it can't be read (corrupt, a partial write from a killed
     process) — never raises either way, same "worst case is a cold cache"
-    contract as `save`."""
+    contract as `save`. `content_frame`/`content_mask_source` on the result
+    are `None` when the entry predates that field or was saved without a
+    render (same as a cache miss for that part alone)."""
     array_path, meta_path = _paths(paths, name)
     try:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -195,6 +220,12 @@ def load(
             return None
         linear = np.load(array_path).astype(np.float32)
         frame = FrameGeometry(**meta["frame"])
-        return linear, frame
+        content_frame = meta.get("content_frame")
+        return CachedLinear(
+            linear=linear,
+            frame_in_output=frame,
+            content_frame=tuple(content_frame) if content_frame is not None else None,
+            content_mask_source=meta.get("content_mask_source"),
+        )
     except (OSError, ValueError, KeyError, TypeError):
         return None

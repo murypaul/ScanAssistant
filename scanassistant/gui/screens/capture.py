@@ -640,15 +640,19 @@ class CaptureScreen(QWidget):
             metadata_writer=ExifToolMetadataWriter(executable=exiftool_executable),
             journal=journal,
         )
-        # Dedicated pool for jpeg_positive: only
-        # for a print_engine campaign — a real render measured ~16.7s
+        # Dedicated pool for jpeg_positive: a real render measured ~16.7s
         # (RAW decode + density-domain), enough to make the master export
         # queue fall behind capture if it ran on the same single worker as
-        # tiff/jpeg_master above. `None`/`None` for a legacy-engine campaign
-        # leaves jpeg_positive on that regular path, unchanged.
-        positive_finalize_runner: ExportRunner | None = None
-        positive_finalize_executor: ExportExecutor | None = None
-        if campaign.exports.jpeg_positive.engine == "print_engine":
+        # tiff/jpeg_master above. An injected `export_runner` override (tests)
+        # means every export kind, jpeg_positive included, should go through
+        # that same fake/deterministic runner instead — reused here rather
+        # than spinning up a real pooled decode against it.
+        if self._export_runner_override is not None:
+            positive_finalize_runner: ExportRunner | None = self._export_runner_override
+            positive_finalize_executor: ExportExecutor | None = (
+                self._export_executor_override or InlineExportExecutor()
+            )
+        else:
             positive_finalize_runner = PositiveFinalizeRunner(
                 decoder=self._decoder,
                 campaign=campaign,

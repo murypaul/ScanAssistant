@@ -1,6 +1,6 @@
 """Production `ExportRunner`.
 
-Assembles `imaging.master`, `imaging.positive`, and `metadata.writer`
+Assembles `imaging.master`, `imaging.print_engine`, and `metadata.writer`
 behind the `core.queue.ExportRunner` interface, so `core.queue`/
 `core.session` never need to know about these modules. An expensive RAW
 development + geometry pass (~1-2 s) is cached across the three tasks
@@ -23,15 +23,14 @@ from scanassistant.core.queue import (
     ExportTask,
 )
 from scanassistant.imaging import master as master_pipeline
-from scanassistant.imaging import positive as positive_pipeline
 from scanassistant.imaging import print_engine
-from scanassistant.imaging.content_framing import detect_content_frame
 from scanassistant.imaging.geometry import FrameGeometry, apply_geometry
+from scanassistant.imaging.jpeg_io import write_jpeg_positive
 from scanassistant.imaging.raw import RawDecoder
 from scanassistant.journal.journal import Journal
 from scanassistant.metadata.writer import MetadataWriter, ProductionInfo
 from scanassistant.project import positive_linear_cache
-from scanassistant.project.campaign import Campaign, JpegPositiveExportConfig
+from scanassistant.project.campaign import Campaign
 from scanassistant.project.layout import CampaignPaths
 
 _CacheKey = tuple[
@@ -156,89 +155,20 @@ class MasterExportRunner:
         if kind == "jpeg_positive":
             positive_cfg = self._campaign.exports.jpeg_positive
             path = self._paths.jpeg_positive_dir / f"{name}{positive_cfg.suffix}.jpg"
-            if positive_cfg.engine == "print_engine":
-                outcome = self._write_jpeg_positive_print_engine(name, path, master, context)
-                return path, outcome
-            source_pixels, outcome = self._positive_source_pixels(master, context)
-            mode, manual_settings = self._positive_render_settings(positive_cfg, context)
-            positive16 = positive_pipeline.render_positive(
-                source_pixels,
-                horizontal_flip=positive_cfg.horizontal_flip,
-                mode=mode,
-                manual=manual_settings,
-            )
-            positive_pipeline.write_jpeg_positive(
-                positive16,
-                path,
-                quality=positive_cfg.quality,
-                long_edge_px=positive_cfg.long_edge_px,
-            )
+            outcome = self._write_jpeg_positive_print_engine(name, path, master, context)
             return path, outcome
 
         raise ValueError(f"unknown export kind: {kind!r}")
 
-    def _positive_source_pixels(
-        self, master: master_pipeline.DevelopedMaster, context: ExportContext
-    ) -> tuple[np.ndarray, ContentFrameOutcome | None]:
-        """The array to render the positive from: an operator's manual
-        content-frame choice (`context.content_frame_override`, from the
-        "Recadrage des positifs" screen) always wins over automatic
-        detection for this one regeneration — never recomputed against it."""
-        master_height, master_width = master.pixels.shape[:2]
-        if context.content_frame_override is not None:
-            x_frac, y_frac, w_frac, h_frac = context.content_frame_override
-            x = round(x_frac * master_width)
-            y = round(y_frac * master_height)
-            width = round(w_frac * master_width)
-            height = round(h_frac * master_height)
-            support_area = master.frame_in_output.width * master.frame_in_output.height
-            outcome = ContentFrameOutcome(
-                x=x,
-                y=y,
-                width=width,
-                height=height,
-                fill=1.0,
-                area_ratio=(width * height) / support_area if support_area > 0 else 0.0,
-                source="manual",
-                fraction=(x_frac, y_frac, w_frac, h_frac),
-            )
-            return master.pixels[y : y + height, x : x + width], outcome
-
-        content_frame = detect_content_frame(master.pixels, master.frame_in_output)
-        if content_frame is None:
-            return master.pixels, None
-        outcome = ContentFrameOutcome(
-            x=content_frame.x,
-            y=content_frame.y,
-            width=content_frame.width,
-            height=content_frame.height,
-            fill=content_frame.fill,
-            area_ratio=content_frame.area_ratio,
-            source="auto",
-            fraction=(
-                content_frame.x / master_width,
-                content_frame.y / master_height,
-                content_frame.width / master_width,
-                content_frame.height / master_height,
-            ),
-        )
-        source_pixels = master.pixels[
-            content_frame.y : content_frame.y + content_frame.height,
-            content_frame.x : content_frame.x + content_frame.width,
-        ]
-        return source_pixels, outcome
-
     def _write_jpeg_positive_print_engine(
         self, name: str, path: Path, master: master_pipeline.DevelopedMaster, context: ExportContext
     ) -> ContentFrameOutcome:
-        """`exports.jpeg_positive.engine == "print_engine"`:
-        density-domain render, own linear RAW development — never derived
+        """Density-domain render, own linear RAW development — never derived
         from `master.pixels` (already gamma-encoded/sRGB, geometry only).
         `master` is used solely for its already-computed output dimensions,
-        to express the content crop as the same x/y/width/height/fraction
-        shape `_positive_source_pixels` already produces — the geometry
-        step (crop/rotate/scale) depends only on `frame`/`rotation_deg`/
-        `size_mode`/`final_dimensions_px`, identical for both engines, so
+        to express the content crop as an x/y/width/height/fraction shape —
+        the geometry step (crop/rotate/scale) depends only on `frame`/
+        `rotation_deg`/`size_mode`/`final_dimensions_px`, so
         `master.pixels.shape` is a valid stand-in without a second geometry
         pass.
 
@@ -276,6 +206,27 @@ class MasterExportRunner:
             final_dimensions_px=final_dimensions_px,
         )
         linear = geometry.pixels.astype(np.float64) / 65535.0
+        result = print_engine.render_print_from_linear(
+            linear,
+            geometry.frame_in_output,
+            overrides=overrides,
+            horizontal_flip=positive_cfg.horizontal_flip,
+        )
+        support_height, support_width = result.support_shape
+        cx, cy, cw, ch = result.content_frame
+        # Only an *automatic* detection belongs in this cache (see
+        # `positive_linear_cache`'s own contract) — when `overrides.
+        # content_frame` was set, `result.content_mask_source` is
+        # `"manual"`, and caching it would let a later cache hit report an
+        # operator-confirmed crop as if it were still automatic.
+        cached_content_frame = (
+            (cx / support_width, cy / support_height, cw / support_width, ch / support_height)
+            if overrides.content_frame is None and support_width > 0 and support_height > 0
+            else None
+        )
+        cached_content_mask_source = (
+            result.content_mask_source if overrides.content_frame is None else None
+        )
         positive_linear_cache.save(
             self._paths,
             name,
@@ -289,20 +240,16 @@ class MasterExportRunner:
                 final_dimensions_px=final_dimensions_px,
                 white_balance=user_wb,
             ),
+            content_frame=cached_content_frame,
+            content_mask_source=cached_content_mask_source,
         )
-        result = print_engine.render_print_from_linear(
-            linear,
-            geometry.frame_in_output,
-            overrides=overrides,
-            horizontal_flip=positive_cfg.horizontal_flip,
-        )
-        positive_pipeline.write_jpeg_positive(
+        write_jpeg_positive(
             result.pixels,
             path,
             quality=positive_cfg.quality,
             long_edge_px=positive_cfg.long_edge_px,
         )
-        x, y, w, h = result.content_frame
+        x, y, w, h = cx, cy, cw, ch
         master_height, master_width = master.pixels.shape[:2]
         support_area = master_width * master_height
         return ContentFrameOutcome(
@@ -319,26 +266,6 @@ class MasterExportRunner:
                 if master_width > 0 and master_height > 0
                 else None
             ),
-        )
-
-    def _positive_render_settings(
-        self, positive_cfg: JpegPositiveExportConfig, context: ExportContext
-    ) -> tuple[str, positive_pipeline.ManualSettings]:
-        """An operator's manual exposure choice (`context.
-        manual_positive_settings`, from the "Recadrage des positifs" screen)
-        always wins over the campaign's own settings for this one
-        regeneration — applies regardless of the campaign's configured mode."""
-        if context.manual_positive_settings is not None:
-            exposure_ev, contrast, shadows, highlights = context.manual_positive_settings
-            return positive_pipeline.MODE_MANUAL, positive_pipeline.ManualSettings(
-                exposure_ev=exposure_ev, contrast=contrast, shadows=shadows, highlights=highlights
-            )
-        manual = positive_cfg.manual_settings
-        return positive_cfg.mode, positive_pipeline.ManualSettings(
-            exposure_ev=manual.exposure_ev,
-            contrast=manual.contrast,
-            shadows=manual.shadows,
-            highlights=manual.highlights,
         )
 
     def _developed_master(

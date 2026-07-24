@@ -446,11 +446,6 @@ class ExportsPage(QWizardPage):
         self.jpeg_positive_long_edge.setRange(0, 20000)
         self.jpeg_positive_long_edge.setValue(0)
         self.jpeg_positive_long_edge.setSpecialValueText(t("wizard.step5.long_edge_full"))
-        self.jpeg_positive_mode = QComboBox()
-        self.jpeg_positive_mode.addItem(t("wizard.step5.mode_simple"), "simple")
-        self.jpeg_positive_mode.addItem(t("wizard.step5.mode_auto"), "auto")
-        self.jpeg_positive_mode.addItem(t("wizard.step5.mode_manual"), "manual")
-        self.jpeg_positive_mode.setCurrentIndex(1)
         self.jpeg_positive_flip = QCheckBox(t("wizard.step5.horizontal_flip"))
         self.jpeg_positive_flip.setChecked(True)
 
@@ -458,7 +453,6 @@ class ExportsPage(QWizardPage):
         jpeg_positive_form.addRow(self.jpeg_positive_enabled)
         jpeg_positive_form.addRow(t("wizard.step5.quality"), self.jpeg_positive_quality)
         jpeg_positive_form.addRow(t("wizard.step5.long_edge"), self.jpeg_positive_long_edge)
-        jpeg_positive_form.addRow(t("wizard.step5.mode"), self.jpeg_positive_mode)
         jpeg_positive_form.addRow(self.jpeg_positive_flip)
         jpeg_positive_group = QGroupBox(t("wizard.step5.jpeg_positive_group"))
         jpeg_positive_group.setLayout(jpeg_positive_form)
@@ -484,9 +478,6 @@ class ExportsPage(QWizardPage):
         self.jpeg_positive_enabled.setChecked(exports.jpeg_positive.enabled)
         self.jpeg_positive_quality.setValue(exports.jpeg_positive.quality)
         self.jpeg_positive_long_edge.setValue(exports.jpeg_positive.long_edge_px)
-        self.jpeg_positive_mode.setCurrentIndex(
-            self.jpeg_positive_mode.findData(exports.jpeg_positive.mode)
-        )
         self.jpeg_positive_flip.setChecked(exports.jpeg_positive.horizontal_flip)
 
 
@@ -677,7 +668,6 @@ class NewCampaignWizard(QWizard):
         campaign.exports.jpeg_positive.long_edge_px = (
             self.exports_page.jpeg_positive_long_edge.value()
         )
-        campaign.exports.jpeg_positive.mode = self.exports_page.jpeg_positive_mode.currentData()
         campaign.exports.jpeg_positive.horizontal_flip = (
             self.exports_page.jpeg_positive_flip.isChecked()
         )

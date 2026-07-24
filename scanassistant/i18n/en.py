@@ -90,8 +90,11 @@ STRINGS: dict[str, str] = {
     "positive_review.loading": "Loading {name}…",
     "positive_review.rendering": "Updating preview for {name}…",
     "positive_review.regenerating": "Regenerating {name}…",
+    "positive_review.redetect_frame": "Redetect frame",
+    "positive_review.picking_dmin": "Click an unexposed border area of the negative…",
     "positive_calibration.auto": "Auto",
     "positive_calibration.group_dmin": "Film base (Dmin)",
+    "positive_calibration.pick_dmin": "Pick from image",
     "positive_calibration.dmin_r": "Red",
     "positive_calibration.dmin_g": "Green",
     "positive_calibration.dmin_b": "Blue",
@@ -145,9 +148,9 @@ STRINGS: dict[str, str] = {
     ),
     "preferences.positive_finalize_workers": "Positive finalize workers",
     "preferences.positive_finalize_workers_tooltip": (
-        "Dedicated worker threads for the density-domain positive engine"
-        " (print_engine) during capture — never affects the legacy engine or"
-        " the TIFF/JPEG master export, which always run on their own path."
+        "Dedicated worker threads for the density-domain positive render"
+        " during capture — never affects the TIFF/JPEG master export,"
+        " which always runs on its own path."
     ),
     "preferences.disk_warn": "Disk space warning",
     "preferences.disk_warn_tooltip": (
@@ -426,20 +429,8 @@ STRINGS: dict[str, str] = {
     "wizard.step5.quality": "JPEG quality",
     "wizard.step5.long_edge": "Long edge (px)",
     "wizard.step5.long_edge_full": "Full size",
-    "wizard.step5.engine": "Positive engine",
-    "wizard.step5.engine_legacy": "Legacy (tone curve)",
-    "wizard.step5.engine_print_engine": "Density-domain (darkroom print model)",
-    "wizard.step5.mode": "Positive mode (legacy engine)",
-    "wizard.step5.mode_simple": "Simple",
-    "wizard.step5.mode_auto": "Automatic",
-    "wizard.step5.mode_manual": "Manual",
     "wizard.step5.horizontal_flip": "Flip horizontally (reading orientation)",
     "wizard.step5.suffix": "Filename suffix",
-    "wizard.step5.manual_group": "Manual mode settings",
-    "wizard.step5.exposure_ev": "Exposure (EV)",
-    "wizard.step5.contrast": "Contrast",
-    "wizard.step5.shadows": "Shadows",
-    "wizard.step5.highlights": "Highlights",
     "wizard.step6.title": "IPTC metadata",
     "wizard.step6.subtitle": "Written to every export.",
     "wizard.step6.creator": "Creator",

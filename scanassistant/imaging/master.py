@@ -1,9 +1,8 @@
 """Master pipeline: development, geometry, TIFF and master JPEG.
 
 Produces the shared 16-bit array (`DevelopedMaster.pixels`) that feeds the
-TIFF, the master JPEG, and the reading positive (`imaging.positive`) —
-same array in memory, no possible geometry divergence. No dependency on
-PySide6.
+TIFF, the master JPEG, and the reading positive — same array in memory, no
+possible geometry divergence. No dependency on PySide6.
 """
 
 from __future__ import annotations

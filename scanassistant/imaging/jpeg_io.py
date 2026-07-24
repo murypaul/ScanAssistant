@@ -1,7 +1,7 @@
 """Shared JPEG writing utilities and ICC profiles.
 
-Shared by `imaging.master` (master JPEG) and `imaging.positive` (positive
-JPEG) to avoid any divergence between the two writers.
+Shared by `imaging.master` (master JPEG) and `imaging.print_engine`
+(positive JPEG) to avoid any divergence between the two writers.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 _RESOURCES_DIR = Path(__file__).resolve().parent.parent / "resources"
@@ -40,3 +41,13 @@ def write_jpeg_atomic(image: Image.Image, path: Path, *, quality: int, icc_profi
     tmp_path = path.with_name(path.name + ".tmp")
     image.save(tmp_path, format="JPEG", quality=quality, icc_profile=icc_profile)
     tmp_path.replace(path)
+
+
+def write_jpeg_positive(
+    positive16: np.ndarray, path: Path, *, quality: int, long_edge_px: int
+) -> None:
+    """Writes `JPEG_POSITIVE/<NAME><suffix>.jpg` from a 16-bit mono array."""
+    pixels8 = (positive16 // 257).astype(np.uint8)
+    image = Image.fromarray(pixels8, mode="L")
+    image = resize_long_edge(image, long_edge_px)
+    write_jpeg_atomic(image, path, quality=quality, icc_profile=icc_bytes("gray"))

@@ -75,6 +75,9 @@ class _Group(QWidget):
         auto_row.addWidget(QLabel(t("positive_calibration.auto")))
         auto_row.addStretch(1)
 
+        self._sliders: list[SliderField] = []
+        self._auto_values: tuple[float, ...] | None = None
+
         self.form = QFormLayout()
         self._form_widget = QWidget()
         self._form_widget.setLayout(self.form)
@@ -97,6 +100,14 @@ class _Group(QWidget):
         # (mis-named `manual` for its bool param) enabled the form when the
         # switch turned ON, i.e. when "Auto" was activated — backwards from
         # what the label promised, and confirmed as a real bug in practice.
+        if auto and self._auto_values is not None:
+            # Switching back to Auto only disables the form (below) — without
+            # this, a slider dragged while on Manual kept showing that value,
+            # read-only, instead of the automatic estimate it now reflects
+            # again (confirmed as a real bug in practice: the displayed
+            # number silently stopped matching what was actually rendered).
+            for slider, value in zip(self._sliders, self._auto_values, strict=True):
+                slider.setValue(value)
         self._form_widget.setEnabled(not auto)
         self.committed.emit()
 
@@ -107,11 +118,19 @@ class _Group(QWidget):
         self.auto_switch.setChecked(not manual)
         self._form_widget.setEnabled(manual)
 
+    def set_auto_values(self, values: tuple[float, ...]) -> None:
+        """The engine's current automatic estimate for this group's sliders,
+        in the same order they were added — remembered so switching back to
+        Auto (`_on_toggled`) can restore the display without needing the
+        full `AutoValues` the panel itself holds."""
+        self._auto_values = values
+
     def add_slider(self, label: str, minimum: float, maximum: float, decimals: int) -> SliderField:
         slider = SliderField(minimum, maximum, decimals=decimals, default=minimum)
         slider.live_value_changed.connect(lambda _v: self.live.emit())
         slider.committed.connect(lambda _v: self.committed.emit())
         self.form.addRow(label, slider)
+        self._sliders.append(slider)
         return slider
 
 
@@ -119,10 +138,16 @@ class PrintCalibrationPanel(QWidget):
     """`settled_changed`: request a full-quality preview refresh (any group
     toggled or a field committed). `live_changed`: request a cheap,
     reduced-cost refresh if the caller has one — this panel has none of
-    its own (see module docstring), so callers may simply ignore it."""
+    its own (see module docstring), so callers may simply ignore it.
+    `pick_dmin_requested`: "Pick from image" clicked — the caller (the
+    calibration screen, which owns the preview and the decoded negative)
+    arms picking mode and reports the sampled color back via `dmin_r`/
+    `dmin_g`/`dmin_b`; deciding three RGB values by eye on the rendered
+    positive was reported too hard to do reliably."""
 
     settled_changed = Signal()
     live_changed = Signal()
+    pick_dmin_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -131,6 +156,13 @@ class PrintCalibrationPanel(QWidget):
         self.dmin_r = self.dmin_group.add_slider(t("positive_calibration.dmin_r"), *_DMIN_RANGE)
         self.dmin_g = self.dmin_group.add_slider(t("positive_calibration.dmin_g"), *_DMIN_RANGE)
         self.dmin_b = self.dmin_group.add_slider(t("positive_calibration.dmin_b"), *_DMIN_RANGE)
+        # Added to the group box's own layout, not its `_form_widget` (which
+        # stays disabled while on Auto) — this button is exactly how an
+        # operator gets *into* Manual with a real value, so it must stay
+        # clickable regardless of the group's current Auto/Manual state.
+        self.pick_dmin_button = QPushButton(t("positive_calibration.pick_dmin"))
+        self.pick_dmin_button.clicked.connect(self.pick_dmin_requested.emit)
+        self.dmin_group.group_box.layout().addWidget(self.pick_dmin_button)
 
         self.exposure_group = _Group(t("positive_calibration.group_exposure"))
         self.exposure_shift = self.exposure_group.add_slider(
@@ -208,12 +240,14 @@ class PrintCalibrationPanel(QWidget):
         ]
 
         self.dmin_group.set_manual(override.print_dmin is not None)
+        self.dmin_group.set_auto_values(auto.dmin)
         r, g, b = override.print_dmin or auto.dmin
         self.dmin_r.setValue(r)
         self.dmin_g.setValue(g)
         self.dmin_b.setValue(b)
 
         self.exposure_group.set_manual(override.print_exposure_shift is not None)
+        self.exposure_group.set_auto_values((auto.exposure_shift,))
         self.exposure_shift.setValue(
             override.print_exposure_shift
             if override.print_exposure_shift is not None
@@ -222,6 +256,7 @@ class PrintCalibrationPanel(QWidget):
 
         paper_manual = override.print_contrast is not None
         self.paper_group.set_manual(paper_manual)
+        self.paper_group.set_auto_values((auto.contrast, auto.paper_black, auto.paper_soft_clip))
         self.contrast.setValue(
             override.print_contrast if override.print_contrast is not None else auto.contrast
         )
