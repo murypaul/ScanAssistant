@@ -120,6 +120,7 @@ class CameraController:
         self._fps: int | None = None
         self._last_frame_at = 0.0
         self._read_failures_since: float | None = None
+        self._last_error_signature: tuple[str, tuple[tuple[str, object], ...]] | None = None
         self._download_folder_lock = threading.Lock()
         self._download_folder: Path | None = None
         self._zoom_level_lock = threading.Lock()
@@ -276,6 +277,7 @@ class CameraController:
                 time.sleep(delay)
                 continue
             self._connected = True
+            self._last_error_signature = None
             self._confirm_capture_target()
             if self._on_connected is not None:
                 self._on_connected()
@@ -406,6 +408,7 @@ class CameraController:
                 return False
             return True
         self._read_failures_since = None
+        self._last_error_signature = None
         self._last_frame_at = time.monotonic()
         if self._on_frame is not None:
             self._on_frame(frame)
@@ -424,6 +427,20 @@ class CameraController:
             get_logger().warning("camera backend call failed during cleanup", exc_info=True)
 
     def _emit_error(self, code: str, details: dict[str, object]) -> None:
+        # Deduplicated against the last one reported: the periodic
+        # auto-reconnect poll (`gui.screens.capture`'s own
+        # `_camera_reconnect_timer`) keeps calling `connect()` on a screen
+        # that has no camera UI at all (Positive Review, Project, ...) —
+        # confirmed in real use to write an identical "camera error E-17"
+        # line to the technical log every single poll tick, forever, while
+        # genuinely disconnected, with nothing new for an operator to act
+        # on. `_last_error_signature` is cleared on the next success
+        # (`_handle_connect`/`_read_and_emit_frame`), so a real state
+        # change — reconnected, then dropped again — is still reported.
+        signature = (code, tuple(sorted(details.items())))
+        if signature == self._last_error_signature:
+            return
+        self._last_error_signature = signature
         get_logger().warning("camera error %s: %s", code, details)
         if self._on_error is not None:
             self._on_error(CameraError(code=code, details=details))
