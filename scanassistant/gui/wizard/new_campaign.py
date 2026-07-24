@@ -61,6 +61,7 @@ class IdentityPage(QWizardPage):
     """Step 1: identity."""
 
     template_loaded = Signal(object)  # Campaign
+    mode_changed = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -74,6 +75,16 @@ class IdentityPage(QWizardPage):
         self.description_edit.setFixedHeight(60)
         self.operator_edit = QLineEdit()
         self.institution_edit = QLineEdit()
+
+        # Structural, locked once capture starts (like `media_type`) — decides
+        # whether the Framing/Exports steps are even shown (`nextId()`).
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem(t("wizard.step1.mode_full"), "full")
+        self.mode_combo.addItem(t("wizard.step1.mode_simple"), "simple")
+        self.mode_combo.currentIndexChanged.connect(lambda _: self.mode_changed.emit())
+        self.mode_hint = QLabel(t("wizard.step1.mode_hint"))
+        self.mode_hint.setProperty("role", "secondary")
+        self.mode_hint.setWordWrap(True)
 
         # Clones every setting *except* identity (name/description must stay
         # unique per campaign) and folders/CSV (instance-specific): framing,
@@ -89,6 +100,8 @@ class IdentityPage(QWizardPage):
         form.addRow(t("wizard.step1.description"), self.description_edit)
         form.addRow(t("wizard.step1.operator"), self.operator_edit)
         form.addRow(t("wizard.step1.institution"), self.institution_edit)
+        form.addRow(t("wizard.step1.mode"), self.mode_combo)
+        form.addRow("", self.mode_hint)
         form.addRow("", clone_button)
         form.addRow("", self.clone_label)
 
@@ -514,8 +527,14 @@ class SummaryPage(QWizardPage):
 
     def initializePage(self) -> None:
         w = self._wizard
+        mode_label = (
+            t("wizard.step1.mode_simple")
+            if w.identity_page.mode_combo.currentData() == "simple"
+            else t("wizard.step1.mode_full")
+        )
         lines = [
             f"{t('wizard.step1.name')}: {w.identity_page.name_edit.text()}",
+            f"{t('wizard.step1.mode')}: {mode_label}",
             f"{t('wizard.step2.location')}: {w.folders_page.root}",
             f"{t('wizard.step2.watched_folder')}: {w.folders_page.watched_folder_edit.text()}",
             f"{t('wizard.step3.csv_path')}: {w.csv_page.csv_path}",
@@ -546,15 +565,26 @@ class NewCampaignWizard(QWizard):
 
         self.addPage(self.identity_page)
         self.addPage(self.folders_page)
-        self.addPage(self.csv_page)
-        self.addPage(self.framing_page)
-        self.addPage(self.exports_page)
-        self.addPage(self.metadata_page)
+        self._csv_page_id = self.addPage(self.csv_page)
+        self._framing_page_id = self.addPage(self.framing_page)
+        self._exports_page_id = self.addPage(self.exports_page)
+        self._metadata_page_id = self.addPage(self.metadata_page)
         self.addPage(SummaryPage(self))
 
         self.result_campaign: CreatedCampaign | None = None
         self._template: Campaign | None = None
         self.identity_page.template_loaded.connect(self._apply_template)
+
+    def nextId(self) -> int:
+        # Simple mode has no use for Framing/Exports (both stay forced off,
+        # see `_build_campaign`) — skipped outright rather than shown
+        # disabled, per Règle 4 (peu d'écrans, peu de clics).
+        if (
+            self.currentId() == self._csv_page_id
+            and self.identity_page.mode_combo.currentData() == "simple"
+        ):
+            return self._metadata_page_id
+        return super().nextId()
 
     def _apply_template(self, template: Campaign) -> None:
         """ "Clone settings from…" (step 1): pre-fills every other page.
@@ -563,6 +593,9 @@ class NewCampaignWizard(QWizard):
         are specific to this new campaign, never cloned.
         """
         self._template = template
+        self.identity_page.mode_combo.setCurrentIndex(
+            self.identity_page.mode_combo.findData(template.mode)
+        )
         self.csv_page.apply_template(template)
         self.framing_page.apply_template(template)
         self.exports_page.apply_template(template)
@@ -640,5 +673,15 @@ class NewCampaignWizard(QWizard):
         campaign.iptc.copyright = self.metadata_page.copyright_edit.text().strip()
         campaign.iptc.collection = self.metadata_page.collection_edit.text().strip()
         campaign.iptc.keywords = self.metadata_page.keywords
+
+        campaign.mode = self.identity_page.mode_combo.currentData()
+        if campaign.mode == "simple":
+            # Forced regardless of what the (possibly skipped, possibly
+            # template-inherited) Framing/Exports pages hold — `mode` is the
+            # single source of truth `Campaign.validate()` checks against.
+            campaign.framing.enabled = False
+            campaign.exports.tiff.enabled = False
+            campaign.exports.jpeg_master.enabled = False
+            campaign.exports.jpeg_positive.enabled = False
 
         return campaign

@@ -337,6 +337,18 @@ class CaptureScreen(QWidget):
         self._pending_conflict: NameConflictDetected | None = None
         self._capture_trigger_deadline: float | None = None
         self._picking_white_balance = False
+        # `QLineEdit` leaves Return/Enter unaccepted after emitting
+        # `returnPressed` (so a dialog's default button can still react to
+        # it) — Qt then propagates that same key event up to this widget's
+        # own `keyPressEvent`, which maps bare Return to `finalize_current`
+        # in the CAPTURE context. By the time it arrives here, the field
+        # that just handled it (`go_to_name_edit`/`rename_edit`) has already
+        # been hidden by the very same `_submit_*` call, so checking its
+        # visibility/focus no longer catches it. Set immediately before
+        # closing the field, consumed as the very first thing `keyPressEvent`
+        # does — otherwise looking a name up, or renaming, silently
+        # finalizes whatever image happens to be on screen as a side effect.
+        self._suppress_next_capture_key = False
         # Carries `CaptureSession.session_history()` forward across a
         # stop/start capture-mode cycle (`self` — unlike `self.session` — is
         # never recreated during the app's lifetime), keyed by campaign root
@@ -388,6 +400,11 @@ class CaptureScreen(QWidget):
         self.go_to_name_edit.setVisible(False)
         self.go_to_name_edit.setPlaceholderText(t("capture.go_to_name_placeholder"))
         self.go_to_name_edit.returnPressed.connect(self._submit_go_to_name)
+
+        # Capture ▸ Rename current image… (menu-only, no shortcut — 04 §7/06 §12).
+        self.rename_edit = QLineEdit()
+        self.rename_edit.setVisible(False)
+        self.rename_edit.returnPressed.connect(self._submit_rename)
 
         # Name conflict panel: inline, never a popup — 1/Rename,
         # 2/Replace (button, explicit confirmation), 3/Rename existing;
@@ -490,6 +507,7 @@ class CaptureScreen(QWidget):
         layout.addWidget(self.stage_header_widget)
         layout.addWidget(self.preview_area, 1)
         layout.addWidget(self.go_to_name_edit)
+        layout.addWidget(self.rename_edit)
         layout.addWidget(self.conflict_panel)
         layout.addWidget(self.warning_banner_widget)
         layout.addWidget(self.critical_banner)
@@ -1309,6 +1327,7 @@ class CaptureScreen(QWidget):
             and event.key() == Qt.Key.Key_Tab
             and self._pending_conflict is None
             and not (self.go_to_name_edit.isVisible() and self.go_to_name_edit.hasFocus())
+            and not (self.rename_edit.isVisible() and self.rename_edit.hasFocus())
             and "Tab" in self._shortcuts[CAPTURE].values()
         ):
             self.keyPressEvent(event)
@@ -1316,11 +1335,27 @@ class CaptureScreen(QWidget):
         return super().event(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        # See `_suppress_next_capture_key`'s own comment: this is the same
+        # Return key event a text field's `returnPressed` already acted on,
+        # arriving here because `QLineEdit` leaves it unaccepted.
+        if self._suppress_next_capture_key:
+            self._suppress_next_capture_key = False
+            event.accept()
+            return
+
         # Context priority order: text field > conflict > capture. Single
         # handler, no scattered `QShortcut` instances.
         if self.go_to_name_edit.isVisible() and self.go_to_name_edit.hasFocus():
             if event.key() == Qt.Key.Key_Escape:
                 self._close_go_to_name()
+                event.accept()
+                return
+            super().keyPressEvent(event)
+            return
+
+        if self.rename_edit.isVisible() and self.rename_edit.hasFocus():
+            if event.key() == Qt.Key.Key_Escape:
+                self._close_rename()
                 event.accept()
                 return
             super().keyPressEvent(event)
@@ -1932,6 +1967,7 @@ class CaptureScreen(QWidget):
         if self.session is None:
             return
         name = self.go_to_name_edit.text().strip()
+        self._suppress_next_capture_key = True
         self._close_go_to_name()
         if not name:
             return
@@ -1941,6 +1977,42 @@ class CaptureScreen(QWidget):
             self._set_status(t("capture.status_unknown_name", name=name))
             return
         self._refresh_banner()
+
+    # --- rename (menu-only, "Capture ▸ Rename current image…") -------------
+
+    def rename_current_image(self) -> None:
+        if self.session is None or self.session.state.current_image is None:
+            return
+        current = self.session.state.current_image.assigned_name
+        self.rename_edit.setText(current)
+        self.rename_edit.selectAll()
+        self.rename_edit.setVisible(True)
+        self.rename_edit.setFocus()
+
+    def _close_rename(self) -> None:
+        self.rename_edit.setVisible(False)
+        self.rename_edit.clear()
+        self.setFocus()
+
+    def _submit_rename(self) -> None:
+        if self.session is None:
+            return
+        new_name = self.rename_edit.text().strip()
+        self._suppress_next_capture_key = True
+        self._close_rename()
+        if not new_name:
+            return
+        try:
+            self.session.rename_current(new_name)
+        except ValueError as exc:
+            self._set_status(str(exc))
+            return
+        self._refresh_banner()
+        self._load_preview_known_frame(
+            self.session.state.current_image.assigned_name,
+            self.session.state.current_image.extension,
+            self.session.state.current_image.framing,
+        )
 
     # --- name conflict -----------------------------------------------------
 

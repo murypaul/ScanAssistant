@@ -42,6 +42,7 @@ from scanassistant.core.session import CaptureSession
 from scanassistant.gui.dialogs.preferences import PreferencesDialog
 from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.screens.capture import CaptureScreen
+from scanassistant.gui.screens.capture_simple import SimpleCaptureScreen
 from scanassistant.gui.screens.home import HomeScreen
 from scanassistant.gui.screens.positive_review import PositiveReviewScreen
 from scanassistant.gui.screens.project import ProjectScreen
@@ -94,6 +95,8 @@ def _build_shortcuts_text(shortcuts: dict[str, dict[str, str]]) -> str:
         f"  {c['reject']}  Reject the current image",
         f"  {c['rotate']}  Rotate 90° (Shift+{c['rotate']}: the other way)",
         f"  {c['go_to_name']}  Go to name",
+        f"  {c['rename_current']}  Rename current image (simple capture mode only —"
+        " full mode: Capture menu)",
         f"  {c['recompute_frame']}  Recompute frame",
         f"  {c['positive_preview']}  Positive preview",
         f"  {c['master_preview']}  Master preview",
@@ -160,16 +163,29 @@ class MainWindow(QMainWindow):
 
         # Real background thread for exports: without it, regenerating a
         # slow export synchronously (manual crop confirm, rotation...)
-        # freezes the whole window (DECISIONS.md I-92/I-98).
-        self.capture_screen = CaptureScreen(
+        # freezes the whole window (DECISIONS.md I-92/I-98). Two screens,
+        # built once and kept for the app's lifetime like everything else
+        # here — which one `self.capture_screen` points to is decided per
+        # campaign (`_on_start_capture`, on `campaign.mode`), not per class:
+        # every other reference in this file keeps addressing plain
+        # `self.capture_screen`, unaware there even are two.
+        self._full_capture_screen = CaptureScreen(
             export_executor=ThreadedExportExecutor(),
             shortcuts=self._shortcuts,
             camera_config=context.config.camera,
             persist_camera_config=lambda: save_config(context.config),
         )
-        self.capture_screen.stopped.connect(self._on_capture_stopped)
-        self.capture_screen.queue_changed.connect(self._refresh_export_queue_panel)
-        self.capture_screen.queue_changed.connect(self._refresh_history_panel)
+        self._simple_capture_screen = SimpleCaptureScreen(
+            export_executor=ThreadedExportExecutor(),
+            shortcuts=self._shortcuts,
+            camera_config=context.config.camera,
+            persist_camera_config=lambda: save_config(context.config),
+        )
+        for screen in (self._full_capture_screen, self._simple_capture_screen):
+            screen.stopped.connect(self._on_capture_stopped)
+            screen.queue_changed.connect(self._refresh_export_queue_panel)
+            screen.queue_changed.connect(self._refresh_history_panel)
+        self.capture_screen = self._full_capture_screen
 
         self.statistics_screen = StatisticsScreen()
         self.positive_review_screen = PositiveReviewScreen()
@@ -178,7 +194,8 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         self._stack.addWidget(self.home_screen)
         self._stack.addWidget(self.project_screen)
-        self._stack.addWidget(self.capture_screen)
+        self._stack.addWidget(self._full_capture_screen)
+        self._stack.addWidget(self._simple_capture_screen)
         self._stack.addWidget(self.positive_review_screen)
         self.setCentralWidget(self._stack)
 
@@ -310,7 +327,6 @@ class MainWindow(QMainWindow):
         self.action_rename = self._add_action(
             self.capture_menu, t("menu.capture_rename"), None, None
         )
-        self.action_rename.setEnabled(False)  # Capture ▸ Rename current image: not implemented yet
         self.action_go_to_name = self._add_action(
             self.capture_menu, t("menu.capture_go_to_name"), None, None
         )
@@ -323,6 +339,7 @@ class MainWindow(QMainWindow):
             self.action_pause_resume,
             self.action_finalize,
             self.action_reject,
+            self.action_rename,
             self.action_go_to_name,
             self.action_release_camera,
         ):
@@ -475,7 +492,10 @@ class MainWindow(QMainWindow):
         # is a `QMessageBox`, out of place here even on manual request.
         self.action_check_updates.setEnabled(False)
         self.action_preferences.setEnabled(False)
-        self._set_capture_docks_available(True)
+        # Export queue / history / positive settings only mean anything in
+        # full mode — simple mode never queues an export or produces a
+        # positive to adjust.
+        self._set_capture_docks_available(self.capture_screen is self._full_capture_screen)
         self.capture_screen.setFocus()
 
     def _show_positive_review(self) -> None:
@@ -818,6 +838,7 @@ class MainWindow(QMainWindow):
         "action_pause_resume",
         "action_finalize",
         "action_reject",
+        "action_rename",
         "action_go_to_name",
     )
 
@@ -851,6 +872,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, t("capture.cannot_start_title"), error)
             return
 
+        self.capture_screen = (
+            self._simple_capture_screen if campaign.mode == "simple" else self._full_capture_screen
+        )
         self.capture_screen.start(
             campaign=campaign,
             state=state,
@@ -904,6 +928,7 @@ class MainWindow(QMainWindow):
                 self.capture_screen.toggle_pause,
                 self.capture_screen.finalize_current,
                 self.capture_screen.reject_current_image,
+                self.capture_screen.rename_current_image,
                 self.capture_screen.open_go_to_name,
             ),
             strict=True,
@@ -949,6 +974,7 @@ class MainWindow(QMainWindow):
                 self.capture_screen.toggle_pause,
                 self.capture_screen.finalize_current,
                 self.capture_screen.reject_current_image,
+                self.capture_screen.rename_current_image,
                 self.capture_screen.open_go_to_name,
             ),
             strict=True,

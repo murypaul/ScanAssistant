@@ -37,6 +37,9 @@ DEFAULT_SHORTCUTS: dict[str, dict[str, str]] = {
         "master_preview": "T",
         "cycle_preview": "K",
         "go_to_name": "Ctrl+G",
+        # Simple capture mode only (`gui.screens.capture_simple`) — full
+        # mode keeps rename menu-only, no shortcut (04 §7/06 §12).
+        "rename_current": "N",
         "trigger_capture": "Space",
         "pause_resume": "Tab",
         "toggle_live_view": "L",

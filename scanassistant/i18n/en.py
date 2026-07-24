@@ -180,6 +180,7 @@ STRINGS: dict[str, str] = {
     "preferences.shortcut_master_preview": "Master preview",
     "preferences.shortcut_cycle_preview": "Cycle preview (negative → positive → master)",
     "preferences.shortcut_go_to_name": "Go to name",
+    "preferences.shortcut_rename_current": "Rename current image (simple capture mode)",
     "preferences.shortcut_trigger_capture": "Trigger the camera remotely",
     "preferences.shortcut_pause_resume": "Pause / Resume",
     "preferences.shortcut_toggle_live_view": "Toggle live view",
@@ -318,6 +319,14 @@ STRINGS: dict[str, str] = {
     "wizard.step1.operator": "Operator",
     "wizard.step1.institution": "Institution",
     "wizard.step1.negative_format": "Negative format (documentary label)",
+    "wizard.step1.mode": "Capture mode",
+    "wizard.step1.mode_full": "Full processing",
+    "wizard.step1.mode_simple": "Simple (RAW only)",
+    "wizard.step1.mode_hint": (
+        "Simple mode only renames and files incoming RAWs — no crop detection, "
+        "no positive, no TIFF/JPEG exports. The Framing and Exports steps are "
+        "skipped."
+    ),
     "wizard.step1.clone_button": "Clone settings from an existing campaign…",
     "wizard.step1.clone_browse_title": "Select an existing campaign folder",
     "wizard.step1.clone_failed_title": "Could not clone settings",
