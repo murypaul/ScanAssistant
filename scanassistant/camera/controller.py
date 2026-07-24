@@ -234,8 +234,7 @@ class CameraController:
                     self._safe_call(lambda: self._backend.set_live_view_zoom_level(level))
                 return live_view_active
             if command is _Command.TRIGGER_CAPTURE:
-                self._handle_trigger()
-                return live_view_active
+                return self._handle_trigger(live_view_active)
         except Exception:  # defensive: a bug here must not kill the thread
             get_logger().exception("camera command %s crashed unexpectedly", command)
         return live_view_active
@@ -315,26 +314,38 @@ class CameraController:
                 return False
         return False
 
-    def _handle_trigger(self) -> None:
+    def _handle_trigger(self, live_view_active: bool) -> bool:
+        """Returns the live-view-active state to carry forward — a real
+        trigger, confirmed in real use, leaves the camera's own live-view
+        feed stale (frames keep arriving without error, but the image
+        itself never changes) until `viewfinder` is explicitly toggled off
+        and back on; doing that by hand (L, L) reliably unstuck it, so a
+        successful trigger now does the same automatically instead of
+        leaving a frozen feed for the operator to notice and fix
+        themselves."""
         if not self._connected:
             self._emit_error(CODE_NOT_DETECTED, {})
-            return
+            return live_view_active
         for delay in _TRIGGER_RETRY_DELAYS_S:
             try:
                 self._backend.trigger_capture()
             except CameraBusyError:
                 if delay is None:
                     self._emit_error(CODE_TRIGGER_FAILED, {"reason": "device_busy"})
-                    return
+                    return live_view_active
                 time.sleep(delay)
                 continue
             except CameraIOError as exc:
                 self._emit_error(CODE_TRIGGER_FAILED, {"reason": str(exc)})
-                return
+                return live_view_active
             break
         if self._on_capture_triggered is not None:
             self._on_capture_triggered()
         self._download_after_trigger()
+        if live_view_active:
+            self._safe_call(self._backend.stop_live_view)
+            return self._handle_start_live_view()
+        return live_view_active
 
     def _download_after_trigger(self) -> None:
         with self._download_folder_lock:

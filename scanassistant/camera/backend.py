@@ -140,6 +140,7 @@ class FakeCameraBackend:
         self.frames_read = 0
         self.downloaded_files: list[Path] = []
         self.zoom_level_requests: list[int] = []
+        self.stop_live_view_calls = 0
         self._start_live_view_attempts = 0
 
     def connect(self) -> None:
@@ -166,6 +167,7 @@ class FakeCameraBackend:
 
     def stop_live_view(self) -> None:
         self.live_view_active = False
+        self.stop_live_view_calls += 1
 
     def set_live_view_zoom_level(self, level: int) -> None:
         self.zoom_level_requests.append(level)
