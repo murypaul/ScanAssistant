@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from scanassistant.camera.backend import CameraBackend, LiveViewFrame
+from scanassistant.camera.backend import is_available as _is_camera_available
 from scanassistant.camera.controller import CameraController
 from scanassistant.camera.errors import CODE_CAPTURE_TIMEOUT as _CODE_CAPTURE_TIMEOUT
 from scanassistant.camera.errors import CODE_NOT_DETECTED as _CODE_NOT_DETECTED
@@ -354,6 +355,11 @@ class CaptureScreen(QWidget):
         self._camera_controller: CameraController | None = None
         self._release_gvfs_claim: Callable[[], None] | None = None
         self.live_view_widget: LiveViewWidget | None = None
+        # Set by `_build_camera` if `camera.enabled` is true but `gphoto2`
+        # isn't actually installed — surfaced once capture actually starts
+        # (`start()`), since the warning banner doesn't exist yet this early
+        # in construction.
+        self._camera_unavailable = False
         if camera_config is not None and camera_config.enabled:
             self._build_camera(camera_config, camera_backend)
 
@@ -534,8 +540,18 @@ class CaptureScreen(QWidget):
         """Constructs the `CameraController` + `LiveViewWidget`, only ever
         called when `camera_config.enabled` — `gphoto2` itself is imported
         here, not at module load time, so a user without a tethered camera
-        never pays the cost of it (or a broken install of it)."""
+        never pays the cost of it (or a broken install of it).
+
+        `camera.enabled` can end up `true` in `config.json` without ever
+        going through Preferences' own install-offer flow (an old config
+        file restored onto a fresh install, a hand edit) — `is_available()`
+        catches that case here too, not just there, so a missing `gphoto2`
+        degrades to "no camera" instead of taking the whole window down
+        before it ever shows."""
         if camera_backend is None:
+            if not _is_camera_available():
+                self._camera_unavailable = True
+                return
             from scanassistant.camera.gphoto_backend import (
                 GphotoCameraBackend,
                 release_gvfs_claim,
@@ -667,6 +683,8 @@ class CaptureScreen(QWidget):
         if not is_exiftool_available(exiftool_executable):
             # Persistent warning: exports will be produced without metadata.
             self._show_warning_banner("A-01", {"message": t("metadata.exiftool_unavailable")})
+        elif self._camera_unavailable:
+            self._show_warning_banner("A-02", {"message": t("capture.camera_unavailable")})
         self._dispatch(self.session.initial_scan())
         self._stabilizing.clear()
         self._loaded_preview_for = None

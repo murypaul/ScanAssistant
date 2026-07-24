@@ -195,6 +195,11 @@ STRINGS: dict[str, str] = {
     ),
     "preferences.camera_install_success": ("Installed. Tethered camera support is now enabled."),
     "preferences.camera_install_failed": ("Could not install the camera package: {error}"),
+    "capture.camera_unavailable": (
+        "Tethered camera is enabled but its package isn't installed in this"
+        " environment — capture continues without it. Install it from"
+        " Preferences ▸ Camera."
+    ),
     "preferences.export_settings": "Export settings…",
     "preferences.import_settings": "Import settings…",
     "preferences.restart_notice": "Settings imported. Restart ScanAssistant to fully apply them.",
