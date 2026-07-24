@@ -573,19 +573,28 @@ class PositiveReviewScreen(QWidget):
         if not self._names:
             self._load_index(-1)
 
-    def _remove_stale_entries_and_select(self, select_name: str | None) -> None:
-        """Cheaper alternative to `refresh_list()` for a single confirm:
-        confirming one image typically drops it out of the current filter
-        (`deferred` → `applied`, most often) without changing anything
-        about every *other* image already in the list — a full
-        `refresh_list()` used to re-read and rescale the on-disk JPEG
-        thumbnail of every visible entry regardless, on every single
-        Confirm (Enter). Recomputes only which names the current category
-        filters still show (state lookup, no image I/O) and removes
-        exactly the row(s) that dropped out, leaving every other row's
-        icon untouched. Names newly *appearing* aren't handled here (rare
-        outside of toggling a filter checkbox, which still goes through
-        the full `refresh_list()`)."""
+    def _remove_stale_entries(self) -> None:
+        """Recomputes which names the current category filters still show
+        (a state/journal lookup, no image I/O) and removes exactly the
+        row(s) that dropped out, leaving every other row's icon untouched
+        — the cheap alternative to a full `refresh_list()` (which used to
+        re-read and rescale the on-disk JPEG thumbnail of every visible
+        entry on every single Confirm). Names newly *appearing* aren't
+        handled here (rare outside of toggling a filter checkbox, which
+        still goes through the full `refresh_list()`).
+
+        Called from two places for two different reasons: right after a
+        confirm (where it usually finds nothing to remove yet — the
+        `POSITIVE_FRAMING` journal entry that actually flips `name`'s
+        category is only written once the background regenerate this
+        screen no longer waits for has genuinely finished, not at
+        submission time), and from `_poll_export_progress`'s own periodic
+        tick, which is what actually catches the removal once that render
+        completes a few seconds later. Skipping the second call was a
+        real regression: a just-confirmed image stayed visible, looking
+        like it still needed review, for the rest of the screen session
+        (and past a restart too, if the render hadn't reached the journal
+        yet when the app closed)."""
         session = self._session
         if session is None:
             return
@@ -602,6 +611,9 @@ class PositiveReviewScreen(QWidget):
             self._names.pop(row)
             self.list_widget.takeItem(row)
             self._pending_thumbnail_refresh.pop(name, None)
+
+    def _remove_stale_entries_and_select(self, select_name: str | None) -> None:
+        self._remove_stale_entries()
         target_row = self._names.index(select_name) if select_name in self._names else 0
         # Forced through -1 first: `takeItem` can leave some *other* row
         # already "current" at the Qt level (the item that slid into the
@@ -1348,13 +1360,17 @@ class PositiveReviewScreen(QWidget):
         last tick (`CaptureSession.collect_export_progress` — journals and
         persists state, submits nothing new) — the counterpart, for this
         screen, of `gui.screens.capture`'s own pump timer doing the same
-        thing on every tick while a session is running. Also retries the
-        thumbnail icon of any name still in `_pending_thumbnail_refresh`
-        (see its own docstring)."""
+        thing on every tick while a session is running. Also removes any
+        name that's since dropped out of the current category filters
+        (`_remove_stale_entries` — a just-confirmed image doesn't actually
+        change category until this later completion, not at submission
+        time) and retries the thumbnail icon of any name still in
+        `_pending_thumbnail_refresh` (see its own docstring)."""
         session = self._session
         if session is None:
             return
         session.collect_export_progress()
+        self._remove_stale_entries()
         if not self._pending_thumbnail_refresh:
             return
         for name, attempts_left in list(self._pending_thumbnail_refresh.items()):
