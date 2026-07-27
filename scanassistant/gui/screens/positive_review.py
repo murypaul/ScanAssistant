@@ -64,7 +64,7 @@ from typing import Any
 import cv2
 import numpy as np
 from PIL import Image
-from PySide6.QtCore import QPointF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPointF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QIcon, QKeyEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -359,6 +359,16 @@ class PositiveReviewScreen(QWidget):
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.list_widget.setWordWrap(True)
         self.list_widget.currentItemChanged.connect(self._on_current_item_changed)
+        # `QAbstractItemView`'s own key handling grabs arrow keys for grid
+        # navigation whenever the list has focus (the normal state after a
+        # click) — without this filter, Ctrl+Left/Right never reaches
+        # `keyPressEvent` below, so the reserved rotation shortcut is
+        # silently unreachable. `eventFilter` re-runs the same
+        # `keyPressEvent` first and only swallows the key if that handled
+        # it, so unreserved keys (Home/End/type-ahead, plain Left/Right,
+        # which stay list navigation) still fall through to the list's own
+        # default behavior untouched.
+        self.list_widget.installEventFilter(self)
 
         self.preview_area = PreviewArea()
         self.preview_area.frame_dragged.connect(self._on_frame_dragged)
@@ -378,10 +388,6 @@ class PositiveReviewScreen(QWidget):
         self.include_dmin_checkbox = QCheckBox(t("positive_review.include_dmin"))
         self.apply_to_selection_button = QPushButton(t("positive_review.apply_to_selection"))
         self.apply_to_selection_button.clicked.connect(self.apply_to_selection)
-
-        self.confirm_button = QPushButton(t("positive_review.confirm_and_next"))
-        self.confirm_button.clicked.connect(self.confirm_current)
-        self.confirm_button.setEnabled(False)
 
         self.status_label = QLabel()
         self.status_label.setProperty("role", "secondary")
@@ -411,7 +417,6 @@ class PositiveReviewScreen(QWidget):
         settings_column.addWidget(self.print_panel)
         settings_column.addWidget(self.redetect_frame_button)
         settings_column.addLayout(propagation_column)
-        settings_column.addWidget(self.confirm_button)
         settings_container = QWidget()
         settings_container.setLayout(settings_column)
         settings_container.setMinimumWidth(280)
@@ -461,13 +466,15 @@ class PositiveReviewScreen(QWidget):
             QApplication.restoreOverrideCursor()
 
     def _update_print_engine_controls_enabled(self) -> None:
-        """Confirm/Apply-to-selection/the tonal panel are only meaningful
-        once the currently-selected image's own print_engine render is
-        actually on screen (`_print_engine_loaded_for == _current_name`) —
-        otherwise they'd act on whatever the previous image left behind."""
+        """Apply-to-selection/the tonal panel are only meaningful once the
+        currently-selected image's own print_engine render is actually on
+        screen (`_print_engine_loaded_for == _current_name`) — otherwise
+        they'd act on whatever the previous image left behind. Confirm
+        (Enter) guards the same condition itself rather than through a
+        disabled button — there's no visible "Confirm" control anymore,
+        navigating away already reviews the image (`_save_pending_edits`)."""
         ready = not self._busy and self._print_engine_loaded_for == self._current_name
         self.print_panel.setEnabled(ready)
-        self.confirm_button.setEnabled(ready)
         self.apply_to_selection_button.setEnabled(ready)
 
     def _run_async(
@@ -700,7 +707,6 @@ class PositiveReviewScreen(QWidget):
             self._current_print_frame_shape = None
             self._auto_values = None
             self._print_engine_loaded_for = None
-            self.confirm_button.setEnabled(False)
             self.apply_to_selection_button.setEnabled(False)
             self.preview_area.show_message(t("positive_review.nothing_to_review"))
             self.status_label.setText("")
@@ -712,11 +718,9 @@ class PositiveReviewScreen(QWidget):
             t("positive_review.reviewing", index=index + 1, total=len(self._names), name=name)
         )
         if _load_master_jpeg(session.paths, name) is None:
-            self.confirm_button.setEnabled(False)
             self.preview_area.show_message(t("positive_review.master_unavailable", name=name))
             self.histogram_widget.set_pixels(None)
             return
-        self.confirm_button.setEnabled(True)
 
         self._print_engine_loaded_for = None
         self._update_print_engine_controls_enabled()
@@ -1416,13 +1420,21 @@ class PositiveReviewScreen(QWidget):
         self._on_print_settings_committed()
 
     def _save_pending_edits(self) -> None:
-        """First flushes a debounced auto-confirm if one is pending (an
-        edit the operator made but the `_CONFIRM_DEBOUNCE_MS` quiet period
+        """The single choke point every way of leaving the current image
+        goes through (navigation, close, switching campaigns): an operator
+        who looked at an image and moved on has reviewed it, whether or not
+        they touched anything — no separate "Confirm" action required.
+
+        First flushes a debounced auto-confirm if one is pending (an edit
+        the operator made but the `_CONFIRM_DEBOUNCE_MS` quiet period
         hasn't elapsed for yet must never be silently dropped just because
         they moved on before it fired, same guarantee `gui.screens.capture`'s
-        own commit timers give). Only without a pending edit does the
-        older, purely-in-memory "remember the in-progress crop, restore it
-        if the operator comes back before confirming" fallback still apply.
+        own commit timers give) — that real edit needs an actual
+        `regenerate_positive` (`_auto_confirm_silently`), the pixels
+        genuinely changed. Otherwise, if a render was actually shown for
+        this image, the cheap path (`_mark_reviewed_without_render`) flips
+        it to reviewed without paying for a RAW decode + density render
+        that would reproduce exactly what's already on disk.
 
         A pending edit is only trusted if it was made against this image's
         own actually-loaded render (`_print_engine_loaded_for == name`) —
@@ -1441,6 +1453,8 @@ class PositiveReviewScreen(QWidget):
             return
         if self._current_print_frame is not None:
             self._pending_print_frames[name] = self._current_print_frame
+        if self._print_engine_loaded_for == name:
+            self._mark_reviewed_without_render(name)
 
     def _on_frame_dragged(self, frame: FrameResult) -> None:
         """`frame` is in the currently *displayed* preview's own coordinate
@@ -1610,6 +1624,44 @@ class PositiveReviewScreen(QWidget):
             content_frame_angle_deg=content_frame_angle_deg,
         )
         self._pending_print_frames.pop(name, None)
+
+    def _mark_reviewed_without_render(self, name: str) -> None:
+        """The operator looked at `name` (its print_engine render was
+        genuinely on screen) and moved on without touching the crop or any
+        tonal control — the pixels already on disk are still correct, so
+        this only needs to flip the journal's `POSITIVE_FRAMING` outcome to
+        `manual` (`CaptureSession.mark_positive_reviewed`), never a real
+        `regenerate_positive` — that would pay for the full RAW decode +
+        density render for zero visual difference, which `_confirm_pending`
+        (a real edit) already routes through `_auto_confirm_silently`
+        instead. Geometry comes straight from what's already on screen
+        (`_current_print_frame`), same conversion `_persist_print_overrides_
+        for_current` uses — nothing here re-reads the journal or re-decodes
+        anything, so it stays cheap enough to run on every plain navigation."""
+        session = self._session
+        if (
+            session is None
+            or self._current_print_frame is None
+            or self._current_print_frame_shape is None
+        ):
+            return
+        full_height, full_width = self._current_print_frame_shape
+        horizontal_flip = session.campaign.exports.jpeg_positive.horizontal_flip
+        frame = self._current_print_frame
+        content_frame_fraction = _print_frame_to_fraction(
+            frame, full_width, full_height, horizontal_flip
+        )
+        content_frame_angle_deg = _print_frame_to_angle_deg(frame, horizontal_flip)
+        session.mark_positive_reviewed(
+            name,
+            x=frame.x,
+            y=frame.y,
+            width=frame.width,
+            height=frame.height,
+            content_frame_fraction=content_frame_fraction,
+            angle_deg=content_frame_angle_deg,
+        )
+        self._pending_thumbnail_refresh[name] = _THUMBNAIL_REFRESH_ATTEMPTS
 
     def _record_confirm(
         self, name: str, before: dict[str, PositiveOverride | None], row: int
@@ -1807,6 +1859,15 @@ class PositiveReviewScreen(QWidget):
         self._run_async(_restore, _on_restored, busy_text=t("positive_review.undo"))
 
     # --- misc ------------------------------------------------------------------
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.list_widget and event.type() == QEvent.Type.KeyPress:
+            key_event = event
+            assert isinstance(key_event, QKeyEvent)
+            self.keyPressEvent(key_event)
+            if key_event.isAccepted():
+                return True
+        return super().eventFilter(watched, event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:

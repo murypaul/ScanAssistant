@@ -201,7 +201,7 @@ Mouse Ctrl+click/Shift+click also multi-selects thumbnails in the grid.
 
 | Key | Action |
 | --- | --- |
-| Enter | Confirm and next — applies the current image's settings, advances in the active filter |
+| Enter | Applies the current image's settings and advances right away, without waiting for you to navigate off it — leaving an image any other way (arrows, clicking another thumbnail, Esc) already reviews it on its own |
 | Ctrl+Left / Ctrl+Right | Rotate the content-frame crop by 0.1° (Shift: 1.0°), bounded to ±45° — same convention as the support-frame rotation in Capture |
 | Up / Down | Previous / next image in the filtered list |
 | Page Up / Page Down | Jump further in the same list |
@@ -368,14 +368,20 @@ redetecting the crop from scratch. The next image in the filtered list is
 also quietly decoded in the background while you're still looking at the
 current one, so moving on often finds it already waiting.
 
-`Enter` (or **Confirm & next**) applies the current image's settings and
-moves to the next one in the filtered list. You don't have to click it for
-every image, though: any real edit (dragging the crop, changing a tone
-setting) auto-confirms on its own, either when you move to another image
-or after a few quiet seconds with no further change — the same behavior
-as adjusting the frame during capture. It runs in the background and never
-blocks you from moving on to the next image, even though the render itself
-takes real time. **Apply to selection** (button, or `Ctrl+Enter`) copies
+There's no separate "Confirm" step: an image you've looked at counts as
+reviewed as soon as you leave it — moving to another image, or closing the
+screen — whether or not you actually changed anything. Any real edit
+(dragging the crop, changing a tone setting) is applied and re-rendered in
+the background at that point, the same behavior as adjusting the frame
+during capture, and never blocks you from moving on to the next image even
+though the render itself takes real time. Leaving an image you didn't
+touch at all is instant — nothing is re-rendered, only the "reviewed" flag
+is recorded, so browsing through an already-good campaign to spot-check it
+costs nothing per image. `Enter` still applies the current image's
+settings and jumps to the next one in the filtered list right away,
+without waiting for you to navigate off it yourself — handy when you do
+want to move fast through a batch of real edits. **Apply to selection**
+(button, or `Ctrl+Enter`) copies
 the current image's tone settings to every other selected image at once —
 useful for a whole roll shot under the same conditions. Dmin is excluded
 from that propagation by default (tick **Include Dmin** to override): it's

@@ -214,7 +214,7 @@ la grille.
 
 | Touche | Action |
 | ------ | ------ |
-| Entrée | Confirmer et suivant — applique les réglages de l'image courante, avance dans le filtre actif |
+| Entrée | Applique les réglages de l'image courante et avance directement, sans attendre que vous la quittiez — quitter une image autrement (flèches, clic sur une autre vignette, Échap) la revoit déjà d'elle-même |
 | Ctrl+← / Ctrl+→ | Fait pivoter le cadre de contenu de 0,1° (Maj : 1,0°), borné à ±45° — même convention que la rotation du cadre support en Capture |
 | Haut / Bas | Image précédente / suivante dans la liste filtrée |
 | Page préc. / Page suiv. | Saut plus large dans la même liste |
@@ -396,15 +396,21 @@ aussi décodée discrètement en arrière-plan pendant que vous regardez encore
 l'image courante, si bien qu'elle est souvent déjà prête au moment de
 passer à la suite.
 
-`Enter` (ou **Confirm & next**) applique les réglages de l'image courante
-et passe à la suivante du filtre actif. Vous n'avez pas besoin de cliquer
-dessus pour chaque image cela dit : tout réglage réellement modifié
-(recadrage glissé, réglage de tonalité changé) se confirme automatiquement
-tout seul, soit en passant à une autre image, soit après quelques secondes
-sans nouvelle modification — le même comportement que l'ajustement du
-cadre pendant la capture. Cela tourne en arrière-plan et ne vous bloque
-jamais pour passer à l'image suivante, même si le rendu lui-même prend un
-temps réel. **Apply to selection** (bouton, ou `Ctrl+Enter`) copie les
+Il n'y a pas d'étape « Confirmer » séparée : une image que vous avez
+regardée compte comme revue dès que vous la quittez — en passant à une
+autre image, ou en fermant l'écran — que vous ayez modifié quelque chose
+ou non. Tout réglage réellement modifié (recadrage glissé, réglage de
+tonalité changé) est appliqué et régénéré en arrière-plan à ce moment-là,
+le même comportement que l'ajustement du cadre pendant la capture, et ne
+vous bloque jamais pour passer à l'image suivante même si le rendu
+lui-même prend un temps réel. Quitter une image que vous n'avez pas
+touchée est instantané — rien n'est régénéré, seul le statut « revue » est
+enregistré, donc parcourir une campagne déjà bonne pour la vérifier ne
+coûte rien par image. `Enter` applique toujours les réglages de l'image
+courante et passe directement à la suivante du filtre actif, sans
+attendre que vous la quittiez vous-même — pratique pour avancer vite sur
+un lot de vraies modifications. **Apply to selection** (bouton, ou
+`Ctrl+Enter`) copie les
 réglages de tonalité de l'image courante vers toutes les autres images
 sélectionnées d'un coup — utile pour toute une pellicule prise dans les
 mêmes conditions. Le Dmin est exclu de cette propagation par défaut

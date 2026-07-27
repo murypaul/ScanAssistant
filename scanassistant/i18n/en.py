@@ -72,7 +72,6 @@ STRINGS: dict[str, str] = {
     "positive_review.category_deferred": "Needs review",
     "positive_review.category_applied": "Applied automatically",
     "positive_review.category_manual": "Already confirmed manually",
-    "positive_review.confirm_and_next": "Confirm && next (Enter)",
     "positive_review.nothing_to_review": "Nothing to review.",
     "positive_review.reviewing": "{name} — {index}/{total}",
     "positive_review.master_unavailable": "Master image unavailable for {name}.",

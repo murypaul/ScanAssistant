@@ -913,19 +913,18 @@ class CaptureSession:
         entry alone. Also updates `state.json` for the image still current —
         once it's moved to history, the journal is the only durable copy."""
         if content_frame is not None:
-            # "manual" (operator-confirmed, `apply_manual_print_overrides`)
-            # is a distinct outcome from "applied" (automatic, confident
-            # detection) — a manually-confirmed image must not keep
-            # reappearing in the "needs review" list. `tonal_flagged`
-            # overrides both: a confident crop
-            # doesn't make an unconfident density/tonal estimate trustworthy
-            # — an operator override of the crop wouldn't have touched the
-            # tonal estimate either, so a flagged tonal render still needs a
-            # look even on an image whose crop was already confirmed.
-            if content_frame.tonal_flagged:
-                outcome = "deferred"
-            elif content_frame.source == "manual":
+            # "manual" (operator-confirmed, either an explicit override or
+            # simply having viewed the image on the calibration screen and
+            # moved on) always wins: once an operator has looked at an
+            # image, it must not keep reappearing in the "needs review"
+            # list just because the automatic tonal estimate is out of its
+            # confidence range — that estimate was already on screen for
+            # the operator to judge. `tonal_flagged` only demotes an
+            # otherwise-automatic ("applied") outcome to "deferred".
+            if content_frame.source == "manual":
                 outcome = "manual"
+            elif content_frame.tonal_flagged:
+                outcome = "deferred"
             else:
                 outcome = "applied"
             state = ContentFramingState(
@@ -958,6 +957,56 @@ class CaptureSession:
                 "angle_deg": state.angle_deg,
             },
         )
+
+    def mark_positive_reviewed(
+        self,
+        name: str,
+        *,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        content_frame_fraction: tuple[float, float, float, float] | None,
+        angle_deg: float,
+    ) -> None:
+        """Marks `name` as operator-reviewed on the calibration screen
+        without a `jpeg_positive` re-render: the operator looked at whatever
+        was already on screen and moved on without changing anything, so
+        the pixels already on disk are still exactly right — only the
+        `POSITIVE_FRAMING` outcome needs to flip to `manual` so the image
+        stops reappearing in the "needs review" list. `x`/`y`/`width`/
+        `height`/`content_frame_fraction`/`angle_deg` are the geometry
+        already shown (the calibration screen's own `_current_print_frame`),
+        not recomputed here — paying for a full RAW decode + density render
+        just to reproduce an unchanged result is exactly what
+        `regenerate_positive` exists to avoid for a real edit."""
+        state = ContentFramingState(
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            outcome="manual",
+            content_frame_fraction=content_frame_fraction,
+            angle_deg=angle_deg,
+        )
+        if self.state.current_image is not None and self.state.current_image.assigned_name == name:
+            self.state.current_image.content_framing = state
+        self.journal.log(
+            "POSITIVE_FRAMING",
+            "manual",
+            image=name,
+            details={
+                "x": state.x,
+                "y": state.y,
+                "width": state.width,
+                "height": state.height,
+                "fill": state.fill,
+                "area_ratio": state.area_ratio,
+                "content_frame_fraction": state.content_frame_fraction,
+                "angle_deg": state.angle_deg,
+            },
+        )
+        self._persist_state()
 
     def _mark_completed_if_ready(self, name: str, events: list[SessionEvent]) -> None:
         if name in self._exports_ready:

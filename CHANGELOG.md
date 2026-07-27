@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.16.0 — 2026-07-27
+
+### New / Changed
+**Positive calibration**
+- There's no separate "Confirm" step anymore: an image reviewed on the
+  calibration screen counts as done as soon as it's left — moving to
+  another image, or closing the screen — whether or not anything was
+  actually changed. Enter still applies the current image's settings and
+  jumps ahead right away, for moving fast through a batch of real edits.
+- Leaving an image untouched is now instant: nothing is re-rendered, only
+  its reviewed status is recorded, so browsing through an already-good
+  campaign to spot-check it costs nothing per image.
+- An image confirmed after fixing its framing no longer keeps showing as
+  still needing review just because the automatic tone estimate stayed
+  uncertain — a confirmed crop is trusted regardless.
+
+### Bug Fixes
+**Positive calibration**
+- Ctrl+Left/Right (rotate the content-frame crop) could be silently
+  swallowed by the thumbnail grid instead of rotating the crop, whenever
+  the grid itself had keyboard focus — the normal state right after
+  clicking a thumbnail.
+- Reopening a campaign later, outside of an active capture session, to
+  review its positives still ran every export synchronously in the
+  background, freezing "Confirm and next" for the length of the render —
+  the same freeze already fixed for an active capture session previously,
+  now fixed for this path too. Reopening the same campaign again in one
+  sitting no longer risks acting on stale project data, and closing the
+  app right after confirming something no longer risks a silent freeze
+  while the export finishes.
+
 ## 1.15.0 — 2026-07-25
 
 ### New / Changed

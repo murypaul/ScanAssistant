@@ -11,6 +11,7 @@ import base64
 import binascii
 import contextlib
 import sys
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, Qt, QTimer
@@ -37,7 +38,8 @@ from scanassistant.app_context import AppContext
 from scanassistant.config import save_config
 from scanassistant.core.export_runner import MasterExportRunner
 from scanassistant.core.fs import RealFileSystem
-from scanassistant.core.queue import ThreadedExportExecutor
+from scanassistant.core.positive_finalize_runner import PositiveFinalizeRunner
+from scanassistant.core.queue import PooledExportExecutor, ThreadedExportExecutor
 from scanassistant.core.session import CaptureSession
 from scanassistant.gui.dialogs.preferences import PreferencesDialog
 from scanassistant.gui.errors import format_business_error
@@ -153,6 +155,19 @@ class MainWindow(QMainWindow):
         self._shutdown_panel: QWidget | None = None
         self._shutdown_label: QLabel | None = None
         self._shutdown_timer: QTimer | None = None
+        # Set only while `closeEvent` is draining `_offline_session` (no
+        # active capture) through the shared shutdown panel — `_poll_shutdown`/
+        # `_finish_shutdown` branch on it instead of always assuming
+        # `capture_screen.session`, the only session either of them used to
+        # know about.
+        self._shutdown_offline_session: CaptureSession | None = None
+        # `_build_offline_session`'s own cache: it now spins up a real
+        # background thread pool (`positive_finalize_executor`), so it must
+        # not be rebuilt from scratch on every Statistics/Positive review
+        # open — that would leak one pool's worth of idle daemon threads per
+        # visit for the life of the process.
+        self._offline_session: CaptureSession | None = None
+        self._offline_session_journal: Journal | None = None
         # Export queue / Session history / Positive settings only make sense
         # during capture — remembers what was open so leaving and returning
         # to the capture screen restores it exactly (`_set_capture_docks_available`).
@@ -688,6 +703,30 @@ class MainWindow(QMainWindow):
             or journal is None
         ):
             return None
+        # Keyed on `journal` identity, not just `paths.root`: `_open_project`
+        # builds a brand new `state`/`inventory`/`journal` from disk on
+        # every open, including a re-open of the exact same campaign — a
+        # root-only key would hand out a session still bound to the stale
+        # objects from the previous time this same campaign was open,
+        # risking reads/writes against a `state.json` nobody else is
+        # looking at anymore.
+        if self._offline_session is not None and self._offline_session_journal is journal:
+            return self._offline_session
+        if self._offline_session is not None:
+            # Never wait for it here: a prior campaign's in-flight
+            # background export can take as long as a real render
+            # (~16.7s+), and blocking the Qt thread on it while opening an
+            # unrelated campaign is exactly the class of freeze this
+            # session's other fixes exist to remove. The pool's own worker
+            # threads are daemons — finishing on their own in the
+            # background is enough, this thread only needs to join them
+            # eventually rather than hold up the GUI doing it.
+            stale_session = self._offline_session
+            threading.Thread(
+                target=stale_session.shutdown_executors,
+                name="scanassistant-offline-session-shutdown",
+                daemon=True,
+            ).start()
         monitor = FolderMonitor(
             Path(campaign.capture.watched_folder or paths.root),
             campaign.capture.extensions,
@@ -696,14 +735,28 @@ class MainWindow(QMainWindow):
             stabilization_timeout_s=campaign.capture.stabilization_timeout_s,
             extra_ignored_suffixes=tuple(campaign.capture.extra_ignored_suffixes),
         )
+        exiftool_executable = self.context.config.paths.exiftool
         export_runner = MasterExportRunner(
             decoder=RawpyDecoder(),
             campaign=campaign,
             paths=paths,
-            metadata_writer=ExifToolMetadataWriter(executable=self.context.config.paths.exiftool),
+            metadata_writer=ExifToolMetadataWriter(executable=exiftool_executable),
             journal=journal,
         )
-        return CaptureSession(
+        # Same dedicated jpeg_positive pool `gui.screens.capture` wires for
+        # the live-capture session — without it, `CaptureSession` falls back
+        # to `InlineExportExecutor`, and every Confirm on the calibration
+        # screen (`regenerate_positive`) runs the ~16.7s render synchronously
+        # inside the call instead of handing it to a background worker,
+        # blocking "Confirm and next" on the full render every time.
+        positive_finalize_runner = PositiveFinalizeRunner(
+            decoder=RawpyDecoder(),
+            campaign=campaign,
+            paths=paths,
+            metadata_writer=ExifToolMetadataWriter(executable=exiftool_executable),
+            journal=journal,
+        )
+        self._offline_session = CaptureSession(
             paths=paths,
             campaign=campaign,
             inventory=inventory,
@@ -712,9 +765,16 @@ class MainWindow(QMainWindow):
             fs=RealFileSystem(),
             monitor=monitor,
             export_runner=export_runner,
+            export_executor=ThreadedExportExecutor(),
+            positive_finalize_runner=positive_finalize_runner,
+            positive_finalize_executor=PooledExportExecutor(
+                worker_count=self.context.config.processing.positive_finalize_workers
+            ),
             disk_warn_gb=self.context.config.thresholds.disk_warn_gb,
             disk_critical_gb=self.context.config.thresholds.disk_critical_gb,
         )
+        self._offline_session_journal = journal
+        return self._offline_session
 
     # --- dock layout (Export queue / Session history / Positive settings) ------
 
@@ -1114,8 +1174,26 @@ class MainWindow(QMainWindow):
         self._save_dock_layout()
 
         if self.capture_screen.session is None:
-            self._release_lock()
-            super().closeEvent(event)
+            if self._offline_session is None:
+                self._release_lock()
+                super().closeEvent(event)
+                return
+            pending = len(self._offline_session.export_queue)
+            if pending == 0:
+                self._offline_session.shutdown_executors()
+                self._release_lock()
+                super().closeEvent(event)
+                return
+            if not self.context.config.processing.drain_on_exit:
+                # Abandon whatever's still in flight rather than block
+                # quitting on it — the pool's own worker threads are
+                # daemons, so they die with the process either way.
+                self._release_lock()
+                super().closeEvent(event)
+                return
+            event.ignore()
+            self._shutdown_offline_session = self._offline_session
+            self._show_shutdown_panel(pending)
             return
 
         pending = self.capture_screen.begin_shutdown()
@@ -1157,7 +1235,11 @@ class MainWindow(QMainWindow):
         self._shutdown_timer = timer
 
     def _poll_shutdown(self) -> None:
-        pending = self.capture_screen.poll_export_progress()
+        if self._shutdown_offline_session is not None:
+            self._shutdown_offline_session.collect_export_progress()
+            pending = len(self._shutdown_offline_session.export_queue)
+        else:
+            pending = self.capture_screen.poll_export_progress()
         if pending == 0:
             self._finish_shutdown(wait_for_exports=True)
             return
@@ -1173,6 +1255,11 @@ class MainWindow(QMainWindow):
         if self._shutdown_panel is not None:
             self._shutdown_panel.close()
             self._shutdown_panel = None
-        self.capture_screen.finish_shutdown(wait_for_exports=wait_for_exports)
+        if self._shutdown_offline_session is not None:
+            if wait_for_exports:
+                self._shutdown_offline_session.shutdown_executors()
+            self._shutdown_offline_session = None
+        else:
+            self.capture_screen.finish_shutdown(wait_for_exports=wait_for_exports)
         self._release_lock()
         self.close()
