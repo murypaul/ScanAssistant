@@ -834,6 +834,60 @@ class CaptureSession:
         self._persist_state()
         return events
 
+    def rotate_reviewed_image(self, name: str, *, direction: int = 1) -> list[SessionEvent]:
+        """Corrects a finalized image's 90° orientation from the positive
+        calibration screen (`direction=1` clockwise, `-1` counter-
+        clockwise, cycling through 0/90/180/270 — same convention as
+        `rotate_current`'s V/Shift+V) — for a rotation missed during
+        capture, caught only once the operator judges tone/framing later.
+        Unlike `apply_manual_print_overrides`/`regenerate_positive`,
+        re-runs all three derivatives (tiff/jpeg_master/jpeg_positive): the
+        support frame's own orientation, unlike a content-frame or tonal
+        change, touches every one of them.
+
+        Any content-frame crop already confirmed for this image is cleared
+        (tonal settings are kept): its fractions are relative to the
+        support frame's own output dimensions, which swap on a 90°/270°
+        change — keeping it would silently misalign the print instead of
+        falling back to a fresh automatic detection.
+
+        Rebuilds the frame from the journal (`core.recovery`), same as
+        `regenerate_positive`; does nothing (empty list) if the RAW or its
+        support frame can't be reconstructed.
+        """
+        context = rebuild_export_context(
+            name, self.paths, self.fs, self.campaign.capture.extensions
+        )
+        if context is None:
+            return []
+        before = context.rotation_deg
+        after = (before + 90 * direction) % 360
+        self.journal.log(
+            "FRAMING",
+            "rotation",
+            image=name,
+            details={"rotation_deg": {"before": before, "after": after}},
+        )
+        existing = load_positive_overrides(self.paths, self.fs).get(name)
+        set_positive_print_overrides(
+            self.paths,
+            self.fs,
+            name,
+            dmin=existing.print_dmin if existing else None,
+            exposure_shift=existing.print_exposure_shift if existing else None,
+            contrast=existing.print_contrast if existing else None,
+            paper_black=existing.print_paper_black if existing else None,
+            paper_soft_clip=existing.print_paper_soft_clip if existing else None,
+            content_frame=None,
+            content_frame_angle_deg=0.0,
+        )
+        context = replace(context, rotation_deg=after)
+        self.enqueue_export_context(name, list(EXPORT_TASK_KINDS), context)
+        events = self._drain_exports(self._new_deadline())
+        events.append(RotationChanged(name=name, rotation_deg=after))
+        self._persist_state()
+        return events
+
     def propagate_print_overrides(
         self, source_name: str, target_names: list[str], *, include_dmin: bool = False
     ) -> list[SessionEvent]:

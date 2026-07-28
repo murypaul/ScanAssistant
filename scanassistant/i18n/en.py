@@ -105,6 +105,7 @@ STRINGS: dict[str, str] = {
     "positive_review.loading": "Loading {name}…",
     "positive_review.rendering": "Updating preview for {name}…",
     "positive_review.regenerating": "Regenerating {name}…",
+    "positive_review.rotating": "Rotating {name}…",
     "positive_review.redetect_frame": "Redetect frame",
     "positive_review.picking_dmin": "Click an unexposed border area of the negative…",
     "positive_calibration.auto": "Auto",

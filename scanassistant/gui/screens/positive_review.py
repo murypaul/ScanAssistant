@@ -260,9 +260,7 @@ class PositiveReviewScreen(QWidget):
         # `id()` is enough to detect the array being replaced (a fresh
         # decode/prefetch landing) since `_linear_cache` never mutates an
         # array in place.
-        self._live_preview_source_cache: (
-            tuple[str, int, np.ndarray, FrameGeometry] | None
-        ) = None
+        self._live_preview_source_cache: tuple[str, int, np.ndarray, FrameGeometry] | None = None
         # A live render already in flight never gets a second one started on
         # top of it (`_run_async` has no cancellation) — a tick arriving
         # meanwhile just marks `_live_render_pending` and gets folded into
@@ -926,7 +924,9 @@ class PositiveReviewScreen(QWidget):
         next_name = self._names[index]
         already_cached = next_name in self._linear_cache
         already_pending = (
-            already_cached or next_name in self._prefetching or next_name in self._pending_decode_names
+            already_cached
+            or next_name in self._prefetching
+            or next_name in self._pending_decode_names
         )
         if already_pending:
             # Already covered (a cache hit, or another decode already in
@@ -1682,6 +1682,39 @@ class PositiveReviewScreen(QWidget):
             item.setIcon(self._thumbnail_icon(name))
         self._pending_thumbnail_refresh[name] = _THUMBNAIL_REFRESH_ATTEMPTS
 
+    def _rotate_current_image(self, *, direction: int = 1) -> None:
+        """V/Shift+V: corrects a 90° orientation missed during capture —
+        the one thing this screen otherwise never touches (the module
+        docstring's "never touches the TIFF/JPEG master" is about the
+        *content*-frame crop tool specifically; this is a distinct,
+        explicit action). Re-runs all three exports
+        (`CaptureSession.rotate_reviewed_image`), so — like Confirm — this
+        is a real (if short) wait, not routed through the silent auto-
+        confirm path. Not on the undo/redo stack (`Ctrl+Z`/`Ctrl+Y`): that
+        stack only ever holds `PositiveOverride` snapshots (tonal/crop),
+        and rotation lives in the journal instead, same as during capture."""
+        session = self._session
+        name = self._current_name
+        if session is None or name is None or self._busy:
+            return
+        if self._print_engine_loaded_for != name:
+            return  # nothing genuine on screen yet for this image
+
+        def _rotate() -> None:
+            session.rotate_reviewed_image(name, direction=direction)
+
+        def _on_rotated(_result: object) -> None:
+            # The journal/linear-decode caches now hold this image's *old*
+            # rotation — dropped so the reload below picks up the new one
+            # instead of silently redisplaying the pre-rotation pixels.
+            self._journal_entries_cache = None
+            self._linear_cache.pop(name, None)
+            self._print_engine_loaded_for = None
+            self._pending_thumbnail_refresh[name] = _THUMBNAIL_REFRESH_ATTEMPTS
+            self._load_print_engine(name)
+
+        self._run_async(_rotate, _on_rotated, busy_text=t("positive_review.rotating", name=name))
+
     def confirm_current(self, *, on_done: Callable[[], None] | None = None) -> None:
         """Applies the current crop/exposure and advances to the next
         flagged image (Enter). The confirmed image no longer drops out of
@@ -1897,7 +1930,11 @@ class PositiveReviewScreen(QWidget):
             self.confirm_current()
             event.accept()
             return
-        if event.key() == Qt.Key.Key_Down:
+        if event.key() in (Qt.Key.Key_Down, Qt.Key.Key_Space):
+            # Space mirrors Down here (browse without confirming) rather
+            # than Capture's own Space (remote shutter trigger, unrelated
+            # action) — same key, chosen for the same "keep moving forward
+            # with one hand" muscle memory across the two screens.
             self._move(1)
             event.accept()
             return
@@ -1911,6 +1948,18 @@ class PositiveReviewScreen(QWidget):
             return
         if event.key() == Qt.Key.Key_PageUp:
             self._move(-6)
+            event.accept()
+            return
+        # V/Shift+V: the support frame's own 90° orientation, same key and
+        # clockwise/counter-clockwise convention as Capture's rotate
+        # shortcut — for a rotation missed there, caught only once judging
+        # tone here. Distinct from Ctrl+Left/Right below (the content-frame
+        # crop's fine deskew).
+        if event.key() == Qt.Key.Key_V and not bool(
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            self._rotate_current_image(direction=-1 if shift else 1)
             event.accept()
             return
         # Ctrl+Left/Right: deskew the content-frame crop — same reserved,
@@ -1969,9 +2018,7 @@ class PositiveReviewScreen(QWidget):
         self.histogram_widget.raise_()
 
 
-def _print_frame_from_rect(
-    rect: tuple[int, int, int, int], angle_deg: float = 0.0
-) -> FrameResult:
+def _print_frame_from_rect(rect: tuple[int, int, int, int], angle_deg: float = 0.0) -> FrameResult:
     """Wraps a print_engine content-frame rect (already in the preview's
     own display coordinate space — `PrintResult.content_frame` from a
     `crop_to_content=False` render) as a draggable `FrameResult` overlay
