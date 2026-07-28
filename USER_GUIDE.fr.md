@@ -225,7 +225,7 @@ la grille.
 | V / Maj+V | Fait pivoter l'image de 90° dans le sens horaire / antihoraire — pour une orientation manquée en Capture, corrigée une fois qu'on juge la tonalité ici. Réexporte aussi le TIFF/JPEG master, pas seulement le positif |
 | Ctrl+← / Ctrl+→ | Fait pivoter le cadre de contenu de 0,1° (Maj : 1,0°), borné à ±45° — même convention que la rotation du cadre support en Capture |
 | Haut / Bas | Image précédente / suivante dans la liste filtrée |
-| Espace | Image suivante dans la liste filtrée (comme Bas) — sans confirmer |
+| Espace | Image suivante dans la liste filtrée (comme Bas) — sans confirmer. Ignoré si pressé à nouveau avant que l'image précédente ne soit réellement apparue, pour qu'un double appui impatient ne saute pas une image |
 | Page préc. / Page suiv. | Saut plus large dans la même liste |
 | Ctrl+A | Sélectionner toutes les images du filtre actif |
 | Ctrl+Entrée | Appliquer à la sélection — copie les réglages de tonalité de l'image courante vers la sélection (Dmin exclu par défaut) |

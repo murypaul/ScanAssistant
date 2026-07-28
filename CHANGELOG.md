@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.18.1 — 2026-07-28
+
+### Bug Fixes
+**Positive calibration**
+- Space, pressed twice in quick succession before the first image had
+  actually appeared, could silently skip a second one — now ignored
+  until the previous move's image is genuinely on screen.
+
 ## 1.18.0 — 2026-07-28
 
 ### New / Changed

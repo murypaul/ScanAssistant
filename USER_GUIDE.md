@@ -210,7 +210,7 @@ Mouse Ctrl+click/Shift+click also multi-selects thumbnails in the grid.
 | V / Shift+V | Rotate the image 90° clockwise / counter-clockwise — for an orientation missed during Capture, corrected once you're judging tone here. Re-exports the TIFF/JPEG master as well as the positive |
 | Ctrl+Left / Ctrl+Right | Rotate the content-frame crop by 0.1° (Shift: 1.0°), bounded to ±45° — same convention as the support-frame rotation in Capture |
 | Up / Down | Previous / next image in the filtered list |
-| Space | Next image in the filtered list (same as Down) — without confirming |
+| Space | Next image in the filtered list (same as Down) — without confirming. Ignored if pressed again before the previous image has actually appeared, so an impatient double-press can't skip one |
 | Page Up / Page Down | Jump further in the same list |
 | Ctrl+A | Select every image in the active filter |
 | Ctrl+Enter | Apply to selection — copies the current image's tone settings to the selection (Dmin excluded by default) |

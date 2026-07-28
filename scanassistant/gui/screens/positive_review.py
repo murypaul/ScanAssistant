@@ -1930,11 +1930,21 @@ class PositiveReviewScreen(QWidget):
             self.confirm_current()
             event.accept()
             return
-        if event.key() in (Qt.Key.Key_Down, Qt.Key.Key_Space):
+        if event.key() == Qt.Key.Key_Space:
             # Space mirrors Down here (browse without confirming) rather
             # than Capture's own Space (remote shutter trigger, unrelated
             # action) — same key, chosen for the same "keep moving forward
-            # with one hand" muscle memory across the two screens.
+            # with one hand" muscle memory across the two screens. Ignored
+            # while the *previous* move's image hasn't actually reached the
+            # screen yet (operator-reported): Space is the key an impatient
+            # operator leans on hardest, and a second press fired before
+            # visible confirmation of the first must not silently skip an
+            # image — Down keeps its own, unthrottled behavior.
+            if self._print_engine_loaded_for == self._current_name:
+                self._move(1)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Down:
             self._move(1)
             event.accept()
             return
