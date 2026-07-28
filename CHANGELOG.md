@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.19.1 — 2026-07-28
+
+### Bug Fixes
+**Positive calibration**
+- Picking Dmin from the image could leave the screen permanently stuck
+  showing "Rendering…", with nothing clickable, until the app was
+  restarted — two full renders could end up running at once (the group's
+  Auto-to-Manual switch already renders on its own for a first pick, and
+  a second one was queued right behind it), and two at once could hang
+  indefinitely. Committing a setting no longer starts a new render while
+  one is still in flight, whatever triggered it.
+
 ## 1.19.0 — 2026-07-28
 
 ### New / Changed

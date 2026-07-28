@@ -270,6 +270,20 @@ class PositiveReviewScreen(QWidget):
         # throughput, not a fixed timer interval.
         self._live_render_busy = False
         self._live_render_pending = False
+        # Same coalescing guard as `_live_render_busy`/`_live_render_pending`
+        # above, for committed (full-quality) renders instead of live-drag
+        # ones: `render_print_from_linear` calls into OpenCV (GrabCut/
+        # warpAffine), which isn't safe to run concurrently from two
+        # `_CallWorker` threads at once — two committed renders fired back
+        # to back (e.g. the Dmin picker's Auto→Manual toggle plus its own
+        # explicit re-render, or two quick slider commits) could each start
+        # their own worker before the other's finished, and one could hang
+        # forever in native code with no Python exception to catch or log,
+        # leaving the screen permanently busy-locked (operator report,
+        # 2026-07-28 — a real campaign session stuck ~20 minutes, only a
+        # restart recovered it).
+        self._committed_render_busy = False
+        self._committed_render_pending = False
         self._workers: set[_CallWorker] = set()
         self._foreground_workers: set[_CallWorker] = set()
         self._busy = False
@@ -1138,11 +1152,22 @@ class PositiveReviewScreen(QWidget):
 
         Reuses `self._current_print_frame` (not the auto-detector) for the
         crop: a tonal-only commit must not silently move or reset a crop
-        the operator already dragged into place."""
+        the operator already dragged into place.
+
+        Coalesced like `_on_print_settings_live`: a commit arriving while
+        one is already rendering just marks `_committed_render_pending`
+        and returns — the next render, once the in-flight one finishes,
+        reads the panel's values fresh. Never two `_CallWorker`s running
+        `render_print_from_linear` (OpenCV GrabCut/warpAffine) at once —
+        that combination isn't safe to run concurrently and could hang a
+        worker thread indefinitely with nothing to catch or log."""
         if self._current_name is None:
             return
         if self._print_engine_loaded_for != self._current_name:
             return  # nothing genuine on screen yet for this image
+        if self._committed_render_busy:
+            self._committed_render_pending = True
+            return
         name = self._current_name
         cached = self._linear_cache.get(name)
         if cached is None:
@@ -1177,11 +1202,26 @@ class PositiveReviewScreen(QWidget):
             )
 
         def _on_rendered(result: print_engine.PrintResult) -> None:
-            if name != self._current_name:
-                return  # operator moved on while this was rendering
-            self._apply_render_result_to_preview(result)
+            self._committed_render_busy = False
+            pending = self._committed_render_pending
+            self._committed_render_pending = False
+            if name == self._current_name:
+                self._apply_render_result_to_preview(result)
+            if pending:
+                self._on_print_settings_committed()
 
-        self._run_async(_render, _on_rendered, busy_text=t("positive_review.rendering", name=name))
+        def _on_failed(message: str) -> None:
+            self._committed_render_busy = False
+            self._committed_render_pending = False
+            QMessageBox.warning(self, t("positive_review.title"), message)
+
+        self._committed_render_busy = True
+        self._run_async(
+            _render,
+            _on_rendered,
+            busy_text=t("positive_review.rendering", name=name),
+            on_failure=_on_failed,
+        )
 
     def _live_preview_source(
         self, name: str, linear: np.ndarray, frame_in_output: FrameGeometry
@@ -1408,16 +1448,24 @@ class PositiveReviewScreen(QWidget):
         # _on_toggled`), which re-renders and persists from whatever the
         # sliders hold at that instant — setting them after would commit
         # the stale, pre-pick value instead of the one just sampled.
+        was_manual = self.print_panel.dmin_group.is_manual()
         self.print_panel.dmin_r.setValue(r)
         self.print_panel.dmin_g.setValue(g)
         self.print_panel.dmin_b.setValue(b)
         self.print_panel.dmin_group.set_manual(True)
-        # `set_manual(True)` is a no-op (no signal) if the group was
-        # already Manual from a previous edit — these two guarantee the
-        # freshly-picked value still gets rendered/persisted either way;
-        # a harmless duplicate render when the toggle did fire.
         self._mark_edited()
-        self._on_print_settings_committed()
+        # `set_manual(True)` above already fired `committed`/`settled_
+        # changed` (hence a render) on its own if the group was still on
+        # Auto — the operator's first pick on a given image, by far the
+        # common case. Calling `_on_print_settings_committed` again there
+        # queued a second full render right behind the first one: on a
+        # real campaign image (operator report, 2026-07-28) each render is
+        # several seconds, so that "harmless duplicate" was actually
+        # doubling the wait on every first pick. Only genuinely needed when
+        # the group was already Manual, where `set_manual(True)` is a
+        # no-op and never rendered anything.
+        if was_manual:
+            self._on_print_settings_committed()
 
     def _save_pending_edits(self) -> None:
         """The single choke point every way of leaving the current image
