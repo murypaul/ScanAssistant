@@ -114,7 +114,10 @@ which is enough to catch an exposure problem at a glance.
 review — its RAW, sidecar, and any already-produced exports all move
 together, in place. In *Simple* mode, where renaming on the fly is the
 main way an operator corrects a name, it's bound to a dedicated key (`N`)
-instead of living menu-only.
+instead of living menu-only. Renaming onto a name that's already in use
+opens the same [name conflict](#name-conflicts) panel a naming clash on
+an incoming file gets — reusing a name on purpose (redoing a bad shot)
+is a normal thing to do, not a dead end.
 
 If a capture arrives once every inventory row has already been used, the
 same rename field opens automatically, empty, right on the capture
@@ -408,14 +411,17 @@ reading positive is affected.
 
 If the name the app is about to assign already exists on disk, capture
 pauses on that file (later shots keep queuing up behind it) and a panel
-appears:
+appears. The same panel also opens if you manually rename the current
+image (**Rename current image…**/`N`) onto a name already in use:
 
-- **Rename current image** — give the incoming file a different name
-  (defaults to `<NAME>_BIS`); the original inventory row stays pending.
+- **Rename current image** — give the incoming (or being-renamed) file a
+  different name (defaults to `<NAME>_BIS`); the original inventory row
+  stays pending.
 - **Replace existing** — move every existing file under that name (RAW and
-  exports) into `BACKUP/`, then ingest the new one under the original name.
+  exports) into `BACKUP/`, then ingest (or rename) the new one under the
+  original name.
 - **Rename existing file** — rename the existing files instead (defaults to
-  `<NAME>_OLD`) and ingest the new one under the original name.
+  `<NAME>_OLD`) and ingest (or rename) the new one under the original name.
 
 Nothing is ever silently overwritten.
 

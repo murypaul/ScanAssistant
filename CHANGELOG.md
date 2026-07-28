@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.18.0 — 2026-07-28
+
+### New / Changed
+**Capture**
+- Renaming the current image onto a name already used on disk (redoing a
+  bad shot under its original name) now offers the same duplicate-name
+  choices — replace, back up the existing files under another name, or
+  use a different name instead — rather than a dead end.
+
+**Positive calibration**
+- Space now moves to the next image, same as Down — the same "keep moving
+  with one hand" habit as Capture's own Space, even though the two keys
+  trigger unrelated actions in each screen.
+- V/Shift+V rotates the image 90° clockwise/counter-clockwise, for an
+  orientation missed during capture and only caught here while judging
+  tone. Re-exports the TIFF/JPEG master along with the positive.
+
+**Installation & Updates**
+- If an update is blocked by uncommitted local changes to installed
+  files, you're now offered to discard them and update anyway — naming
+  exactly which files would be lost — instead of being stuck on a bare
+  error with no way forward.
+
+### Bug Fixes
+**Capture**
+- The automatic frame detection's margin could occasionally push the crop
+  rectangle past the image's own edges on its own, with no action from
+  the operator. Manual dragging past the edge on purpose is unaffected.
+- Correcting an earlier capture from the "Session history" panel, then
+  leaving and reopening the capture screen (or restarting mid-campaign),
+  could show it out of order — ahead of a later capture that was never
+  touched.
+- A capture made right before leaving the capture screen, before its
+  preview had time to load, still exported correctly but could silently
+  disappear from "Session history".
+- Resolving a name conflict by typing a name and pressing Enter could
+  accidentally finalize whatever image was currently under review, as an
+  unrelated side effect.
+
 ## 1.17.0 — 2026-07-28
 
 ### New / Changed

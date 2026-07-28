@@ -123,7 +123,10 @@ négatif brut et son histogramme.
 son RAW, son sidecar et tout export déjà produit sont déplacés ensemble,
 en place. En mode *Simple*, où renommer à la volée est le principal
 moyen de corriger un nom, cette action est liée à une touche dédiée (`N`)
-plutôt que réservée au menu.
+plutôt que réservée au menu. Renommer vers un nom déjà utilisé ouvre le
+même panneau de [conflit de nom](#conflits-de-noms) qu'un fichier entrant
+en conflit — reprendre un nom volontairement (rattraper une mauvaise
+prise) est une opération normale, pas une impasse.
 
 Si une prise arrive alors que toutes les lignes de l'inventaire ont déjà
 été utilisées, ce même champ de renommage s'ouvre automatiquement, vide,
@@ -442,16 +445,19 @@ positif de lecture change.
 
 Si le nom que l'application s'apprête à attribuer existe déjà sur disque,
 la capture se met en pause sur ce fichier (les prises suivantes
-s'accumulent en attente) et un panneau apparaît :
+s'accumulent en attente) et un panneau apparaît. Le même panneau s'ouvre
+aussi si vous renommez manuellement l'image courante (**Rename current
+image…**/`N`) vers un nom déjà utilisé :
 
-- **Rename current image** — donner un autre nom au fichier entrant
-  (`<NAME>_BIS` par défaut) ; la ligne d'inventaire d'origine reste en
-  attente.
+- **Rename current image** — donner un autre nom au fichier entrant (ou en
+  cours de renommage) (`<NAME>_BIS` par défaut) ; la ligne d'inventaire
+  d'origine reste en attente.
 - **Replace existing** — déplacer tous les fichiers existants sous ce nom
-  (RAW et exports) vers `BACKUP/`, puis ingérer le nouveau sous le nom
-  d'origine.
+  (RAW et exports) vers `BACKUP/`, puis ingérer (ou renommer) le nouveau
+  sous le nom d'origine.
 - **Rename existing file** — renommer les fichiers existants à la place
-  (`<NAME>_OLD` par défaut) et ingérer le nouveau sous le nom d'origine.
+  (`<NAME>_OLD` par défaut) et ingérer (ou renommer) le nouveau sous le nom
+  d'origine.
 
 Rien n'est jamais écrasé silencieusement.
 
