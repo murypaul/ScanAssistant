@@ -44,6 +44,7 @@ from scanassistant.core.events import (
 )
 from scanassistant.core.fs import FileSystem
 from scanassistant.core.ingest import find_conflicting_path, ingest_file
+from scanassistant.core.positive_review import reconstruct_content_framing_state
 from scanassistant.core.queue import (
     EXPORT_TASK_KINDS,
     ContentFrameOutcome,
@@ -57,7 +58,7 @@ from scanassistant.core.queue import (
     InlineExportExecutor,
     PooledExportExecutor,
 )
-from scanassistant.core.recovery import rebuild_export_context
+from scanassistant.core.recovery import read_journal_entries, rebuild_export_context
 from scanassistant.journal.journal import Journal
 from scanassistant.metadata.xmp_sidecar import render_raw_sidecar
 from scanassistant.project.campaign import Campaign
@@ -219,6 +220,42 @@ class CaptureSession:
         self._last_autosurveillance_check: float | None = None
         self._csv_write_suspended = False
         self._inventory_mtime = self._safe_mtime(paths.inventory_csv)
+        self._reconcile_export_queue_context()
+
+    def _reconcile_export_queue_context(self) -> None:
+        """`self.export_queue`, just loaded from `state.json`, holds tasks
+        without an `ExportContext` — `ExportQueueEntry` only ever persists
+        `(name, kinds)`, never the geometry. Left as-is, such a task can't
+        regenerate anything when it runs (`ExportRunner.run` now returns an
+        explicit failure for it rather than a silent no-op).
+
+        Rebuilds each pending entry's context from the journal before
+        anything is submitted to a worker — the same reconstruction
+        `core.crash_recovery._rebuild_pending_export_queue` already does
+        after an unclean shutdown, but run unconditionally on every
+        construction: a queue can just as well be non-empty after an
+        ordinary stop/reopen, since exports drain on a background thread
+        and nothing currently guarantees the queue is flushed before the
+        campaign closes.
+        """
+        entries = self.export_queue.to_state_entries()
+        if not entries:
+            return
+        journal_entries = read_journal_entries(self.paths, self.fs)
+        for entry in entries:
+            self.export_queue.cancel(entry.name)
+        for entry in entries:
+            context = rebuild_export_context(
+                entry.name,
+                self.paths,
+                self.fs,
+                self.campaign.capture.extensions,
+                entries=journal_entries,
+            )
+            if context is None:
+                continue  # RAW gone or never framed: nothing to rebuild
+            self.enqueue_export_context(entry.name, entry.tasks, context)
+        self.state.export_queue = self.export_queue.to_state_entries()
 
     # --- main loop -------------------------------------------------------
 
@@ -485,9 +522,14 @@ class CaptureSession:
             events.extend(self._save_inventory())
         self._persist_state()
 
-        self._enqueue_exports(name)
-        events.extend(self._drain_exports(deadline))
-        self._persist_state()
+        # No export queued here: the archival tiff/jpeg_master/jpeg_positive
+        # only need to reflect the *final* framing/rotation the operator
+        # settles on, never an intermediate one — queuing now (the default,
+        # un-detected frame) only to immediately re-queue again once auto-
+        # detection or a manual edit lands would waste a full render that's
+        # thrown away before it's ever looked at. `validate_current()` is
+        # the single point that actually queues, once, right before the
+        # image is left for good.
         return events
 
     def _write_raw_sidecar(self, name: str, source_path: Path) -> None:
@@ -1025,7 +1067,15 @@ class CaptureSession:
         return self.validate_current()
 
     def validate_current(self) -> list[SessionEvent]:
-        """Validates the current image — used on next-image arrival, capture exit, and shutdown."""
+        """Validates the current image — used on next-image arrival, capture exit, and shutdown.
+
+        The single point that actually queues the archival exports (tiff/
+        jpeg_master/jpeg_positive): `apply_frame()`/`set_rotation()` only
+        ever update `current.framing`/`.rotation_deg` and the journal, so by
+        the time this runs the operator has already settled on a final
+        value — queuing here, once, avoids a full re-render for every
+        intermediate detection/edit made while still reviewing the image.
+        """
         current = self.state.current_image
         if current is None:
             return []
@@ -1047,6 +1097,8 @@ class CaptureSession:
         events: list[SessionEvent] = [
             ImageStateChanged(name=name, previous="IN_REVIEW", new="VALIDATED")
         ]
+        self._enqueue_exports(name)
+        events.extend(self._drain_exports(self._new_deadline()))
         self._mark_completed_if_ready(name, events)
 
         self._record_session_history(current)
@@ -1303,9 +1355,6 @@ class CaptureSession:
     def rotate_current(self, *, direction: int = 1) -> list[SessionEvent]:
         """Rotates the current image 90° (`direction=1` clockwise, `-1`
         counter-clockwise), cycling through 0/90/180/270 (V key / Shift+V).
-
-        Any export tasks already queued are cancelled and re-queued with the
-        new rotation.
         """
         current = self.state.current_image
         if current is None or current.state != "IN_REVIEW":
@@ -1314,10 +1363,13 @@ class CaptureSession:
 
     def set_rotation(self, rotation_deg: int) -> list[SessionEvent]:
         """Sets the current image's rotation to an absolute value in one shot
-        — re-queuing exports and journaling exactly once, regardless of how
-        many V/Shift+V presses it took to get there (the GUI debounces
-        `rotate_current` and calls this once the operator settles on a
-        value, rather than re-exporting after every intermediate press).
+        — journaling exactly once, regardless of how many V/Shift+V presses
+        it took to get there (the GUI debounces `rotate_current` and calls
+        this once the operator settles on a value, rather than once per
+        intermediate press). Never triggers an export itself — the archival
+        tiff/jpeg_master/jpeg_positive only need to reflect whatever
+        rotation the operator has settled on when the image is actually
+        left; `validate_current()` is the single point that queues them.
         """
         current = self.state.current_image
         if current is None or current.state != "IN_REVIEW":
@@ -1331,7 +1383,8 @@ class CaptureSession:
         current.rotation_deg = after
         # The content frame (if any) was computed against the previous
         # rotation and no longer lines up with the pixels it would be
-        # cropping — cleared until the re-queued export below recomputes it.
+        # cropping — cleared until the export queued at validate time
+        # recomputes it.
         current.content_framing = None
         self.journal.log(
             "FRAMING",
@@ -1340,12 +1393,6 @@ class CaptureSession:
             details={"rotation_deg": {"before": before, "after": after}},
         )
         events: list[SessionEvent] = [RotationChanged(name=name, rotation_deg=after)]
-
-        self._export_pending_kinds.pop(name, None)
-        self.export_queue.cancel(name)
-        self._exports_ready.discard(name)
-        self._enqueue_exports(name)
-        events.extend(self._drain_exports(self._new_deadline()))
 
         self._persist_state()
         return events
@@ -1372,6 +1419,11 @@ class CaptureSession:
         Knows nothing about `imaging.framing` (primitive types only — `core`
         stays independent from the imaging pipeline); the caller (GUI)
         translates a `FrameResult` into plain parameters before calling this.
+        Never triggers an export itself: `validate_current()` is the single
+        point that queues the archival tiff/jpeg_master/jpeg_positive, once,
+        against whatever frame the operator has settled on by the time the
+        image is actually left — not against every intermediate detection
+        or edit along the way.
         """
         current = self.state.current_image
         if current is None or current.assigned_name != name or current.state != "IN_REVIEW":
@@ -1388,7 +1440,8 @@ class CaptureSession:
         )
         # The content frame (if any) was computed against the previous
         # support frame and no longer lines up with the pixels it would be
-        # cropping — cleared until the re-queued export below recomputes it.
+        # cropping — cleared until the export queued at validate time
+        # recomputes it.
         current.content_framing = None
         details: dict[str, object] = {
             "x": x,
@@ -1405,17 +1458,6 @@ class CaptureSession:
         events: list[SessionEvent] = [
             FramingApplied(name=name, source=source, level=level, confidence=confidence)
         ]
-        # Always invalidates and re-queues, idempotently: the first call
-        # (auto/raw) arrives *after* the synchronous export already
-        # triggered by `_ingest_one()` with the default frame (frame
-        # detection runs asynchronously via `PreviewWorker`), so it must
-        # also regenerate the pixels — otherwise the detected frame would
-        # never actually make it into the export.
-        self._export_pending_kinds.pop(name, None)
-        self.export_queue.cancel(name)
-        self._exports_ready.discard(name)
-        self._enqueue_exports(name)
-        events.extend(self._drain_exports(self._new_deadline()))
 
         self._persist_state()
         return events
@@ -1741,6 +1783,11 @@ class CaptureSession:
             state="IN_REVIEW",
             rotation_deg=entry.rotation_deg,
             framing=replace(entry.framing),
+            # `SessionHistoryEntry` never carries this — reconstructed from
+            # the journal instead, so a reopened image shows the same crop
+            # the operator last saw, instead of silently resetting to
+            # "deferred" (unset).
+            content_framing=reconstruct_content_framing_state(self.paths, self.fs, name),
         )
         self.journal.log("CAPTURE", "reopened_for_correction", image=name)
         self._persist_state()

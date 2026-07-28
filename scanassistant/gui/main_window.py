@@ -825,6 +825,13 @@ class MainWindow(QMainWindow):
 
     def _on_history_image_activated(self, name: str) -> None:
         self.capture_screen.reopen_image_for_correction(name)
+        # The click just handed keyboard focus to `history_panel` (a
+        # separate dock widget, not a `capture_screen` descendant) — every
+        # capture shortcut (V/Shift+V, R, arrows...) lives in
+        # `CaptureScreen.keyPressEvent` alone, so without this the operator
+        # has to click back into the preview before any of them respond
+        # again, even though the reopened image is already showing there.
+        self.capture_screen.setFocus()
 
     # --- metadata ----------------------------------------------------------
 

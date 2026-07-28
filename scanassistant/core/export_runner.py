@@ -67,8 +67,16 @@ class MasterExportRunner:
     def run(self, task: ExportTask) -> ExportResult | ExportFailure | None:
         context = task.context
         if context is None:
-            # Task rebuilt cold from `state.json` without a context: not
-            # regenerable here.
+            # `CaptureSession` rebuilds every queued task's context from the
+            # journal before it ever reaches a worker (`ExportContext` is
+            # never persisted to `state.json` as-is) — a task still missing
+            # one here means that reconstruction genuinely couldn't find
+            # anything to rebuild from (RAW gone, or no frame ever
+            # journaled for this name). An explicit failure, not a silent
+            # no-op: the image was previously being treated as if this
+            # export had succeeded, with nothing on disk to show for it and
+            # no way for the operator to notice.
+            message = "no regenerable frame for this export (RAW missing or never framed)"
             self._journal.log(
                 "METADATA",
                 "missing",
@@ -77,7 +85,7 @@ class MasterExportRunner:
                 details={"reason": "no_export_context", "kind": task.kind},
                 result="error",
             )
-            return None
+            return ExportFailure(code="E-06", message=message)
 
         try:
             master = self._developed_master(task.name, context)

@@ -70,6 +70,11 @@ class PositiveFinalizeRunner:
     def run(self, task: ExportTask) -> ExportResult | ExportFailure | None:
         context = task.context
         if context is None:
+            # See `core.export_runner.MasterExportRunner.run`'s own comment:
+            # a task still missing its context here means reconstruction
+            # from the journal genuinely found nothing to rebuild — an
+            # explicit failure, not a silent no-op treated as success.
+            message = "no regenerable frame for this export (RAW missing or never framed)"
             self._journal.log(
                 "METADATA",
                 "missing",
@@ -78,7 +83,7 @@ class PositiveFinalizeRunner:
                 details={"reason": "no_export_context", "kind": task.kind},
                 result="error",
             )
-            return None
+            return ExportFailure(code="E-06", message=message)
 
         try:
             path, outcome = self._render(task.name, context)

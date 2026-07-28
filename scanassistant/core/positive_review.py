@@ -16,6 +16,7 @@ from __future__ import annotations
 from scanassistant.core.fs import FileSystem
 from scanassistant.core.recovery import read_journal_entries
 from scanassistant.project.layout import CampaignPaths
+from scanassistant.project.state import ContentFramingState
 
 
 def list_positives_by_category(
@@ -62,3 +63,33 @@ def reconstruct_content_frame_fraction(
         raw_fraction = details.get("content_frame_fraction")
         fraction = tuple(raw_fraction) if raw_fraction is not None else None  # type: ignore[assignment]
     return fraction
+
+
+def reconstruct_content_framing_state(
+    paths: CampaignPaths, fs: FileSystem, name: str
+) -> ContentFramingState | None:
+    """The full content-frame state last applied/confirmed for `name` — same
+    source and fields as `core.session._log_positive_framing` journals,
+    all of them instead of just the fraction (`reconstruct_content_frame_fraction`).
+    `None` if `name` has no `POSITIVE_FRAMING` entry at all (never exported
+    as `jpeg_positive`). Used to restore what an operator would already see
+    on screen when reopening an already-reviewed image, e.g.
+    `CaptureSession.reopen_for_correction`."""
+    state: ContentFramingState | None = None
+    for entry in read_journal_entries(paths, fs):
+        if entry.get("type") != "POSITIVE_FRAMING" or entry.get("image") != name:
+            continue
+        details = entry.get("details") or {}
+        raw_fraction = details.get("content_frame_fraction")
+        state = ContentFramingState(
+            x=int(details.get("x", 0)),
+            y=int(details.get("y", 0)),
+            width=int(details.get("width", 0)),
+            height=int(details.get("height", 0)),
+            fill=float(details.get("fill", 0.0)),
+            area_ratio=float(details.get("area_ratio", 0.0)),
+            outcome=str(entry.get("action", "deferred")),
+            content_frame_fraction=tuple(raw_fraction) if raw_fraction is not None else None,
+            angle_deg=float(details.get("angle_deg", 0.0)),
+        )
+    return state

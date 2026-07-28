@@ -178,10 +178,14 @@ Aucun mode à activer — toujours disponible sur l'aperçu négatif brut
 | Glisser un bord ou un coin (souris) | Redimensionner depuis ce côté/coin |
 | Glisser l'intérieur (souris) | Déplacer tout le cadre |
 
-Chaque modification se stabilise en un seul export après une courte pause
-(ou immédiatement, au relâchement de la souris) — rien à valider ni à
-annuler. En cas d'erreur, glissez le cadre en arrière ou appuyez sur `C`
-pour revenir à la détection automatique.
+Rien à valider ni à annuler — l'aperçu se met à jour immédiatement, et
+l'export réel (TIFF/JPEG maître/positif de lecture) n'est produit qu'une
+seule fois, à partir du cadrage sur lequel vous vous êtes arrêté, au
+moment de passer à l'image suivante ou d'accepter/rejeter l'image en
+cours. Retoucher un cadrage plusieurs fois avant de passer à la suite ne
+produit jamais plus qu'un seul export final. En cas d'erreur, glissez le
+cadre en arrière ou appuyez sur `C` pour revenir à la détection
+automatique.
 
 ### Balance des blancs
 

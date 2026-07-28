@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 
 from scanassistant.core.completeness import missing_export_kinds
 from scanassistant.core.ingest import INGEST_TEMP_PREFIX
-from scanassistant.core.queue import EXPORT_TASK_KINDS, ExportContext
 from scanassistant.core.recovery import read_journal_entries, rebuild_export_context
 from scanassistant.core.session import CaptureSession
 from scanassistant.project.inventory import STATUS_COLUMN
@@ -131,10 +130,11 @@ def _detect_duplicate_leftovers(session: CaptureSession) -> list[str]:
 def _finalize_in_review_image(session: CaptureSession) -> str | None:
     """IN_REVIEW at crash time, RAW present, `todo` row → validated by default.
 
-    Builds its `ExportContext` straight from `current.framing`, not
-    `core.recovery.rebuild_export_context` — no positive-review override can
+    `validate_current()` itself now queues the export straight from
+    `current.framing`/`.rotation_deg` — no positive-review override can
     exist for this image yet, since it was still `IN_REVIEW` (never
-    exported once, let alone manually reviewed) when the crash happened."""
+    exported once, let alone manually reviewed) when the crash happened, so
+    there is nothing left for this function to build itself."""
     current = session.state.current_image
     if current is None or current.state != "IN_REVIEW":
         return None
@@ -143,18 +143,6 @@ def _finalize_in_review_image(session: CaptureSession) -> str | None:
     if not session.fs.exists(raw_path):
         return None  # should never happen (verified ingestion); assert nothing, just be safe
 
-    context = ExportContext(
-        raw_path=raw_path,
-        extension=current.extension,
-        source_file=current.source_file,
-        rotation_deg=current.rotation_deg,
-        x=current.framing.x,
-        y=current.framing.y,
-        width=current.framing.width,
-        height=current.framing.height,
-        angle_deg=current.framing.angle_deg,
-    )
-    session.enqueue_export_context(name, list(EXPORT_TASK_KINDS), context)
     session.validate_current()
     return name
 

@@ -60,6 +60,14 @@ STRINGS: dict[str, str] = {
     "statistics.remaining": "Remaining: {count}",
     "statistics.rejected": "Rejected: {count}",
     "statistics.errors": "Errors: {count}",
+    "statistics.explanation": (
+        "Completeness check compares every image marked done against the files "
+        "actually on disk (TIFF/JPEG master/JPEG positive) and lists anything "
+        "missing. Regenerate selection re-exports the checked rows from their "
+        "last known framing and rotation — it runs in the background and can "
+        "take from a few seconds to over a minute per image, so it's normal "
+        "for the list to keep showing an image for a while after starting."
+    ),
     "statistics.completeness_check": "Completeness check",
     "statistics.regenerate_selection": "Regenerate selection",
     "statistics.column_name": "Name",
@@ -67,6 +75,14 @@ STRINGS: dict[str, str] = {
     "statistics.raw_missing": "RAW file missing",
     "statistics.no_gaps": "No gaps found — every completed image has all its files.",
     "statistics.unavailable": "Statistics are unavailable: no campaign is open.",
+    "statistics.regenerating": (
+        "Regenerating {remaining} of {total} — please wait, this runs in the background."
+    ),
+    "statistics.regeneration_complete": "Regeneration complete.",
+    "statistics.regeneration_stopped_with_gaps_left": (
+        "Regeneration stopped: {remaining} of {total} could not be produced — check the "
+        "RAW files and framing history for those rows."
+    ),
     "positive_review.title": "Positive calibration",
     "positive_review.back_hint": "Positive calibration — Esc: back to the project",
     "positive_review.category_deferred": "Needs review",

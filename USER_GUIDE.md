@@ -167,10 +167,12 @@ you back to it automatically if the master preview was open):
 | Drag a border or corner (mouse) | Resize from that side/corner |
 | Drag the interior (mouse) | Move the whole frame |
 
-Every edit settles into a single export after you pause for a moment (or
-immediately, on mouse release) — no need to confirm or cancel anything. If
-an edit goes wrong, drag it back or press `C` to fall back to the
-automatic detection.
+No need to confirm or cancel anything — the preview updates immediately,
+and the actual export (TIFF/JPEG master/reading positive) is produced once,
+from whatever crop you've settled on, when you move on to the next image
+or accept/reject the current one. Adjusting a crop several times before
+moving on never produces more than that one final export. If an edit goes
+wrong, drag it back or press `C` to fall back to the automatic detection.
 
 ### White balance
 

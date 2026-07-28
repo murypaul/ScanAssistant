@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.17.0 — 2026-07-28
+
+### New / Changed
+**Capture**
+- Adjusting a crop or rotation several times before moving on to the next
+  image no longer produces one full export per adjustment — the archival
+  TIFF, JPEG master, and reading positive are now produced once, from
+  whatever you've settled on, exactly when you leave the image (accept or
+  reject it). No change to what gets exported or when a crop/rotation edit
+  is saved, only to when the heavier files actually get written.
+- Reopening an already-processed image from the capture screen's "Session
+  history" panel now returns keyboard focus to the preview immediately —
+  V/Shift+V and every other capture shortcut used to stay unresponsive
+  until clicking back into the preview by hand.
+- Reopening an already-reviewed image for correction now also restores the
+  positive's content crop as it was last seen, instead of resetting it.
+
+**Project & Campaign**
+- The Statistics screen's "Regenerate selection" now shows real progress
+  (how many images are left, and when it's actually done) instead of
+  refreshing the list instantly against work that hadn't run yet — the
+  list used to look like nothing had happened at all. Added a permanent
+  explanation of what the completeness check and regeneration actually do.
+
+### Bug Fixes
+**Capture**
+- A still-pending export queued in the background could silently lose its
+  crop/rotation and be marked done without ever producing a file, if the
+  campaign was closed and reopened (or the app restarted) before it
+  finished draining — not just after a crash. It's now rebuilt from the
+  campaign's own history before running; a truly unrecoverable case (the
+  source RAW gone, or never framed) now shows up as an error instead of
+  vanishing silently.
+
 ## 1.16.0 — 2026-07-27
 
 ### New / Changed
