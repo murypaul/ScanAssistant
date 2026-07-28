@@ -77,7 +77,32 @@ def check_for_update(app_dir: Path) -> UpdateCheckResult:
     )
 
 
-def apply_update(app_dir: Path, python_executable: str) -> UpdateApplyResult:
+def list_local_changes(app_dir: Path) -> list[str]:
+    """Tracked files with uncommitted changes (staged or not) — what
+    `apply_update(discard_local_changes=True)` would permanently discard.
+    Untracked files are excluded (`git status --porcelain`'s `??` lines):
+    `git pull --ff-only` never refuses because of those alone, so
+    discarding them would offer no benefit while adding real risk. Empty
+    on any git failure (no checkout, no repo) — a caller can't usefully
+    distinguish "nothing to discard" from "can't tell" here, since either
+    means offering to discard would be meaningless.
+    """
+    try:
+        status = _run_git(app_dir, "status", "--porcelain")
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if status.returncode != 0:
+        return []
+    return [
+        line[3:].strip()
+        for line in status.stdout.splitlines()
+        if line and not line.startswith("??")
+    ]
+
+
+def apply_update(
+    app_dir: Path, python_executable: str, *, discard_local_changes: bool = False
+) -> UpdateApplyResult:
     """`git pull --ff-only` then reinstalls dependencies in place.
 
     Runs in `app_dir` (the current installation, never a different
@@ -86,7 +111,22 @@ def apply_update(app_dir: Path, python_executable: str) -> UpdateApplyResult:
     Stops at the first failure — a failed `pull` never triggers `pip
     install`, and `--ff-only` refuses to touch the working tree rather
     than force anything.
+
+    `discard_local_changes`: for the operator-confirmed retry after a
+    first attempt was blocked by uncommitted local changes
+    (`list_local_changes`) — `git reset --hard HEAD` first, discarding
+    them but never touching which commit is checked out (a genuinely
+    diverged/unpushed-commits checkout, a different problem, still stops
+    the following `--ff-only` pull exactly as before).
     """
+    if discard_local_changes:
+        try:
+            reset = _run_git(app_dir, "reset", "--hard", "HEAD")
+        except (OSError, subprocess.SubprocessError) as exc:
+            return UpdateApplyResult(success=False, output="", error=str(exc))
+        if reset.returncode != 0:
+            return UpdateApplyResult(success=False, output=reset.stdout, error=reset.stderr.strip())
+
     try:
         pull = _run_git(app_dir, "pull", "--ff-only")
     except (OSError, subprocess.SubprocessError) as exc:

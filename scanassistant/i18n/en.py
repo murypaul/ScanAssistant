@@ -306,6 +306,10 @@ STRINGS: dict[str, str] = {
     "update.available_question": "An update is available ({local} → {remote}). Update now?",
     "update.apply_success": "Update applied. Restart ScanAssistant to use the new version.",
     "update.apply_failed": "Update failed: {error}",
+    "update.local_changes_blocking": (
+        "The update was blocked by uncommitted local changes to:\n\n{files}\n\n"
+        "Discard them and update anyway? This cannot be undone.\n\n{error}"
+    ),
     "home.update_available": (
         "An update is available ({local} → {remote}) — Help ▸ Check for updates."
     ),

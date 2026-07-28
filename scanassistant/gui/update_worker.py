@@ -36,13 +36,20 @@ class UpdateCheckWorker(QThread):
 class UpdateApplyWorker(QThread):
     finished_apply = Signal(object)  # UpdateApplyResult
 
-    def __init__(self, app_dir: Path, python_executable: str) -> None:
+    def __init__(
+        self, app_dir: Path, python_executable: str, *, discard_local_changes: bool = False
+    ) -> None:
         super().__init__()
         self._app_dir = app_dir
         self._python_executable = python_executable
+        self._discard_local_changes = discard_local_changes
 
     def run(self) -> None:
-        result: UpdateApplyResult = apply_update(self._app_dir, self._python_executable)
+        result: UpdateApplyResult = apply_update(
+            self._app_dir,
+            self._python_executable,
+            discard_local_changes=self._discard_local_changes,
+        )
         self.finished_apply.emit(result)
 
 

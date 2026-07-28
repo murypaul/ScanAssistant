@@ -71,7 +71,7 @@ from scanassistant.project.errors import ScanAssistantError
 from scanassistant.project.inventory import Inventory
 from scanassistant.project.layout import CampaignPaths
 from scanassistant.project.lock import ProjectLock, acquire_lock
-from scanassistant.updater import UpdateApplyResult, UpdateCheckResult
+from scanassistant.updater import UpdateApplyResult, UpdateCheckResult, list_local_changes
 from scanassistant.watcher.monitor import FolderMonitor
 
 
@@ -1151,9 +1151,11 @@ class MainWindow(QMainWindow):
                 t("home.update_available", local=result.local_commit, remote=result.remote_commit)
             )
 
-    def _apply_update(self) -> None:
+    def _apply_update(self, *, discard_local_changes: bool = False) -> None:
         self.action_check_updates.setEnabled(False)
-        worker = UpdateApplyWorker(self._app_dir(), sys.executable)
+        worker = UpdateApplyWorker(
+            self._app_dir(), sys.executable, discard_local_changes=discard_local_changes
+        )
         worker.finished_apply.connect(self._on_update_apply_finished)
         self._update_apply_worker = worker
         worker.start()
@@ -1163,10 +1165,35 @@ class MainWindow(QMainWindow):
         self.action_check_updates.setEnabled(True)
         if result.success:
             QMessageBox.information(self, t("update.check_title"), t("update.apply_success"))
-        else:
-            QMessageBox.warning(
-                self, t("update.check_title"), t("update.apply_failed", error=result.error)
+            return
+
+        # A blocked `--ff-only` pull because of the operator's own
+        # uncommitted local changes is common enough (a stray edit, a file
+        # this same installation wrote outside the app's own data dirs) to
+        # deserve its own recovery path — offered only when that's actually
+        # what's blocking it, never for a network/disk/other failure, and
+        # always naming the exact files that would be discarded so the
+        # operator isn't agreeing to lose something unnamed.
+        changed_files = list_local_changes(self._app_dir())
+        if changed_files:
+            shown = changed_files[:10]
+            listing = "\n".join(f"  {name}" for name in shown)
+            if len(changed_files) > len(shown):
+                listing += f"\n  … and {len(changed_files) - len(shown)} more"
+            answer = QMessageBox.warning(
+                self,
+                t("update.check_title"),
+                t("update.local_changes_blocking", error=result.error, files=listing),
+                QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
             )
+            if answer == QMessageBox.StandardButton.Discard:
+                self._apply_update(discard_local_changes=True)
+            return
+
+        QMessageBox.warning(
+            self, t("update.check_title"), t("update.apply_failed", error=result.error)
+        )
 
     # --- clean shutdown (processing.drain_on_exit) -----------------------------
 
