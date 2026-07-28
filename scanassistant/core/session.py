@@ -1734,18 +1734,24 @@ class CaptureSession:
     # --- session history (correction side panel) --------------------------
 
     def _record_session_history(self, current: CurrentImageState) -> None:
-        """Snapshots a just-validated image, replacing any earlier entry for it."""
+        """Snapshots a just-validated image, updating its earlier entry in
+        place if there is one — a correction re-finalizing an image already
+        in history must not bump it to the newest slot, or the panel's
+        chronological order breaks the moment the operator fixes anything
+        but the very last capture."""
         name = current.assigned_name
-        self._session_history = [e for e in self._session_history if e.name != name]
-        self._session_history.append(
-            SessionHistoryEntry(
-                name=name,
-                source_file=current.source_file,
-                extension=current.extension,
-                rotation_deg=current.rotation_deg,
-                framing=replace(current.framing),
-            )
+        entry = SessionHistoryEntry(
+            name=name,
+            source_file=current.source_file,
+            extension=current.extension,
+            rotation_deg=current.rotation_deg,
+            framing=replace(current.framing),
         )
+        for i, existing in enumerate(self._session_history):
+            if existing.name == name:
+                self._session_history[i] = entry
+                return
+        self._session_history.append(entry)
 
     def session_history(self) -> list[SessionHistoryEntry]:
         """Images finalized during this run, oldest first (history side panel)."""
