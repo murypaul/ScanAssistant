@@ -21,7 +21,11 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-from scanassistant.core.errors import IllegalTransitionError, IntegrityCheckFailedError
+from scanassistant.core.errors import (
+    IllegalTransitionError,
+    IntegrityCheckFailedError,
+    NameConflictError,
+)
 from scanassistant.core.events import (
     CriticalError,
     CriticalResolved,
@@ -1265,12 +1269,74 @@ class CaptureSession:
 
     # --- rename (menu-only in full mode; primary interaction in simple mode) ---
 
-    def rename_current(self, new_name: str) -> list[SessionEvent]:
+    def _vacate_row(self, name: str) -> None:
+        """Resets `name`'s inventory row (if any) to `todo` — status and
+        source file both — for a name whose files no longer sit under it
+        (renamed away, or just backed up out of the way): the document
+        hasn't actually been captured under this name after all, so the
+        row must be free to be consumed normally the next time something
+        does land under it, not raise `add_free_name`'s "already exists"
+        guard."""
+        row = self.inventory.row(name)
+        if row is None:
+            return
+        before_status = row[STATUS_COLUMN]
+        if before_status != "todo":
+            self.inventory.set_status(name, "todo")
+            self.journal.log(
+                "CSV",
+                "status",
+                image=name,
+                details={"row": name, "before": before_status, "after": "todo"},
+            )
+        self.inventory.set_source_file(name, "")
+
+    def _backup_matching_files(self, name: str, *, destination_name: str | None = None) -> None:
+        """Moves every file named `name` across RAW/TIFF/JPEG_* to
+        `BACKUP/` — same non-negotiable as a rejection: a file already in
+        `RAW/` is never modified or deleted, only moved. `destination_name`
+        gives the backup an explicit name (`<name>_OLD`, operator-chosen);
+        without it, a timestamp prefix keeps it unique instead."""
+        stamp = self._now_wall.now().strftime("%Y%m%dT%H%M%S")
+        for attr in ("raw_dir", *_DERIVATIVE_DIRS):
+            directory: Path = getattr(self.paths, attr)
+            for entry in self.fs.list_dir(directory):
+                if entry.stem != name:
+                    continue
+                destination = (
+                    self.paths.backup_dir / f"{destination_name}{entry.suffix}"
+                    if destination_name is not None
+                    else self.paths.backup_dir / f"{stamp}__{entry.name}"
+                )
+                self.fs.rename(entry, destination)
+
+    def rename_current(
+        self,
+        new_name: str,
+        *,
+        replace_existing: bool = False,
+        backup_existing_as: str | None = None,
+    ) -> list[SessionEvent]:
         """Renames the current in-review image (RAW + sidecar + any already-
         produced derivatives, all moved in place — never modified in
         content). Raises `IllegalTransitionError` if there is no current
         image or it isn't `IN_REVIEW`; `ValueError` for every operator-input
-        problem (identical name, invalid name, name already in use)."""
+        problem (identical name, invalid name, name already in use).
+
+        `replace_existing`/`backup_existing_as`: the operator's explicit
+        resolution once a first call raises for an already-used `new_name`
+        — the GUI's duplicate-name panel, reused here from the incoming-
+        file conflict flow (`resolve_conflict`) for the same reason: an
+        operator reusing a name on purpose (redoing a bad shot) needs an
+        explicit way to say so, not a dead end. `replace_existing` moves
+        whatever already carries `new_name` (RAW/TIFF/JPEG_*) to `BACKUP/`
+        under a timestamped name; `backup_existing_as` moves it there
+        instead under an explicit name the operator chose (typically
+        `<new_name>_OLD`) — `replace_existing` wins if both are given.
+        Either way the freed name's own inventory row (if any) reverts to
+        `todo` first, so it's consumed normally below rather than hitting
+        `add_free_name`'s own "already exists" guard.
+        """
         current = self.state.current_image
         if current is None or current.state != "IN_REVIEW":
             raise IllegalTransitionError(current.state if current else "NONE", "renamed")
@@ -1279,8 +1345,24 @@ class CaptureSession:
         if new_name == old_name:
             raise ValueError("new name is identical to the current name")
         validate_name(new_name, max_name_length=self._max_name_length)
-        if find_conflicting_path(new_name, self.paths, self.fs) is not None:
-            raise ValueError(f"Name already in use: {new_name!r}")
+        conflict_path = find_conflicting_path(new_name, self.paths, self.fs)
+        if conflict_path is not None:
+            if replace_existing:
+                self._backup_matching_files(new_name)
+            elif backup_existing_as is not None:
+                validate_name(backup_existing_as, max_name_length=self._max_name_length)
+                if find_conflicting_path(backup_existing_as, self.paths, self.fs) is not None:
+                    raise ValueError(f"Name already in use: {backup_existing_as!r}")
+                self._backup_matching_files(new_name, destination_name=backup_existing_as)
+            else:
+                raise NameConflictError(new_name, str(conflict_path))
+            self._vacate_row(new_name)
+            self.journal.log(
+                "NAMING",
+                "rename_conflict_resolved",
+                image=new_name,
+                details={"backed_up_as": backup_existing_as},
+            )
 
         events: list[SessionEvent] = []
 
@@ -1315,16 +1397,7 @@ class CaptureSession:
         # hasn't actually been captured under this name after all.
         old_row = self.inventory.row(old_name)
         if old_row is not None:
-            before_status = old_row[STATUS_COLUMN]
-            if before_status != "todo":
-                self.inventory.set_status(old_name, "todo")
-                self.journal.log(
-                    "CSV",
-                    "status",
-                    image=old_name,
-                    details={"row": old_name, "before": before_status, "after": "todo"},
-                )
-            self.inventory.set_source_file(old_name, "")
+            self._vacate_row(old_name)
             before_cursor = self.inventory.cursor
             self.inventory.go_to_name(old_name)
             self.state.csv_cursor = self.inventory.cursor
@@ -1403,6 +1476,36 @@ class CaptureSession:
                 self.fs.rename(entry, destination)
                 renamed.append(str(destination))
         return renamed
+
+    def resolve_rename_conflict(
+        self, new_name: str, option: int, *, alternate_name: str | None = None
+    ) -> list[SessionEvent]:
+        """Resolves a `rename_current(new_name)` call that raised
+        `NameConflictError` — the same inline duplicate-name panel
+        `resolve_conflict` shows for an incoming file's naming conflict,
+        reused here for the currently-reviewed image. `new_name` is the
+        name that conflicted; `alternate_name` is whatever the operator
+        typed into the panel's option 1/3 field, same convention as
+        `resolve_conflict`.
+
+        Option 1: renames the current image to `alternate_name` instead
+        (a different name, sidestepping the conflict entirely — the
+        `rename_current`/`_BIS` counterpart to "rename incoming" in the
+        ingest-conflict flow, applied to the image already being renamed
+        rather than one arriving). Option 2: replaces whatever already
+        carries `new_name` (backed up to `BACKUP/`). Option 3: backs up
+        whatever already carries `new_name` under `alternate_name`
+        instead (typically `<new_name>_OLD`), then uses `new_name`.
+        """
+        if option == 1:
+            return self.rename_current(alternate_name or f"{new_name}_BIS")
+        if option == 2:
+            return self.rename_current(new_name, replace_existing=True)
+        if option == 3:
+            return self.rename_current(
+                new_name, backup_existing_as=alternate_name or f"{new_name}_OLD"
+            )
+        raise ValueError(f"invalid rename conflict resolution option: {option!r}")
 
     # --- rotation (V key) --------------------------------------------------
 

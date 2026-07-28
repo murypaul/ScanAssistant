@@ -41,7 +41,7 @@ from scanassistant.camera.errors import CODE_USB_BUSY as _CODE_USB_BUSY
 from scanassistant.camera.errors import CameraError
 from scanassistant.config import CameraConfig
 from scanassistant.core.crash_recovery import RecoveryReport, perform_crash_recovery
-from scanassistant.core.errors import IllegalTransitionError
+from scanassistant.core.errors import IllegalTransitionError, NameConflictError
 from scanassistant.core.events import (
     CriticalError,
     CriticalResolved,
@@ -317,6 +317,10 @@ class CaptureScreen(QWidget):
         self._current_preview_scale_factor: float = 1.0
         self._master_preview_active = False
         self._pending_conflict: NameConflictDetected | None = None
+        # Same conflict panel, reused for a `rename_current` conflict (an
+        # already-in-review image, not an arriving one) — this alone tells
+        # `_resolve_conflict` which session call to dispatch to.
+        self._conflict_is_rename = False
         self._capture_trigger_deadline: float | None = None
         self._picking_white_balance = False
         # `QLineEdit` leaves Return/Enter unaccepted after emitting
@@ -403,17 +407,13 @@ class CaptureScreen(QWidget):
         # Escape = option 1 with an empty field.
         self.conflict_label = QLabel()
         self.conflict_option1_edit = QLineEdit()
-        self.conflict_option1_edit.returnPressed.connect(
-            lambda: self._resolve_conflict(1, self.conflict_option1_edit.text().strip())
-        )
+        self.conflict_option1_edit.returnPressed.connect(self._submit_conflict_option1)
         self.conflict_use_next_free_button = QPushButton(t("capture.conflict_use_next_free"))
         self.conflict_use_next_free_button.clicked.connect(self._use_next_free_name)
         self.conflict_replace_button = QPushButton(t("capture.conflict_option2"))
         self.conflict_replace_button.clicked.connect(lambda: self._resolve_conflict(2))
         self.conflict_option3_edit = QLineEdit()
-        self.conflict_option3_edit.returnPressed.connect(
-            lambda: self._resolve_conflict(3, self.conflict_option3_edit.text().strip())
-        )
+        self.conflict_option3_edit.returnPressed.connect(self._submit_conflict_option3)
         conflict_row1 = QHBoxLayout()
         conflict_row1.addWidget(QLabel(t("capture.conflict_option1")))
         conflict_row1.addWidget(self.conflict_option1_edit, 1)
@@ -708,8 +708,16 @@ class CaptureScreen(QWidget):
         self._pump_timer.stop()
         self._flush_pending_edits()  # never leave a rotation/crop edit un-exported
         if self.session is not None:
-            self._session_history_by_root[self.session.paths.root] = self.session.session_history()
+            # `session.stop()` itself calls `validate_current()` internally
+            # — an image still `IN_REVIEW` at this exact moment (captured,
+            # but its preview never got a chance to reach the screen before
+            # the operator left) gets finalized and recorded into session
+            # history *during* that call. Snapshotting before it would miss
+            # that entry entirely: its exports still run (validated all the
+            # same), but it would silently vanish from the carried-forward
+            # history the next time capture mode opens.
             self._dispatch(self.session.stop(wait_for_exports=wait_for_exports))
+            self._session_history_by_root[self.session.paths.root] = self.session.session_history()
             if wait_for_exports:
                 self.session.shutdown_executors()  # releases the background thread(s), if any
             # else: abandoned deliberately (Quit without waiting) — the
@@ -717,6 +725,7 @@ class CaptureScreen(QWidget):
             # writing is safely re-run from the untouched RAW next launch.
         self.session = None
         self._pending_conflict = None
+        self._conflict_is_rename = False
         self.conflict_panel.setVisible(False)
         self._capture_trigger_deadline = None
         if self._camera_controller is not None:
@@ -770,6 +779,7 @@ class CaptureScreen(QWidget):
                 self.session.shutdown_executors()
             self.session = None
         self._pending_conflict = None
+        self._conflict_is_rename = False
         self.conflict_panel.setVisible(False)
         if self._camera_controller is not None:
             self._camera_controller.set_download_folder(None)
@@ -1940,6 +1950,19 @@ class CaptureScreen(QWidget):
             return
         try:
             self.session.rename_current(new_name)
+        except NameConflictError as exc:
+            # The operator is deliberately reusing a name already on disk
+            # (redoing a bad shot) — same duplicate-name panel the
+            # incoming-file conflict flow already shows, reused here
+            # rather than a dead-end status message.
+            self._show_conflict_panel(
+                NameConflictDetected(
+                    name=str(exc.details["name"]),
+                    existing_path=str(exc.details["existing_path"]),
+                ),
+                is_rename=True,
+            )
+            return
         except ValueError as exc:
             self._set_status(str(exc))
             return
@@ -1952,16 +1975,23 @@ class CaptureScreen(QWidget):
 
     # --- name conflict -----------------------------------------------------
 
-    def _show_conflict_panel(self, event: NameConflictDetected) -> None:
+    def _show_conflict_panel(self, event: NameConflictDetected, *, is_rename: bool = False) -> None:
         self._pending_conflict = event
+        self._conflict_is_rename = is_rename
         self.conflict_label.setText(t("capture.conflict_title", name=event.name))
         self.conflict_option1_edit.setText(f"{event.name}_BIS")
         self.conflict_option3_edit.setText(f"{event.name}_OLD")
-        self.conflict_use_next_free_button.setEnabled(self._next_free_name() is not None)
+        # "Use next free name" only makes sense for an arriving file that
+        # could just as well take the next pending CSV row instead — a
+        # manual rename conflict has no such row to suggest.
+        self.conflict_use_next_free_button.setEnabled(
+            not is_rename and self._next_free_name() is not None
+        )
         self.conflict_panel.setVisible(True)
 
     def _hide_conflict_panel(self) -> None:
         self._pending_conflict = None
+        self._conflict_is_rename = False
         self.conflict_panel.setVisible(False)
         self.setFocus()
 
@@ -1996,6 +2026,18 @@ class CaptureScreen(QWidget):
             self.conflict_option3_edit.setFocus()
             self.conflict_option3_edit.selectAll()
 
+    def _submit_conflict_option1(self) -> None:
+        # See `_suppress_next_capture_key`'s own comment: `returnPressed`
+        # leaves this same Return event unaccepted, and it would otherwise
+        # reach `keyPressEvent` right after the panel closes and finalize
+        # whatever image is current as a side effect.
+        self._suppress_next_capture_key = True
+        self._resolve_conflict(1, self.conflict_option1_edit.text().strip())
+
+    def _submit_conflict_option3(self) -> None:
+        self._suppress_next_capture_key = True
+        self._resolve_conflict(3, self.conflict_option3_edit.text().strip())
+
     def _resolve_conflict(self, option: int, new_name: str | None = None) -> None:
         if self.session is None or self._pending_conflict is None:
             return
@@ -2004,11 +2046,27 @@ class CaptureScreen(QWidget):
         # still current (a new, till-now-conflicting file bumping it).
         self._flush_pending_edits()
         try:
-            events = self.session.resolve_conflict(option, new_name=new_name or None)
+            if self._conflict_is_rename:
+                events = self.session.resolve_rename_conflict(
+                    self._pending_conflict.name, option, alternate_name=new_name or None
+                )
+            else:
+                events = self.session.resolve_conflict(option, new_name=new_name or None)
         except ValueError as exc:
             self._set_status(str(exc))
             return
+        resolved_rename = self._conflict_is_rename
         self._hide_conflict_panel()
         self._dispatch(events)
         self._refresh_banner()
-        self._refresh_preview_state()
+        if resolved_rename and self.session.state.current_image is not None:
+            # The image itself is unchanged, only its name — same as
+            # `_submit_rename`'s own success path, the already-reviewed
+            # frame is kept as-is rather than letting `_refresh_preview_
+            # state()` treat this as a new image needing fresh detection.
+            current = self.session.state.current_image
+            self._load_preview_known_frame(
+                current.assigned_name, current.extension, current.framing
+            )
+        else:
+            self._refresh_preview_state()

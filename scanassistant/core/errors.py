@@ -46,8 +46,13 @@ class WatchedFolderInaccessibleError(ScanAssistantError):
         super().__init__({"reason": reason})
 
 
-class NameConflictError(ScanAssistantError):
-    """Name conflict detected: needs operator arbitration before ingestion."""
+class NameConflictError(ScanAssistantError, ValueError):
+    """Name conflict: needs operator arbitration (replace/rename) before
+    the operation (ingestion, or `CaptureSession.rename_current`) can
+    proceed. Also a `ValueError` — a caller that only distinguishes
+    operator-input problems in general (an invalid name, a name already
+    in use with no arbitration offered) still catches this without
+    needing to know about it specifically."""
 
     code = "conflict"
 
