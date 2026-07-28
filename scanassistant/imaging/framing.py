@@ -295,6 +295,7 @@ def _frame_from_contour(
     full_h = rect_h * inv_scale
     full_x = center_x * inv_scale - full_w / 2
     full_y = center_y * inv_scale - full_h / 2
+    full_x, full_y, full_w, full_h = _clamp_to_image(full_x, full_y, full_w, full_h, width, height)
 
     return FrameResult(
         x=round(full_x),
@@ -326,6 +327,21 @@ def _reduce(
         interpolation=cv2.INTER_AREA,
     )
     return resized, scale
+
+
+def _clamp_to_image(
+    x: float, y: float, w: float, h: float, image_w: int, image_h: int
+) -> tuple[float, float, float, float]:
+    """Keeps the margined rectangle within the image: the margin percentage
+    grows it around its own center with no awareness of how close that
+    center already is to an edge, so a near-edge detection can otherwise
+    push it past the image bounds on its own, without the operator having
+    touched anything."""
+    x = max(0.0, x)
+    y = max(0.0, y)
+    w = min(w, image_w - x)
+    h = min(h, image_h - y)
+    return x, y, w, h
 
 
 def _normalize_angle(w: float, h: float, angle: float) -> tuple[float, float, float]:
