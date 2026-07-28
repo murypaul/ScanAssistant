@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.19.0 — 2026-07-28
+
+### New / Changed
+**Positive calibration**
+- Up/Down now move the content-frame crop (1 px, 10 px with Shift), the
+  same convention as the support-frame nudge in Capture, instead of
+  browsing between images — the same keys did different things in the
+  two screens, which read as inconsistent. Space and Page Up/Page Down
+  now cover browsing.
+
+**Project & Campaign**
+- New "Export queue" tab on the project screen, next to CSV and Log —
+  the same pending-tasks list already shown in the capture screen's own
+  dock, now also reachable outside of an active capture session (e.g.
+  while a Statistics "Regenerate selection" is still draining in the
+  background).
+
 ## 1.18.1 — 2026-07-28
 
 ### Bug Fixes

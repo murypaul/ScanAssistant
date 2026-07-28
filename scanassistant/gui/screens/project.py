@@ -1,9 +1,10 @@
 """Project screen, preparation mode.
 
-Tabs: Summary, Folders, Capture, Framing, Exports, Metadata, CSV, Log.
-Every setting change applies immediately (no global Save button): each
-field self-validates on focus loss/toggle, writes `campaign.json`
-(atomically), and logs `PROJECT/setting_changed {key, before, after}`.
+Tabs: Summary, Folders, Capture, Framing, Exports, Metadata, CSV, Export
+queue, Log. Every setting change applies immediately (no global Save
+button): each field self-validates on focus loss/toggle, writes
+`campaign.json` (atomically), and logs `PROJECT/setting_changed {key,
+before, after}`.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from scanassistant.core.campaign_reset import reset_campaign
 from scanassistant.core.fs import RealFileSystem
 from scanassistant.gui.errors import format_business_error
 from scanassistant.gui.widgets.csv_table import CsvTableWidget
+from scanassistant.gui.widgets.export_queue_panel import ExportQueuePanel
 from scanassistant.gui.widgets.log_table import LogTableWidget
 from scanassistant.i18n import t
 from scanassistant.imaging import framing
@@ -86,6 +88,7 @@ class ProjectScreen(QWidget):
         self._tabs.addTab(self._build_exports_tab(), t("project.tab_exports"))
         self._tabs.addTab(self._build_metadata_tab(), t("project.tab_metadata"))
         self._tabs.addTab(self._build_csv_tab(), t("project.tab_csv"))
+        self._tabs.addTab(self._build_export_queue_tab(), t("project.tab_export_queue"))
         self._tabs.addTab(self._build_log_tab(), t("project.tab_log"))
 
     # --- chargement ---------------------------------------------------------
@@ -1001,6 +1004,24 @@ class ProjectScreen(QWidget):
         menu.exec(self.csv_table.viewport().mapToGlobal(pos))
 
     # --- Log (06 §5) ------------------------------------------------------
+
+    def _build_export_queue_tab(self) -> QWidget:
+        """Same widget/data as the "Export queue" dock (`MainWindow.
+        export_queue_panel`, shown during capture) — a second, always-
+        reachable place to see it without having to be in the middle of a
+        capture session, e.g. while a background regenerate (Statistics
+        screen) is still draining. `MainWindow` refreshes both from the
+        same `pending_tasks()` call; this screen has no session of its
+        own to read it from directly."""
+        self.export_queue_panel = ExportQueuePanel()
+        layout = QVBoxLayout()
+        layout.addWidget(self.export_queue_panel, 1)
+        self._export_queue_tab_widget = QWidget()
+        self._export_queue_tab_widget.setLayout(layout)
+        return self._export_queue_tab_widget
+
+    def show_export_queue_tab(self) -> None:
+        self._tabs.setCurrentIndex(self._tabs.indexOf(self._export_queue_tab_widget))
 
     def _build_log_tab(self) -> QWidget:
         self.log_type_filter = QComboBox()

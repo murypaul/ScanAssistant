@@ -470,6 +470,7 @@ STRINGS: dict[str, str] = {
     "project.tab_exports": "Exports",
     "project.tab_metadata": "Metadata",
     "project.tab_csv": "CSV",
+    "project.tab_export_queue": "Export queue",
     "project.tab_log": "Log",
     "project.invalid_setting_title": "Invalid setting",
     "project.summary_counts": "{done} done · {remaining} remaining · {total} total",

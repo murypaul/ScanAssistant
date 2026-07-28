@@ -1,3 +1,3 @@
 """ScanAssistant — heritage photographic negative digitization assistant."""
 
-__version__ = "1.18.1"
+__version__ = "1.19.0"

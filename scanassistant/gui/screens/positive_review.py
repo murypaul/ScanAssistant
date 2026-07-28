@@ -1464,6 +1464,21 @@ class PositiveReviewScreen(QWidget):
         self._current_print_frame = frame
         self._mark_edited()
 
+    def _nudge_print_frame(self, *, dx: int = 0, dy: int = 0) -> None:
+        """Up/Down (reserved, always active — see `keyPressEvent`): moves
+        the content-frame crop, same 1 px / 10 px-with-Shift convention as
+        `gui.screens.capture._nudge_frame`'s own support-frame nudge.
+        Mouse drag remains the primary way to position it; this is for a
+        fine keyboard nudge once a drag has gotten close. Same overlay-only
+        + debounce pattern as `_rotate_print_frame` — the actual pixels
+        only change once that commits."""
+        if self._current_print_frame is None or self._print_engine_loaded_for != self._current_name:
+            return
+        frame = self._current_print_frame
+        self._current_print_frame = replace(frame, x=frame.x + dx, y=frame.y + dy)
+        self.preview_area.set_frame_overlay(self._current_print_frame)
+        self._mark_edited()
+
     def _rotate_print_frame(self, delta_deg: float) -> None:
         """Ctrl+Left/Right (reserved, always active — see `keyPressEvent`):
         deskews the content-frame crop, bounded to [-45, 45]° same as
@@ -1931,25 +1946,16 @@ class PositiveReviewScreen(QWidget):
             event.accept()
             return
         if event.key() == Qt.Key.Key_Space:
-            # Space mirrors Down here (browse without confirming) rather
-            # than Capture's own Space (remote shutter trigger, unrelated
-            # action) — same key, chosen for the same "keep moving forward
-            # with one hand" muscle memory across the two screens. Ignored
-            # while the *previous* move's image hasn't actually reached the
-            # screen yet (operator-reported): Space is the key an impatient
-            # operator leans on hardest, and a second press fired before
-            # visible confirmation of the first must not silently skip an
-            # image — Down keeps its own, unthrottled behavior.
+            # Next image, without confirming — the same "keep moving
+            # forward with one hand" muscle memory as Capture's own Space,
+            # even though that key does something unrelated there (remote
+            # shutter). Ignored while the *previous* move's image hasn't
+            # actually reached the screen yet (operator-reported): Space is
+            # the key an impatient operator leans on hardest, and a second
+            # press fired before visible confirmation of the first must not
+            # silently skip an image.
             if self._print_engine_loaded_for == self._current_name:
                 self._move(1)
-            event.accept()
-            return
-        if event.key() == Qt.Key.Key_Down:
-            self._move(1)
-            event.accept()
-            return
-        if event.key() == Qt.Key.Key_Up:
-            self._move(-1)
             event.accept()
             return
         if event.key() == Qt.Key.Key_PageDown:
@@ -1958,6 +1964,16 @@ class PositiveReviewScreen(QWidget):
             return
         if event.key() == Qt.Key.Key_PageUp:
             self._move(-6)
+            event.accept()
+            return
+        # Up/Down (reserved, always active — operator-reported: used to
+        # browse images here, confusing since the same keys move the crop
+        # in Capture): nudges the content-frame crop instead, same
+        # step/Shift convention as `gui.screens.capture._nudge_frame`'s own
+        # support-frame nudge. Space/Page Up/Page Down cover browsing now.
+        if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            step = 10 if bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier) else 1
+            self._nudge_print_frame(dy=step if event.key() == Qt.Key.Key_Down else -step)
             event.accept()
             return
         # V/Shift+V: the support frame's own 90° orientation, same key and
@@ -1974,9 +1990,9 @@ class PositiveReviewScreen(QWidget):
             return
         # Ctrl+Left/Right: deskew the content-frame crop — same reserved,
         # always-active convention `gui.screens.capture` uses for the
-        # support frame's own rotation (Left/Right alone stay list
-        # navigation here, unlike Capture, which has no image list and
-        # uses plain arrows to nudge its own frame instead).
+        # support frame's own rotation. Plain Left/Right (no modifier)
+        # stay list navigation here (grid columns) — unlike Up/Down above,
+        # not reported as confusing, left untouched.
         if bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier) and event.key() in (
             Qt.Key.Key_Left,
             Qt.Key.Key_Right,

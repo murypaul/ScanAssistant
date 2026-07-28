@@ -60,8 +60,12 @@ Opened outside capture mode. A **Start capture** button sits below the
 tabs at all times — faster to reach than the menu or the shortcut.
 Tabs: **Summary**, **Folders**, **Capture**, **Framing**, **Exports**,
 **Metadata**, **CSV** (a read-only table of the inventory — search,
-filter by status, jump the cursor to a row), and **Log** (today's events,
-filterable, with a shortcut to the log folder).
+filter by status, jump the cursor to a row), **Export queue** (same
+read-only list as the capture screen's own dock — name and derivative
+kind for every task still pending, live even outside of an active
+capture session, e.g. while Statistics' "Regenerate selection" is still
+draining in the background), and **Log** (today's events, filterable,
+with a shortcut to the log folder).
 
 Every setting change is applied and saved immediately — there's no separate
 save step.
@@ -209,9 +213,9 @@ Mouse Ctrl+click/Shift+click also multi-selects thumbnails in the grid.
 | Enter | Applies the current image's settings and advances right away, without waiting for you to navigate off it — leaving an image any other way (arrows, clicking another thumbnail, Esc) already reviews it on its own |
 | V / Shift+V | Rotate the image 90° clockwise / counter-clockwise — for an orientation missed during Capture, corrected once you're judging tone here. Re-exports the TIFF/JPEG master as well as the positive |
 | Ctrl+Left / Ctrl+Right | Rotate the content-frame crop by 0.1° (Shift: 1.0°), bounded to ±45° — same convention as the support-frame rotation in Capture |
-| Up / Down | Previous / next image in the filtered list |
-| Space | Next image in the filtered list (same as Down) — without confirming. Ignored if pressed again before the previous image has actually appeared, so an impatient double-press can't skip one |
-| Page Up / Page Down | Jump further in the same list |
+| Up / Down | Move the content-frame crop by 1 px (Shift: 10 px) — same convention as the support-frame nudge in Capture |
+| Space | Next image in the filtered list — without confirming. Ignored if pressed again before the previous image has actually appeared, so an impatient double-press can't skip one |
+| Page Up / Page Down | Previous / next image, jumping further in the same list |
 | Ctrl+A | Select every image in the active filter |
 | Ctrl+Enter | Apply to selection — copies the current image's tone settings to the selection (Dmin excluded by default) |
 | Ctrl+Z / Ctrl+Y | Undo / redo the last confirmed change or propagation |

@@ -243,6 +243,16 @@ class MainWindow(QMainWindow):
         self.export_queue_dock.setVisible(False)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.export_queue_dock)
 
+        # Keeps the Project screen's own "Export queue" tab live while an
+        # offline background regenerate drains with no capture session
+        # active (`queue_changed` alone only fires from the capture
+        # screen's own pump loop) — always running, negligible cost
+        # (`pending_tasks()` is just a list read).
+        self._export_queue_poll_timer = QTimer(self)
+        self._export_queue_poll_timer.setInterval(1000)
+        self._export_queue_poll_timer.timeout.connect(self._refresh_export_queue_panel)
+        self._export_queue_poll_timer.start()
+
         self.history_panel = HistoryPanel()
         self.history_panel.image_activated.connect(self._on_history_image_activated)
         self.history_dock = QDockWidget(t("history.title"), self)
@@ -804,9 +814,14 @@ class MainWindow(QMainWindow):
         self._refresh_export_queue_panel()
 
     def _refresh_export_queue_panel(self) -> None:
-        session = self.capture_screen.session
+        # `_offline_session` too, not just the live capture session: the
+        # Project screen's own "Export queue" tab is reachable while a
+        # background regenerate (Statistics screen) is still draining,
+        # with no capture session active at all.
+        session = self.capture_screen.session or self._offline_session
         tasks = session.export_queue.pending_tasks() if session is not None else []
         self.export_queue_panel.refresh(tasks)
+        self.project_screen.export_queue_panel.refresh(tasks)
 
     # --- "Session history" panel ------------------------------------------------
 
