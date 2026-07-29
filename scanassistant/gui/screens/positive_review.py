@@ -1513,13 +1513,14 @@ class PositiveReviewScreen(QWidget):
         self._mark_edited()
 
     def _nudge_print_frame(self, *, dx: int = 0, dy: int = 0) -> None:
-        """Up/Down (reserved, always active — see `keyPressEvent`): moves
-        the content-frame crop, same 1 px / 10 px-with-Shift convention as
-        `gui.screens.capture._nudge_frame`'s own support-frame nudge.
-        Mouse drag remains the primary way to position it; this is for a
-        fine keyboard nudge once a drag has gotten close. Same overlay-only
-        + debounce pattern as `_rotate_print_frame` — the actual pixels
-        only change once that commits."""
+        """Up/Down/Left/Right (reserved, always active — see
+        `keyPressEvent`): moves the content-frame crop, same 1 px / 10
+        px-with-Shift convention as `gui.screens.capture._nudge_frame`'s
+        own support-frame nudge. Mouse drag remains the primary way to
+        position it; this is for a fine keyboard nudge once a drag has
+        gotten close. Same overlay-only + debounce pattern as
+        `_rotate_print_frame` — the actual pixels only change once that
+        commits."""
         if self._current_print_frame is None or self._print_engine_loaded_for != self._current_name:
             return
         frame = self._current_print_frame
@@ -2014,14 +2015,27 @@ class PositiveReviewScreen(QWidget):
             self._move(-6)
             event.accept()
             return
-        # Up/Down (reserved, always active — operator-reported: used to
-        # browse images here, confusing since the same keys move the crop
-        # in Capture): nudges the content-frame crop instead, same
+        # Up/Down/Left/Right (reserved, always active — operator-reported:
+        # used to browse images here, confusing since the same keys move
+        # the crop in Capture): nudge the content-frame crop instead, same
         # step/Shift convention as `gui.screens.capture._nudge_frame`'s own
-        # support-frame nudge. Space/Page Up/Page Down cover browsing now.
-        if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+        # support-frame nudge. Click, Page Up/Page Down and Enter cover
+        # browsing now, so none of the four arrows are needed for that here.
+        if event.key() in (
+            Qt.Key.Key_Up,
+            Qt.Key.Key_Down,
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Right,
+        ) and not bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier):
             step = 10 if bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier) else 1
-            self._nudge_print_frame(dy=step if event.key() == Qt.Key.Key_Down else -step)
+            if event.key() == Qt.Key.Key_Up:
+                self._nudge_print_frame(dy=-step)
+            elif event.key() == Qt.Key.Key_Down:
+                self._nudge_print_frame(dy=step)
+            elif event.key() == Qt.Key.Key_Left:
+                self._nudge_print_frame(dx=-step)
+            else:
+                self._nudge_print_frame(dx=step)
             event.accept()
             return
         # V/Shift+V: the support frame's own 90° orientation, same key and
@@ -2038,9 +2052,9 @@ class PositiveReviewScreen(QWidget):
             return
         # Ctrl+Left/Right: deskew the content-frame crop — same reserved,
         # always-active convention `gui.screens.capture` uses for the
-        # support frame's own rotation. Plain Left/Right (no modifier)
-        # stay list navigation here (grid columns) — unlike Up/Down above,
-        # not reported as confusing, left untouched.
+        # support frame's own rotation. Checked ahead of the plain
+        # Left/Right nudge above only in the modifier condition, not in
+        # ordering: both branches are mutually exclusive on Ctrl.
         if bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier) and event.key() in (
             Qt.Key.Key_Left,
             Qt.Key.Key_Right,

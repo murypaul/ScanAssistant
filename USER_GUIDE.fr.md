@@ -226,10 +226,10 @@ la grille.
 
 | Touche | Action |
 | ------ | ------ |
-| Entrée | Applique les réglages de l'image courante et avance directement, sans attendre que vous la quittiez — quitter une image autrement (flèches, clic sur une autre vignette, Échap) la revoit déjà d'elle-même |
+| Entrée | Applique les réglages de l'image courante et avance directement, sans attendre que vous la quittiez — quitter une image autrement (clic sur une autre vignette, Échap) la revoit déjà d'elle-même |
 | V / Maj+V | Fait pivoter l'image de 90° dans le sens horaire / antihoraire — pour une orientation manquée en Capture, corrigée une fois qu'on juge la tonalité ici. Réexporte aussi le TIFF/JPEG master, pas seulement le positif |
 | Ctrl+← / Ctrl+→ | Fait pivoter le cadre de contenu de 0,1° (Maj : 1,0°), borné à ±45° — même convention que la rotation du cadre support en Capture |
-| Haut / Bas | Déplace le cadre de contenu de 1 px (Maj : 10 px) — même convention que le déplacement du cadre support en Capture |
+| Flèches | Déplace le cadre de contenu de 1 px (Maj : 10 px) — même convention que le déplacement du cadre support en Capture |
 | Espace | Image suivante dans la liste filtrée — sans confirmer. Ignoré si pressé à nouveau avant que l'image précédente ne soit réellement apparue, pour qu'un double appui impatient ne saute pas une image |
 | Page préc. / Page suiv. | Image précédente / suivante, avec un saut plus large dans la même liste |
 | Ctrl+A | Sélectionner toutes les images du filtre actif |

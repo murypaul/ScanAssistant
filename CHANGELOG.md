@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.20.0 — 2026-07-29
+
+### New / Changed
+**Positive calibration**
+- Left/Right now move the content-frame crop as well (same 1 px, 10 px
+  with Shift convention as Up/Down), instead of browsing between images —
+  the operator only ever moves between images by click, Page Up/Page
+  Down or Enter here, so all four arrows are now dedicated to the crop.
+
 ## 1.19.1 — 2026-07-28
 
 ### Bug Fixes
