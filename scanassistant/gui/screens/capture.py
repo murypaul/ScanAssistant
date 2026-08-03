@@ -121,6 +121,17 @@ _CAPTURE_TRIGGER_TIMEOUT_S = 15.0
 # just needs to be short enough that plugging in/powering on the camera
 # feels like it "just works" without a wait that feels stuck.
 _CAMERA_RECONNECT_POLL_MS = 5000
+# Ceiling this backs off to (doubling on each consecutive E-17/E-18) while
+# the camera stays unreachable — confirmed in real use (soyouz, 2026-08-03):
+# a camera stuck failing to connect got retried every 5s for ~24 minutes
+# (~280 attempts) and leaked USB file descriptors somewhere below
+# `python-gphoto2`/`libgphoto2` on every single one, eventually exhausting
+# the process's file descriptor table (EMFILE) — which then broke
+# unrelated things too, including journal writes. Backing off doesn't fix
+# that underlying leak, but it cuts the attempt rate enough that a normal
+# session should never get anywhere near the limit. Reset to the base
+# interval the moment a connection actually succeeds.
+_CAMERA_RECONNECT_MAX_POLL_MS = 60000
 # Camera-side zoom level requested as soon as the live view vignette is
 # expanded (see `GphotoCameraBackend.set_live_view_zoom_level`) — a fixed
 # "tight enough to actually judge focus by" step, not something the
@@ -1779,6 +1790,7 @@ class CaptureScreen(QWidget):
             _CODE_USB_BUSY,
         ):
             self._hide_warning_banner()
+        self._camera_reconnect_timer.setInterval(_CAMERA_RECONNECT_POLL_MS)
 
     def _on_camera_disconnected(self) -> None:
         if self.live_view_widget is not None:
@@ -1811,6 +1823,11 @@ class CaptureScreen(QWidget):
     def _on_camera_error(self, error: CameraError) -> None:
         self._set_status(format_warning(error.code, error.details))
         self._show_warning_banner(error.code, error.details)
+        if error.code in (_CODE_NOT_DETECTED, _CODE_USB_BUSY):
+            next_interval = min(
+                self._camera_reconnect_timer.interval() * 2, _CAMERA_RECONNECT_MAX_POLL_MS
+            )
+            self._camera_reconnect_timer.setInterval(next_interval)
 
     def _on_live_view_fps_changed(self, fps: int | None) -> None:
         if self._camera_controller is not None:

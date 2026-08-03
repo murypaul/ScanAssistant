@@ -243,7 +243,11 @@ class PreviewArea(QWidget):
         if point is None or self._drag_start_point is None or self._drag_start_frame is None:
             return
         new_frame = _drag_frame(
-            self._drag_start_frame, self._drag_zone, self._drag_start_point, point
+            self._drag_start_frame,
+            self._drag_zone,
+            self._drag_start_point,
+            point,
+            constrain_axis=bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier),
         )
         self._frame = new_frame
         self._compose()
@@ -311,13 +315,29 @@ def _hit_zone(point: QPointF, frame: FrameResult, *, tolerance: float) -> str | 
 
 
 def _drag_frame(
-    start_frame: FrameResult, zone: str, start_point: QPointF, current_point: QPointF
+    start_frame: FrameResult,
+    zone: str,
+    start_point: QPointF,
+    current_point: QPointF,
+    *,
+    constrain_axis: bool = False,
 ) -> FrameResult:
     """The frame that results from dragging `zone` from `start_point` to
-    `current_point` (both pixmap space), starting from `start_frame`."""
+    `current_point` (both pixmap space), starting from `start_frame`.
+
+    `constrain_axis` (Shift held, "move" only — same convention as other
+    image editors): locks the drag to whichever of horizontal/vertical had
+    the larger movement since the press, zeroing the other — lets an
+    operator nudge a crop along one line without a slightly unsteady hand
+    drifting it off-axis."""
     if zone == "move":
         dx = current_point.x() - start_point.x()
         dy = current_point.y() - start_point.y()
+        if constrain_axis:
+            if abs(dx) >= abs(dy):
+                dy = 0.0
+            else:
+                dx = 0.0
         return replace(start_frame, x=start_frame.x + dx, y=start_frame.y + dy)
 
     local_start = _to_local_point(start_point, start_frame)

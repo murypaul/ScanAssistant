@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.20.3 — 2026-08-03
+
+### Bug Fixes
+**Positive calibration**
+- An image still on screen, untouched, could silently get marked "done
+  manually" after a few seconds with no navigation at all — a background
+  refresh removing a *different*, unrelated row from the list could reset
+  which one Qt considered "current," triggering the same review logic as
+  actually leaving the image.
+- The arrow-key crop nudge (and its other reserved shortcuts) stopped
+  reaching the image the moment keyboard focus moved off the thumbnail
+  list — a button clicked, the panel splitter dragged. They now reach the
+  crop regardless of which control was last clicked, except a slider's own
+  editable field, which still uses Left/Right for its text cursor as
+  expected.
+
+### New / Changed
+**Capture, Positive calibration**
+- Holding Shift while dragging the crop rectangle now locks the move to a
+  single row or column, the same convention as other image editors.
+
 ## 1.20.2 — 2026-08-03
 
 ### Bug Fixes

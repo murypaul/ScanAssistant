@@ -71,6 +71,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -373,14 +374,15 @@ class PositiveReviewScreen(QWidget):
         self.list_widget.currentItemChanged.connect(self._on_current_item_changed)
         # `QAbstractItemView`'s own key handling grabs arrow keys for grid
         # navigation whenever the list has focus (the normal state after a
-        # click) — without this filter, Ctrl+Left/Right never reaches
+        # click) — without a filter, Ctrl+Left/Right never reaches
         # `keyPressEvent` below, so the reserved rotation shortcut is
         # silently unreachable. `eventFilter` re-runs the same
         # `keyPressEvent` first and only swallows the key if that handled
         # it, so unreserved keys (Home/End/type-ahead, plain Left/Right,
         # which stay list navigation) still fall through to the list's own
-        # default behavior untouched.
-        self.list_widget.installEventFilter(self)
+        # default behavior untouched. Installed below, alongside every
+        # other descendant, not here — see the loop at the end of
+        # `__init__`.
 
         self.preview_area = PreviewArea()
         self.preview_area.frame_dragged.connect(self._on_frame_dragged)
@@ -450,6 +452,21 @@ class PositiveReviewScreen(QWidget):
         layout.addWidget(self.back_hint_label)
         layout.addWidget(splitter, 1)
         layout.addWidget(self.status_label)
+
+        # Arrow keys + their modifiers (and the other reserved shortcuts —
+        # Escape, Ctrl+Z/Y/A/Enter, Space, V, Page Up/Down) must reach
+        # `keyPressEvent` no matter which child widget happens to hold
+        # keyboard focus — operator-reported: they stopped working the
+        # moment focus moved off the thumbnail list (a button clicked, the
+        # splitter dragged...). `list_widget` already needed this same
+        # `eventFilter` re-run to reclaim arrows from its own grid
+        # navigation; every other descendant gets the identical treatment
+        # here, except a `SliderField`'s editable `QLineEdit` — Left/Right
+        # there legitimately moves the text cursor while typing a value,
+        # which must never be taken over.
+        for descendant in self.findChildren(QWidget):
+            if not isinstance(descendant, QLineEdit):
+                descendant.installEventFilter(self)
 
     # --- background work (see `_CallWorker`) ----------------------------------
 
@@ -663,11 +680,35 @@ class PositiveReviewScreen(QWidget):
             )
         still_visible = set(current_names)
         stale = [name for name in self._names if name not in still_visible]
+        if not stale:
+            return
+        # `takeItem` below can silently reassign Qt's own "current item" to
+        # whatever slides into a removed row's place (the same quirk
+        # `_remove_stale_entries_and_select` already works around for its
+        # own caller) — even when every removed row belongs to some other,
+        # unrelated image, which is the normal case here (this runs on
+        # every periodic poll tick, catching a *different* image's
+        # just-finished background regenerate). Left uncorrected, that
+        # reassignment fires `currentItemChanged` on its own, and
+        # `_on_current_item_changed`/`_load_index` then silently reviews
+        # whatever the operator is still actually looking at — confirmed in
+        # real use (2026-08-03): an untouched image flipped to "done
+        # manually" after a few seconds, with no navigation at all. Restored
+        # with signals blocked (`refresh_list`'s own pattern for the same
+        # reason): this only corrects Qt's bookkeeping back to what it
+        # already was, never a real navigation event worth reacting to.
+        current_name = self._current_name
         for name in reversed(stale):
             row = self._names.index(name)
             self._names.pop(row)
             self.list_widget.takeItem(row)
             self._pending_thumbnail_refresh.pop(name, None)
+        if current_name is not None and current_name in self._names:
+            target_row = self._names.index(current_name)
+            if self.list_widget.currentRow() != target_row:
+                self.list_widget.blockSignals(True)
+                self.list_widget.setCurrentRow(target_row)
+                self.list_widget.blockSignals(False)
 
     def _remove_stale_entries_and_select(self, select_name: str | None) -> None:
         self._remove_stale_entries()
@@ -1958,7 +1999,26 @@ class PositiveReviewScreen(QWidget):
     # --- misc ------------------------------------------------------------------
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self.list_widget and event.type() == QEvent.Type.KeyPress:
+        # Installed on every descendant widget except a `SliderField`'s own
+        # `QLineEdit` (see `__init__`'s own installation loop) — not just
+        # `list_widget`: any focusable child (a button, a checkbox, a
+        # splitter handle after a drag-to-resize...) otherwise leaves the
+        # reserved shortcuts below (arrows + modifiers, chiefly — operator-
+        # reported: they stopped reaching the crop nudge whenever focus had
+        # moved off the list) unreachable for as long as it holds focus.
+        #
+        # A key event actually bound for a focused `QLineEdit` still reaches
+        # *this* filter first — Qt walks a focused widget's whole ancestor
+        # chain for key events (the same mechanism that lets an action's
+        # shortcut pre-empt a plain widget's own key handling), calling an
+        # ancestor's installed filter before the focused widget's own
+        # `keyPressEvent` ever runs, regardless of which ancestor the event
+        # filter happens to be installed on — excluding the `QLineEdit`
+        # itself from installation (above) is therefore not enough on its
+        # own. Checking the actual focus widget here, not just `watched`,
+        # is what actually lets that field keep Left/Right for its own text
+        # cursor.
+        if event.type() == QEvent.Type.KeyPress and not isinstance(self.focusWidget(), QLineEdit):
             key_event = event
             assert isinstance(key_event, QKeyEvent)
             self.keyPressEvent(key_event)
