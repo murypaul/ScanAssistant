@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.20.2 — 2026-08-03
+
+### Bug Fixes
+**Capture**
+- Tethering could permanently stop working mid-session — live view stuck
+  showing a frozen frame, no new capture ever starting — after a routine
+  USB hiccup with the camera, until the application was restarted. An
+  unexpected error while disconnecting from a camera that had already
+  dropped off the USB port could silently kill the camera's background
+  process for the rest of the session; this can no longer happen.
+
 ## 1.20.1 — 2026-08-03
 
 ### Bug Fixes

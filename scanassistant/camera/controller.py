@@ -206,7 +206,14 @@ class CameraController:
                     continue
 
                 if live_view_active:
-                    live_view_active = self._read_and_emit_frame()
+                    try:
+                        live_view_active = self._read_and_emit_frame()
+                    except Exception:  # same reasoning as `_handle_command`'s
+                        # own defensive catch — this is the one call per
+                        # loop iteration that sits outside it, and a bug
+                        # here must not be able to kill this thread either.
+                        get_logger().exception("live view frame read crashed unexpectedly")
+                        live_view_active = False
                 else:
                     time.sleep(_IDLE_POLL_INTERVAL_S)
         finally:
@@ -421,9 +428,15 @@ class CameraController:
             self._on_disconnected()
 
     def _safe_call(self, action: Callable[[], None]) -> None:
+        # Every caller here is inherently best-effort cleanup (stopping live
+        # view or disconnecting while the device may already be gone) —
+        # broad `Exception`, not just this app's own `CameraIOError`: a raw
+        # `gphoto2.GPhoto2Error` from `disconnect()` used to escape this
+        # narrower catch and propagate out of `_run()`'s own `finally`,
+        # permanently killing the whole camera thread on a real device.
         try:
             action()
-        except CameraIOError:
+        except Exception:
             get_logger().warning("camera backend call failed during cleanup", exc_info=True)
 
     def _emit_error(self, code: str, details: dict[str, object]) -> None:

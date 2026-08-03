@@ -143,6 +143,13 @@ class GphotoCameraBackend:
         if self._camera is not None:
             try:
                 self._camera.exit(self._context)
+            except gphoto2.GPhoto2Error:
+                pass  # best-effort, same reasoning as `stop_live_view`: the
+                # device may already be gone (unplugged, re-enumerated) —
+                # nothing to do about a failure to cleanly close a handle
+                # to it, and this used to escape uncaught all the way out
+                # of `CameraController._run()`'s own cleanup, permanently
+                # killing that thread on a real, still-connected D750.
             finally:
                 self._camera = None
 
