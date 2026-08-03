@@ -100,6 +100,8 @@ from scanassistant.watcher.stability import poll_interval_s
 
 _STATUS_MESSAGE_DURATION_MS = 5000
 _MIN_PUMP_INTERVAL_MS = 100
+# `session.pump()` raising unexpectedly — see `_handle_pump_crash`.
+_CODE_PUMP_FAILED = "E-09"
 _ROTATION_COMMIT_DELAY_MS = 2500
 _FRAME_COMMIT_DELAY_MS = 2500
 # `imaging.framing.detect_frame` (GrabCut) measured up
@@ -310,6 +312,7 @@ class CaptureScreen(QWidget):
         # for a print_engine campaign's jpeg_positive.
         self._positive_finalize_workers = positive_finalize_workers
         self._preview_worker: PreviewWorker | None = None
+        self._pump_crash_logged = False
         self._stabilizing: set[Path] = set()
         self._loaded_preview_for: str | None = None
         self._current_frame_result: FrameResult | None = None
@@ -798,13 +801,44 @@ class CaptureScreen(QWidget):
         # the (rare) tick where that's actually about to happen: flushing
         # unconditionally on every tick — this runs every ~100 ms — would
         # cut the debounce down to that same ~100 ms and defeat it entirely.
-        self._dispatch(
-            self.session.pump(time.monotonic(), before_finalize_current=self._flush_pending_edits)
-        )
+        try:
+            events = self.session.pump(
+                time.monotonic(), before_finalize_current=self._flush_pending_edits
+            )
+        except Exception:
+            self._handle_pump_crash()
+            return
+        self._pump_crash_logged = False
+        self._dispatch(events)
         self._refresh_banner()
         self._refresh_preview_state()
         self._check_capture_trigger_timeout()
         self.queue_changed.emit()
+
+    def _handle_pump_crash(self) -> None:
+        """`session.pump()` drives every automatic step (detection, ingestion,
+        exports) off this timer; if it ever raises, PySide6 swallows the
+        exception at the Qt slot boundary and simply calls this timer again
+        on schedule — nothing here would otherwise tell the operator
+        anything actually stopped, and this project's desktop launcher
+        routes stderr to `/dev/null`, so the traceback itself would
+        otherwise vanish completely. Logged and journaled once per episode
+        (silenced again the moment a `pump()` call succeeds) rather than on
+        every ~100 ms tick, which would flood both."""
+        if self._pump_crash_logged:
+            return
+        self._pump_crash_logged = True
+        get_logger().exception("pump() raised unexpectedly — automatic processing stalled")
+        if self.session is not None:
+            self.session.journal.log(
+                "SYSTEM",
+                "error",
+                level="critical",
+                details={"code": _CODE_PUMP_FAILED},
+                result="error",
+            )
+        self._set_status(format_warning(_CODE_PUMP_FAILED, {}))
+        self._show_warning_banner(_CODE_PUMP_FAILED, {})
 
     def _check_capture_trigger_timeout(self) -> None:
         """E-22: a remote trigger confirmed camera-side, but its file never

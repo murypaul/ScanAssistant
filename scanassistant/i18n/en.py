@@ -535,6 +535,11 @@ STRINGS: dict[str, str] = {
         "Could not remove {name} from the watched folder. "
         "It was marked as processed and will be skipped."
     ),
+    "error.E-09": (
+        "An unexpected internal error interrupted automatic capture processing. "
+        "Nothing captured so far was lost, but new negatives may no longer be "
+        "picked up automatically — save your work and restart the application."
+    ),
     "error.E-10": "Invalid campaign file: {field} — {detail}.",
     "error.E-11": "The CSV cannot be imported: {count} problem(s).",
     "error.E-12": (

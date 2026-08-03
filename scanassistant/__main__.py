@@ -77,6 +77,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     techlog.setup_logging(debug=args.debug)
+    techlog.install_excepthook()
     logger = techlog.get_logger()
     logger.info("SYSTEM/started version=%s", __version__)
 

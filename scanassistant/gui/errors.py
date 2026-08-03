@@ -31,6 +31,7 @@ _WARNING_KEYS = {
     "E-03": "error.E-03",
     "E-04": "error.E-04",
     "E-08": "error.E-08",
+    "E-09": "error.E-09",
     "E-15": "error.E-15",
     # Camera (remote trigger + live view): always a warning, never critical —
     # a tethering hiccup must never suspend the folder-watching pipeline.

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.20.1 — 2026-08-03
+
+### Bug Fixes
+**Capture**
+- An unexpected internal error during automatic capture processing could
+  leave the screen permanently stuck on "copying…" for the rest of the
+  session — the automatic pipeline had actually stopped entirely
+  (detection, ingestion, export), with nothing in any log to explain it
+  and no visible sign beyond the frozen preview. Such an error now shows
+  a clear banner ("nothing captured so far was lost, restart the
+  application") and is always recorded, instead of vanishing silently.
+
 ## 1.20.0 — 2026-07-29
 
 ### New / Changed

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import sys
+import threading
 from pathlib import Path
 
 import platformdirs
@@ -54,3 +56,31 @@ def setup_logging(log_dir: Path | None = None, debug: bool = False) -> Path:
 
 def get_logger(name: str = LOGGER_NAME) -> logging.Logger:
     return logging.getLogger(name)
+
+
+def install_excepthook() -> None:
+    """Routes any otherwise-uncaught exception — main thread, a background
+    thread, or one escaping a PySide6 slot (Qt calls `sys.excepthook` for
+    those too) — into `debug.log` instead of stderr.
+
+    Without this, an exception here has nowhere else to go: a desktop
+    launcher commonly starts the app with stdout/stderr closed or piped to
+    `/dev/null`, so the default `sys.excepthook` output is simply lost, and
+    the operator is left looking at a screen that stopped updating with no
+    error, no log line, and no way to tell what happened or that a restart
+    would fix it.
+    """
+
+    def _log_main_thread(exc_type: type[BaseException], exc_value: BaseException, exc_tb) -> None:
+        get_logger().critical("unhandled exception", exc_info=(exc_type, exc_value, exc_tb))
+
+    def _log_thread(args: threading.ExceptHookArgs) -> None:
+        name = args.thread.name if args.thread is not None else "?"
+        get_logger().critical(
+            "unhandled exception in thread %s",
+            name,
+            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+        )
+
+    sys.excepthook = _log_main_thread
+    threading.excepthook = _log_thread
