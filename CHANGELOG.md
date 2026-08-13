@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.22.3 — 2026-08-13
+
+### New / Changed
+**Capture, Positive calibration**
+- Revised the crop-bounds change from earlier today: dragging a crop
+  rectangle by hand can again pull it past the image edge — a real part
+  of adjusting a crop — up to about one image's own width/height of
+  overflow on each side. Only an unbounded drag (several times the
+  image's own size, the original complaint) stays capped.
+
 ## 1.22.2 — 2026-08-13
 
 ### Bug Fixes

@@ -49,6 +49,12 @@ _GUIDE_HALO_COLOR = QColor(0, 0, 0, 160)
 
 _EDGE_TOLERANCE_SCREEN_PX = 10
 _MIN_FRAME_SIZE_PX = 20
+# How far a manually dragged crop may overflow past the image edge, as a
+# multiple of the image's own width/height — generous enough to grab and
+# adjust a corner comfortably outside the negative, still short of the
+# unbounded "several times the image's own size" a fast drag produced
+# before this existed (operator-reported, 2026-08-13).
+_OVERFLOW_FACTOR = 1.0
 _CURSOR_BY_ZONE = {
     "n": Qt.CursorShape.SizeVerCursor,
     "s": Qt.CursorShape.SizeVerCursor,
@@ -363,14 +369,23 @@ def _drag_frame(
     drifting it off-axis.
 
     `bounds` (pixmap width/height, same space as `x`/`y`/`width`/`height`):
-    the result never extends past the image on any side, on any zone
-    (move included) — a fast drag past an edge used to leave a rectangle
-    several times the image's own size instead of stopping at it. Clamped
-    on the *axis-aligned* box only, ignoring `angle_deg`'s own footprint
-    (a small deskew, never the coarse 0/90/180/270 rotation, which is a
-    separate mechanism entirely) — exactly matching every other place this
-    frame's bounds already get treated as its plain x/y/width/height."""
+    a manual drag may still overflow past the image edge on any side — an
+    operator request (2026-08-13, revising this clamp's first cut the same
+    day): pulling a corner temporarily outside the negative is a real part
+    of how a crop gets adjusted, not a mistake to prevent outright. Only
+    the runaway case reported originally (several times the image's own
+    size, from a fast drag with no limit at all) is bounded: each side may
+    overflow by at most one image's own width/height (`_OVERFLOW_FACTOR`),
+    never unbounded. Automatic detection (`imaging.framing`) is a
+    completely separate code path, never routed through this function —
+    unaffected either way, always confined to the negative. Clamped on the
+    *axis-aligned* box only, ignoring `angle_deg`'s own footprint (a small
+    deskew, never the coarse 0/90/180/270 rotation, a separate mechanism
+    entirely) — exactly matching every other place this frame's bounds
+    already get treated as its plain x/y/width/height."""
     bounds_width, bounds_height = bounds
+    margin_x = bounds_width * _OVERFLOW_FACTOR
+    margin_y = bounds_height * _OVERFLOW_FACTOR
     if zone == "move":
         dx = current_point.x() - start_point.x()
         dy = current_point.y() - start_point.y()
@@ -379,11 +394,14 @@ def _drag_frame(
                 dy = 0.0
             else:
                 dx = 0.0
-        # Position only, size unchanged — pinned against whichever edge it
-        # would otherwise cross, never shrunk (a frame already larger than
-        # the image, however it got that way, stays that size while moved).
-        x = min(max(start_frame.x + dx, 0.0), max(0.0, bounds_width - start_frame.width))
-        y = min(max(start_frame.y + dy, 0.0), max(0.0, bounds_height - start_frame.height))
+        # Position only, size unchanged — pinned against whichever margin
+        # it would otherwise cross, never shrunk (a frame already larger
+        # than the image, however it got that way, stays that size while
+        # moved).
+        x_min, x_max = -margin_x, bounds_width + margin_x - start_frame.width
+        y_min, y_max = -margin_y, bounds_height + margin_y - start_frame.height
+        x = min(max(start_frame.x + dx, x_min), max(x_min, x_max))
+        y = min(max(start_frame.y + dy, y_min), max(y_min, y_max))
         return replace(start_frame, x=x, y=y)
 
     local_start = _to_local_point(start_point, start_frame)
@@ -414,20 +432,20 @@ def _drag_frame(
     x = old_center_x + shift_x - width / 2
     y = old_center_y + shift_y - height / 2
 
-    # Clamp only the edge(s) actually being dragged, to the image bound it
-    # would otherwise cross — the other, fixed edge (already within bounds
-    # by construction: every prior drag went through this same clamp)
-    # never moves just because its opposite edge got capped.
+    # Clamp only the edge(s) actually being dragged, to the overflow margin
+    # it would otherwise cross — the other, fixed edge (already within
+    # bounds by construction: every prior drag went through this same
+    # clamp) never moves just because its opposite edge got capped.
     if "w" in zone:
-        x = max(x, 0.0)
+        x = max(x, -margin_x)
         width = (start_frame.x + start_frame.width) - x
     elif "e" in zone:
-        width = min(x + width, bounds_width) - x
+        width = min(x + width, bounds_width + margin_x) - x
     if "n" in zone:
-        y = max(y, 0.0)
+        y = max(y, -margin_y)
         height = (start_frame.y + start_frame.height) - y
     elif "s" in zone:
-        height = min(y + height, bounds_height) - y
+        height = min(y + height, bounds_height + margin_y) - y
     width = max(_MIN_FRAME_SIZE_PX, width)
     height = max(_MIN_FRAME_SIZE_PX, height)
 
