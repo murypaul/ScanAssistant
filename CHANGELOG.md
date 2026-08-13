@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.22.2 — 2026-08-13
+
+### Bug Fixes
+**Capture, Positive calibration**
+- Dragging a crop rectangle's edge or corner fast enough could leave it
+  extending far past the image on that side — several times the image's
+  own size — instead of stopping at the edge. Fixed in the shared preview
+  widget, so it applies equally in capture and positive calibration.
+
 ## 1.22.1 — 2026-08-13
 
 ### New / Changed

@@ -264,7 +264,12 @@ class PreviewArea(QWidget):
             super().mouseMoveEvent(event)
             return
         point = self._to_pixmap_point(event.position())
-        if point is None or self._drag_start_point is None or self._drag_start_frame is None:
+        if (
+            point is None
+            or self._drag_start_point is None
+            or self._drag_start_frame is None
+            or self._pixmap is None
+        ):
             return
         new_frame = _drag_frame(
             self._drag_start_frame,
@@ -272,6 +277,7 @@ class PreviewArea(QWidget):
             self._drag_start_point,
             point,
             constrain_axis=bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier),
+            bounds=(self._pixmap.width(), self._pixmap.height()),
         )
         self._frame = new_frame
         self._compose()
@@ -345,6 +351,7 @@ def _drag_frame(
     current_point: QPointF,
     *,
     constrain_axis: bool = False,
+    bounds: tuple[float, float],
 ) -> FrameResult:
     """The frame that results from dragging `zone` from `start_point` to
     `current_point` (both pixmap space), starting from `start_frame`.
@@ -353,7 +360,17 @@ def _drag_frame(
     image editors): locks the drag to whichever of horizontal/vertical had
     the larger movement since the press, zeroing the other — lets an
     operator nudge a crop along one line without a slightly unsteady hand
-    drifting it off-axis."""
+    drifting it off-axis.
+
+    `bounds` (pixmap width/height, same space as `x`/`y`/`width`/`height`):
+    the result never extends past the image on any side, on any zone
+    (move included) — a fast drag past an edge used to leave a rectangle
+    several times the image's own size instead of stopping at it. Clamped
+    on the *axis-aligned* box only, ignoring `angle_deg`'s own footprint
+    (a small deskew, never the coarse 0/90/180/270 rotation, which is a
+    separate mechanism entirely) — exactly matching every other place this
+    frame's bounds already get treated as its plain x/y/width/height."""
+    bounds_width, bounds_height = bounds
     if zone == "move":
         dx = current_point.x() - start_point.x()
         dy = current_point.y() - start_point.y()
@@ -362,7 +379,12 @@ def _drag_frame(
                 dy = 0.0
             else:
                 dx = 0.0
-        return replace(start_frame, x=start_frame.x + dx, y=start_frame.y + dy)
+        # Position only, size unchanged — pinned against whichever edge it
+        # would otherwise cross, never shrunk (a frame already larger than
+        # the image, however it got that way, stays that size while moved).
+        x = min(max(start_frame.x + dx, 0.0), max(0.0, bounds_width - start_frame.width))
+        y = min(max(start_frame.y + dy, 0.0), max(0.0, bounds_height - start_frame.height))
+        return replace(start_frame, x=x, y=y)
 
     local_start = _to_local_point(start_point, start_frame)
     local_current = _to_local_point(current_point, start_frame)
@@ -389,15 +411,27 @@ def _drag_frame(
     shift_x, shift_y = _rotate_vector(center_shift_x, center_shift_y, start_frame.angle_deg)
     old_center_x = start_frame.x + start_frame.width / 2
     old_center_y = start_frame.y + start_frame.height / 2
-    new_center_x = old_center_x + shift_x
-    new_center_y = old_center_y + shift_y
-    return replace(
-        start_frame,
-        x=new_center_x - width / 2,
-        y=new_center_y - height / 2,
-        width=width,
-        height=height,
-    )
+    x = old_center_x + shift_x - width / 2
+    y = old_center_y + shift_y - height / 2
+
+    # Clamp only the edge(s) actually being dragged, to the image bound it
+    # would otherwise cross — the other, fixed edge (already within bounds
+    # by construction: every prior drag went through this same clamp)
+    # never moves just because its opposite edge got capped.
+    if "w" in zone:
+        x = max(x, 0.0)
+        width = (start_frame.x + start_frame.width) - x
+    elif "e" in zone:
+        width = min(x + width, bounds_width) - x
+    if "n" in zone:
+        y = max(y, 0.0)
+        height = (start_frame.y + start_frame.height) - y
+    elif "s" in zone:
+        height = min(y + height, bounds_height) - y
+    width = max(_MIN_FRAME_SIZE_PX, width)
+    height = max(_MIN_FRAME_SIZE_PX, height)
+
+    return replace(start_frame, x=x, y=y, width=width, height=height)
 
 
 def _draw_overlay(pixmap: QPixmap, frame: FrameResult, *, guides_visible: bool = False) -> QPixmap:
