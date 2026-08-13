@@ -379,6 +379,7 @@ class CaptureScreen(QWidget):
         self.preview_area.frame_dragged.connect(self._on_frame_dragged)
         self.preview_area.frame_drag_finished.connect(self._on_frame_drag_finished)
         self.preview_area.point_picked.connect(self._on_white_balance_point_picked)
+        self.preview_area.picking_cancel_requested.connect(self.toggle_white_balance_picker)
 
         self.histogram_widget = HistogramWidget(parent=self)
 

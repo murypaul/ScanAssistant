@@ -66,6 +66,7 @@ class PreviewArea(QWidget):
     frame_dragged = Signal(object)  # FrameResult, continuously while dragging
     frame_drag_finished = Signal()  # once, on release — caller debounces the commit
     point_picked = Signal(QPointF)  # pixmap-space point, while picking mode is on
+    picking_cancel_requested = Signal()  # right-click while picking mode is on
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -151,11 +152,20 @@ class PreviewArea(QWidget):
         return self._guides_visible
 
     def set_picking_enabled(self, enabled: bool) -> None:
-        """White balance picker (`W` key): while on, the next left click
-        anywhere on the image emits `point_picked` instead of drag-editing
-        the crop, and the cursor becomes a crosshair."""
+        """White balance picker (`W` key) or Dmin picker (positive
+        calibration): while on, the next left click anywhere on the image
+        emits `point_picked` instead of drag-editing the crop, and the
+        cursor becomes a crosshair. A right click instead emits
+        `picking_cancel_requested` — a caller that armed picking by
+        mistake can back out without having to sample a point it doesn't
+        want, the same escape hatch dragging a crop already has (any other
+        mouse button there is just ignored)."""
         self._picking_enabled = enabled
         self.setCursor(Qt.CursorShape.CrossCursor if enabled else Qt.CursorShape.ArrowCursor)
+
+    @property
+    def is_picking(self) -> bool:
+        return self._picking_enabled
 
     # --- internals -----------------------------------------------------------
 
@@ -220,6 +230,10 @@ class PreviewArea(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if self._picking_enabled:
+            if event.button() == Qt.MouseButton.RightButton:
+                self.picking_cancel_requested.emit()
+                event.accept()
+                return
             point = self._to_pixmap_point(event.position())
             if event.button() == Qt.MouseButton.LeftButton and point is not None:
                 self.point_picked.emit(point)

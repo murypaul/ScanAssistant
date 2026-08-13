@@ -108,6 +108,7 @@ STRINGS: dict[str, str] = {
     "positive_review.rotating": "Rotating {name}…",
     "positive_review.redetect_frame": "Redetect frame",
     "positive_review.picking_dmin": "Click an unexposed border area of the negative…",
+    "positive_review.picking_dmin_cancelled": "Dmin pick cancelled",
     "positive_calibration.auto": "Auto",
     "positive_calibration.group_dmin": "Film base (Dmin)",
     "positive_calibration.pick_dmin": "Pick from image",

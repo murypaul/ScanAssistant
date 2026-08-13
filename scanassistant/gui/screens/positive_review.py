@@ -387,6 +387,7 @@ class PositiveReviewScreen(QWidget):
         self.preview_area = PreviewArea()
         self.preview_area.frame_dragged.connect(self._on_frame_dragged)
         self.preview_area.point_picked.connect(self._on_dmin_point_picked)
+        self.preview_area.picking_cancel_requested.connect(self._cancel_dmin_picking)
 
         self.histogram_widget = HistogramWidget(parent=self)
 
@@ -1455,6 +1456,14 @@ class PositiveReviewScreen(QWidget):
         self.preview_area.set_picking_enabled(True)
         self.status_label.setText(t("positive_review.picking_dmin"))
 
+    def _cancel_dmin_picking(self) -> None:
+        """Right-click on the preview, or Escape, while armed (`_on_pick_dmin_
+        requested`) — arming it by mistake used to force actually sampling a
+        point (or leaving the whole screen, since Escape unconditionally
+        closed it) just to get back to the normal crop-drag tool."""
+        self.preview_area.set_picking_enabled(False)
+        self.status_label.setText(t("positive_review.picking_dmin_cancelled"))
+
     def _on_dmin_point_picked(self, point: QPointF) -> None:
         """Samples the film base color directly from the already-decoded
         *linear* negative at the clicked point — not the rendered positive
@@ -2028,6 +2037,10 @@ class PositiveReviewScreen(QWidget):
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
+            if self.preview_area.is_picking:
+                self._cancel_dmin_picking()
+                event.accept()
+                return
             self.closed.emit()
             event.accept()
             return

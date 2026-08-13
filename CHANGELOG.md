@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.22.1 — 2026-08-13
+
+### New / Changed
+**Positive calibration, Capture**
+- Right-click while a picker tool is armed (Dmin pick, white balance
+  pick) now cancels it, the same as pressing Escape — armed by mistake,
+  you're no longer forced to actually click a point to get back to the
+  normal crop tool.
+
+### Bug Fixes
+**Positive calibration**
+- Pressing Escape while the Dmin picker was armed closed the whole
+  calibration screen instead of just cancelling the pick.
+
 ## 1.22.0 — 2026-08-13
 
 ### New / Changed
