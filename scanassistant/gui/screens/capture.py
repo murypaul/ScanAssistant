@@ -1053,6 +1053,7 @@ class CaptureScreen(QWidget):
         self._loaded_preview_for = name
         self._current_frame_result = None
         self._update_confidence_label()
+        self.preview_area.show_processing(name)
         raw_path = self.session.paths.raw_dir / f"{name}{extension}"
 
         # No parent widget: detection can take over a second (rescue on an

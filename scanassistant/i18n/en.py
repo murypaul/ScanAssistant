@@ -316,6 +316,7 @@ STRINGS: dict[str, str] = {
     # --- Capture screen (06 §8, M4) ---
     "capture.preview_ready_next": "Ready — next: {name}",
     "capture.preview_copying": "{name} — copying…",
+    "capture.preview_processing": "{name} — processing…",
     "capture.preview_unavailable": "Preview unavailable (unreadable RAW): {error}",
     "capture.progress": "{done}/{total} · {pct}%",
     "capture.next": "next: {name}",

@@ -107,6 +107,16 @@ class PreviewArea(QWidget):
         self._frame = None
         self._set_text(t("capture.preview_copying", name=source_name))
 
+    def show_processing(self, name: str) -> None:
+        """Between ingestion and the RAW decode + auto-detection finishing
+        (`_load_preview`'s `PreviewWorker`, a few seconds) — distinct from
+        `show_stabilizing`'s file-transfer wait, so an operator working a
+        long session can tell the two apart and knows not to trigger the
+        next shot yet."""
+        self._base_pixmap = None
+        self._frame = None
+        self._set_text(t("capture.preview_processing", name=name))
+
     def show_message(self, text: str) -> None:
         self._base_pixmap = None
         self._frame = None

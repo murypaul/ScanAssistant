@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.22.0 — 2026-08-13
+
+### New / Changed
+**Capture**
+- The preview area now says "processing…" for a name while its RAW is
+  being decoded and its frame auto-detected, distinct from "copying…"
+  during the file transfer — during a long session it's easy to lose
+  track and trigger the next shot before this finishes, which used to
+  leave the previous image cropped to its full, un-detected negative
+  instead of the correct frame.
+
 ## 1.21.2 — 2026-08-13
 
 ### Bug Fixes
