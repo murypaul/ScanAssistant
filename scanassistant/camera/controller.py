@@ -57,6 +57,21 @@ _CONNECT_RETRY_DELAYS_S: tuple[float | None, ...] = (0.5, 1.0, 2.0, None)
 # firmware's busy window.
 _TRIGGER_RETRY_DELAYS_S: tuple[float | None, ...] = (0.5, 1.0, 2.0, None)
 
+# Real-use report (2026-08-13): the automatic post-trigger live-view
+# restart below (`stop_live_view()` + `start_live_view()`, added to
+# replicate an operator's own L,L toggle) started leaving every capture's
+# feed frozen after a stop-capture/relaunch cycle, while the manual L,L
+# toggle kept unsticking it reliably every time in the same session. The
+# one known asymmetry between the two is timing: a human naturally leaves
+# a beat between the two presses, long enough for the mirror/exposure to
+# actually settle after the real shot; the automatic version used to fire
+# immediately once the post-trigger download wait returned. This mirrors
+# the exact failure this same restart was reverted for once before (see
+# git history on `_handle_trigger`) — reintroducing the delay it was
+# implicitly relying on, this time explicitly, instead of leaning on
+# `_download_after_trigger()`'s own wait to happen to be long enough.
+_LIVE_VIEW_RESTART_DELAY_S = 1.5
+
 _IDLE_POLL_INTERVAL_S = 0.05  # while connected but live view is off
 _LIVE_VIEW_POLL_INTERVAL_S = 0.01  # while live view is on, between frame attempts
 
@@ -352,6 +367,7 @@ class CameraController:
             self._on_capture_triggered()
         self._download_after_trigger()
         if live_view_active:
+            time.sleep(_LIVE_VIEW_RESTART_DELAY_S)
             self._safe_call(self._backend.stop_live_view)
             return self._handle_start_live_view()
         return live_view_active

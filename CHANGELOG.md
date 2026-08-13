@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.21.1 — 2026-08-13
+
+### Bug Fixes
+**Capture**
+- After a remote-triggered capture, the live view feed could stay frozen
+  on the pre-capture frame instead of picking back up on its own — the
+  automatic recovery added for this waited on nothing between stopping
+  and restarting the feed, unlike the natural pause between two manual
+  presses of the live view toggle that always worked around it. It now
+  waits a beat first, matching that manual timing.
+
 ## 1.21.0 — 2026-08-13
 
 ### New / Changed
