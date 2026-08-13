@@ -302,6 +302,7 @@ class CaptureScreen(QWidget):
         decoder: RawDecoder | None = None,
         export_runner: ExportRunner | None = None,
         export_executor: ExportExecutor | None = None,
+        export_executor_factory: Callable[[], ExportExecutor] | None = None,
         shortcuts: dict[str, dict[str, str]] | None = None,
         camera_config: CameraConfig | None = None,
         camera_backend: CameraBackend | None = None,
@@ -315,9 +316,22 @@ class CaptureScreen(QWidget):
         self._export_runner_override = export_runner
         # Default stays `InlineExportExecutor` (synchronous, deterministic —
         # what every test relies on): only `gui.main_window`'s real,
-        # user-facing instantiation passes a `ThreadedExportExecutor`, so a
-        # slow export never freezes the Qt thread (DECISIONS.md I-92/I-98).
+        # user-facing instantiation goes through `export_executor_factory`
+        # below (a real `ThreadedExportExecutor`), so a slow export never
+        # freezes the Qt thread (DECISIONS.md I-92/I-98).
         self._export_executor_override = export_executor
+        # A *factory*, not a stored instance: `stop()` (`drain_on_exit`)
+        # shuts its single worker thread down for good on every "Stop
+        # capture", so reusing one fixed instance across a Stop → Start
+        # cycle within the same app run would silently accept every
+        # tiff/jpeg_master task into a dead thread's inbox forever after —
+        # no exception, no journal entry, just a queue that never drains
+        # (confirmed in real use, 2026-08-13: `jpeg_positive`, on its own
+        # pool rebuilt fresh in `start()` below, kept working the whole
+        # time). Calling this fresh in `start()` gives every session its
+        # own live executor, exactly like `positive_finalize_executor`
+        # already does.
+        self._export_executor_factory = export_executor_factory
         # `processing.positive_finalize_workers`:
         # sizes the dedicated pool built per-session below, only ever used
         # for a print_engine campaign's jpeg_positive.
@@ -621,6 +635,17 @@ class CaptureScreen(QWidget):
 
     # --- lifecycle ---------------------------------------------------------
 
+    def _make_export_executor(self) -> ExportExecutor:
+        """A fresh `ExportExecutor` for `start()` — never a stored instance
+        reused across sessions (see `_export_executor_factory`'s docstring
+        for why that used to silently break tiff/jpeg_master after a
+        Stop → Start cycle)."""
+        if self._export_executor_override is not None:
+            return self._export_executor_override
+        if self._export_executor_factory is not None:
+            return self._export_executor_factory()
+        return InlineExportExecutor()
+
     def start(
         self,
         *,
@@ -663,9 +688,7 @@ class CaptureScreen(QWidget):
         # than spinning up a real pooled decode against it.
         if self._export_runner_override is not None:
             positive_finalize_runner: ExportRunner | None = self._export_runner_override
-            positive_finalize_executor: ExportExecutor | None = (
-                self._export_executor_override or InlineExportExecutor()
-            )
+            positive_finalize_executor: ExportExecutor | None = self._make_export_executor()
         else:
             positive_finalize_runner = PositiveFinalizeRunner(
                 decoder=self._decoder,
@@ -686,7 +709,7 @@ class CaptureScreen(QWidget):
             fs=fs,
             monitor=monitor,
             export_runner=export_runner,
-            export_executor=self._export_executor_override or InlineExportExecutor(),
+            export_executor=self._make_export_executor(),
             positive_finalize_runner=positive_finalize_runner,
             positive_finalize_executor=positive_finalize_executor,
             disk_warn_gb=disk_warn_gb,

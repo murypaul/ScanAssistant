@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.21.2 — 2026-08-13
+
+### Bug Fixes
+**Exports & Metadata**
+- After leaving capture mode and starting it again in the same session
+  (e.g. around a campaign reset), TIFF and JPEG master exports could stop
+  being produced entirely for the rest of the session — captures kept
+  working and the print/positive JPEG kept being generated normally, but
+  the archival TIFF/JPEG master queue silently stopped draining, with no
+  error shown anywhere. Nothing captured was ever lost (the RAW and any
+  manual framing/rotation adjustment were always saved immediately,
+  independent of exports) — Statistics ▸ Completeness check ▸ Regenerate
+  recovers anything missed from a session hitting this. Restarting the
+  whole application also always worked around it.
+
 ## 1.21.1 — 2026-08-13
 
 ### Bug Fixes

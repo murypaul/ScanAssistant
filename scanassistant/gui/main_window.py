@@ -200,15 +200,23 @@ class MainWindow(QMainWindow):
         # campaign (`_on_start_capture`, on `campaign.mode`), not per class:
         # every other reference in this file keeps addressing plain
         # `self.capture_screen`, unaware there even are two.
+        #
+        # A *factory* (the class itself, called fresh in `start()`), not a
+        # pre-built instance: a `ThreadedExportExecutor` built once here and
+        # reused across every subsequent `start()` kept accepting
+        # tiff/jpeg_master tasks into a worker thread that a prior
+        # `stop_capture()` (`drain_on_exit`) had already shut down for good
+        # — silently, with no error anywhere, only a slowly growing export
+        # queue (confirmed in real use, 2026-08-13).
         self._full_capture_screen = CaptureScreen(
-            export_executor=ThreadedExportExecutor(),
+            export_executor_factory=ThreadedExportExecutor,
             shortcuts=self._shortcuts,
             camera_config=context.config.camera,
             persist_camera_config=lambda: save_config(context.config),
             positive_finalize_workers=context.config.processing.positive_finalize_workers,
         )
         self._simple_capture_screen = SimpleCaptureScreen(
-            export_executor=ThreadedExportExecutor(),
+            export_executor_factory=ThreadedExportExecutor,
             shortcuts=self._shortcuts,
             camera_config=context.config.camera,
             persist_camera_config=lambda: save_config(context.config),
