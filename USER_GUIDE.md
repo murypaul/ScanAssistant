@@ -59,8 +59,14 @@ From the home screen, **New campaign** opens a short wizard:
 Opened outside capture mode. A **Start capture** button sits below the
 tabs at all times — faster to reach than the menu or the shortcut.
 Tabs: **Summary**, **Folders**, **Capture**, **Framing**, **Exports**,
-**Metadata**, **CSV** (a read-only table of the inventory — search,
-filter by status, jump the cursor to a row), **Export queue** (same
+**Metadata**, **CSV** (a table of the inventory — search, filter by
+status, jump the cursor to a `todo` row, or right-click a `done` row and
+choose **Redo this image…** to send it back to waiting for a fresh
+capture under the same name — nothing already produced for it is touched
+until the new shot actually arrives, at which point the usual
+name-conflict prompt lets you decide what happens to the old files;
+available here or while paused, never during active capture),
+**Export queue** (same
 read-only list as the capture screen's own dock — name and derivative
 kind for every task still pending, live even outside of an active
 capture session, e.g. while Statistics' "Regenerate selection" is still

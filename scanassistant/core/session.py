@@ -1256,6 +1256,49 @@ class CaptureSession:
         self._persist_state()
         return events
 
+    def redo_image(self, name: str) -> list[SessionEvent]:
+        """Requeues an already-finalized (`done`) row for a fresh capture
+        (CSV viewer, "Redo this image" — preparation or pause only, guarded
+        by the caller; `state.mode` re-checked here as a call-site
+        invariant, same reasoning as `reopen_for_correction`'s
+        `current_image is not None` check).
+
+        Doesn't touch the RAW/derivatives already on disk: unlike a reject,
+        nothing is moved to `REJECTED/`/`BACKUP/` here. The next capture
+        ingested under `name` hits the existing name-conflict panel (§10)
+        normally, letting the operator choose Replace/Rename against the
+        old files instead of this action silently discarding them itself.
+        """
+        if self.state.mode == "capture":
+            raise IllegalTransitionError("ACTIVE", "redo_image")
+        row = self.inventory.row(name)
+        if row is None:
+            raise ValueError(f"{name!r} is not a row in this inventory")
+        if row[STATUS_COLUMN] != "done":
+            raise ValueError(f"{name!r} is not done — nothing to redo")
+
+        self.inventory.set_status(name, "todo")
+        self.inventory.set_source_file(name, "")
+        before_cursor = self.inventory.cursor
+        self.inventory.go_to_name(name)
+        self.state.csv_cursor = self.inventory.cursor
+        self.journal.log(
+            "CSV",
+            "status",
+            image=name,
+            details={"row": name, "before": "done", "after": "todo"},
+        )
+        self.journal.log(
+            "CSV",
+            "cursor",
+            details={"before": before_cursor, "after": self.inventory.cursor, "cause": "redo"},
+        )
+        self.journal.log("CAPTURE", "requeued_for_redo", image=name)
+
+        events = self._save_inventory()
+        self._persist_state()
+        return events
+
     def _delete_derivatives(self, name: str) -> list[str]:
         """Deletes already-produced (regenerable) derivatives for `name`."""
         deleted: list[str] = []

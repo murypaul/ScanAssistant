@@ -59,6 +59,7 @@ from scanassistant.project.state import ProjectState
 
 class ProjectScreen(QWidget):
     cursor_change_requested = Signal(str)  # « Set cursor here » (06 §6)
+    redo_requested = Signal(str)  # « Redo this image » on a `done` row (06 §6)
     start_capture_requested = Signal()  # button at the bottom of the screen —
     # `MainWindow` already validates entry conditions (`_on_start_capture`)
     # the same way as the menu action/shortcut; this is just a faster,
@@ -994,13 +995,18 @@ class ProjectScreen(QWidget):
         name_item = self.csv_table.item(row, 1)
         if name_item is None:
             return
-        row_data = self.inventory.row(name_item.text())
-        if row_data is None or row_data[STATUS_COLUMN] == "done":
-            return  # refused on a `done` row
+        name = name_item.text()
+        row_data = self.inventory.row(name)
+        if row_data is None:
+            return
 
         menu = QMenu(self)
-        action = menu.addAction(t("project.csv_set_cursor_here"))
-        action.triggered.connect(lambda: self.cursor_change_requested.emit(name_item.text()))
+        if row_data[STATUS_COLUMN] == "done":
+            action = menu.addAction(t("project.csv_redo_image"))
+            action.triggered.connect(lambda: self.redo_requested.emit(name))
+        else:
+            action = menu.addAction(t("project.csv_set_cursor_here"))
+            action.triggered.connect(lambda: self.cursor_change_requested.emit(name))
         menu.exec(self.csv_table.viewport().mapToGlobal(pos))
 
     # --- Log (06 §5) ------------------------------------------------------

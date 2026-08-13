@@ -516,6 +516,11 @@ STRINGS: dict[str, str] = {
     "project.csv_filter_todo": "Todo",
     "project.csv_filter_done": "Done",
     "project.csv_set_cursor_here": "Set cursor here",
+    "project.csv_redo_image": "Redo this image…",
+    "project.redo_image_title": "Redo this image",
+    "project.redo_unavailable_while_capturing": (
+        "Can't redo an image while capture is running. Stop or pause capture first."
+    ),
     "project.log_filter_all_types": "All types",
     "project.log_filter_all_levels": "All levels",
     "project.open_logs_folder": "Open LOGS folder",

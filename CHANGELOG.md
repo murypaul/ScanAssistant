@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.21.0 — 2026-08-13
+
+### New / Changed
+**Project & Campaign**
+- The CSV list now lets you redo an already-finished image straight from
+  the app — right-click a "done" row and choose "Redo this image…". It
+  goes back to waiting for a new capture under the same name; nothing
+  already on disk for it is touched until the new shot actually arrives,
+  at which point the usual "name already exists" prompt lets you decide
+  what happens to the old one. Available before starting capture or while
+  paused. Previously the only way to fix a missed or bad shot noticed
+  after moving on was to edit files by hand outside the app.
+
 ## 1.20.3 — 2026-08-03
 
 ### Bug Fixes

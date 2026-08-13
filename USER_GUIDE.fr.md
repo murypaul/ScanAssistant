@@ -66,8 +66,13 @@ Il s'ouvre en dehors du mode capture. Un bouton **Start capture** reste
 visible en permanence sous les onglets — plus rapide à atteindre que
 le menu ou le raccourci clavier. Onglets : **Summary**, **Folders**,
 **Capture**, **Framing**, **Exports**, **Metadata**, **CSV** (table de
-l'inventaire en lecture seule, avec recherche, filtre par statut et
-positionnement du curseur sur une ligne), **Export queue** (même liste en
+l'inventaire, avec recherche, filtre par statut, positionnement du
+curseur sur une ligne `todo`, ou clic droit sur une ligne `done` pour
+**Redo this image…** — la remet en attente d'une nouvelle prise sous le
+même nom, sans toucher aux fichiers déjà produits tant que la nouvelle
+prise n'est pas réellement arrivée, moment où le panneau de conflit de
+nom habituel laisse choisir quoi faire des anciens ; disponible ici ou en
+pause, jamais pendant une capture active), **Export queue** (même liste en
 lecture seule que le panneau dédié de l'écran capture — nom et type de
 dérivé pour chaque tâche encore en attente, mise à jour même en dehors
 d'une session de capture active, par exemple pendant qu'une régénération

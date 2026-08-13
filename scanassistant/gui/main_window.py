@@ -36,13 +36,15 @@ from PySide6.QtWidgets import (
 from scanassistant import __version__
 from scanassistant.app_context import AppContext
 from scanassistant.config import save_config
+from scanassistant.core.errors import IllegalTransitionError
+from scanassistant.core.events import CriticalError
 from scanassistant.core.export_runner import MasterExportRunner
 from scanassistant.core.fs import RealFileSystem
 from scanassistant.core.positive_finalize_runner import PositiveFinalizeRunner
 from scanassistant.core.queue import PooledExportExecutor, ThreadedExportExecutor
 from scanassistant.core.session import CaptureSession
 from scanassistant.gui.dialogs.preferences import PreferencesDialog
-from scanassistant.gui.errors import format_business_error
+from scanassistant.gui.errors import format_business_error, format_critical
 from scanassistant.gui.screens.capture import CaptureScreen
 from scanassistant.gui.screens.capture_simple import SimpleCaptureScreen
 from scanassistant.gui.screens.home import HomeScreen
@@ -187,6 +189,7 @@ class MainWindow(QMainWindow):
 
         self.project_screen = ProjectScreen()
         self.project_screen.cursor_change_requested.connect(self._on_cursor_change_requested)
+        self.project_screen.redo_requested.connect(self._on_redo_requested)
         self.project_screen.start_capture_requested.connect(self._on_start_capture)
 
         # Real background thread for exports: without it, regenerating a
@@ -876,6 +879,31 @@ class MainWindow(QMainWindow):
             "cursor",
             details={"before": before, "after": inventory.cursor, "cause": "manual"},
         )
+        self.project_screen.refresh_csv_view()
+
+    def _on_redo_requested(self, name: str) -> None:
+        """CSV viewer, "Redo this image" on a `done` row (Project screen only —
+        never reachable while `capture_screen` owns the stack, so this always
+        runs through the never-started offline session, same as Statistics/
+        Positive review outside of capture)."""
+        session = self.capture_screen.session or self._build_offline_session()
+        if session is None:
+            return
+        try:
+            events = session.redo_image(name)
+        except IllegalTransitionError:
+            QMessageBox.warning(
+                self, t("project.redo_image_title"), t("project.redo_unavailable_while_capturing")
+            )
+            return
+        except ValueError as exc:
+            QMessageBox.warning(self, t("project.invalid_setting_title"), str(exc))
+            return
+        for event in events:
+            if isinstance(event, CriticalError):
+                QMessageBox.warning(
+                    self, t("project.redo_image_title"), format_critical(event.code, event.details)
+                )
         self.project_screen.refresh_csv_view()
 
     # --- capture mode --------------------------------------------------------
